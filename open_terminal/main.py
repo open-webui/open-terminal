@@ -1,6 +1,9 @@
 import asyncio
 import json
 import os
+import platform
+import socket
+import sys
 from typing import Optional
 
 from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
@@ -10,6 +13,26 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
 from open_terminal.env import API_KEY
+
+
+def get_system_info() -> str:
+    """Gather runtime system metadata for the OpenAPI description."""
+    shell = os.environ.get("SHELL", "/bin/sh")
+    lines = [
+        f"- **OS:** {platform.system()} {platform.release()} ({platform.machine()})",
+        f"- **Hostname:** {socket.gethostname()}",
+        f"- **Shell:** {shell}",
+        f"- **Python:** {sys.version.split()[0]}",
+        f"- **Working Directory:** {os.getcwd()}",
+    ]
+    return "\n".join(lines)
+
+
+_EXECUTE_DESCRIPTION = (
+    "Run a shell command and return the result.\n\n"
+    "**Environment:**\n"
+    + get_system_info()
+)
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -231,7 +254,7 @@ async def upload_file_via_link(
 @app.post(
     "/execute",
     summary="Execute a command",
-    description="Run a shell command and return the result.",
+    description=_EXECUTE_DESCRIPTION,
     dependencies=[Depends(verify_api_key)],
     response_model=ExecResponse,
     responses={

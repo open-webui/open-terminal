@@ -1,6 +1,6 @@
 [project]
 name = "open-terminal"
-version = "0.1.8"
+version = "0.1.9"
 description = "A minimal terminal interaction API"
 readme = "README.md"
 authors = [
@@ -12,6 +12,7 @@ dependencies = [
     "uvicorn[standard]>=0.34.0",
     "click>=8.1.0",
     "httpx>=0.27.0",
+    "python-multipart>=0.0.22",
 ]
 
 [project.scripts]
