@@ -76,10 +76,22 @@ curl -X POST "http://localhost:8000/files/upload?path=/tmp/data.csv" \
   -F "file=@local_file.csv"
 ```
 
+**Via temporary link (no auth needed to upload):**
+```bash
+# 1. Generate an upload link
+curl -X POST "http://localhost:8000/files/upload/link?path=/tmp/data.csv" \
+  -H "Authorization: Bearer <api-key>"
+# → {"url": "http://localhost:8000/files/upload/a1b2c3d4..."}
+
+# 2. Upload to the link (no auth required)
+curl -X POST "http://localhost:8000/files/upload/a1b2c3d4..." \
+  -F "file=@local_file.csv"
+```
+
 ### Download a File
 
 ```bash
-curl "http://localhost:8000/files/download?path=/tmp/output.csv" \
+curl "http://localhost:8000/files/download/link?path=/tmp/output.csv" \
   -H "Authorization: Bearer <api-key>"
 ```
 

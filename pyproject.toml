@@ -1,7 +1,7 @@
 [project]
 name = "open-terminal"
-version = "0.1.5"
-description = "A barebones terminal interaction API"
+version = "0.1.7"
+description = "A minimal terminal interaction API"
 readme = "README.md"
 authors = [
     { name = "Timothy Jaeryang Baek", email = "tim@openwebui.com" }

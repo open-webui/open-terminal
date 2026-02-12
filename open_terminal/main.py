@@ -5,7 +5,7 @@ from typing import Optional
 
 from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
@@ -69,12 +69,13 @@ async def health():
 
 
 
-# Temporary download links: {token: (path, expiry_timestamp)}
+# Temporary links: {token: (path, expiry_timestamp)}
 _download_links: dict[str, tuple[str, float]] = {}
+_upload_links: dict[str, tuple[str, float]] = {}
 
 
 @app.get(
-    "/files/download",
+    "/files/download/link",
     summary="Get a file download link",
     description="Returns a temporary download URL for a file. Link expires after 5 minutes and requires no authentication to use.",
     dependencies=[Depends(verify_api_key)],
@@ -102,11 +103,7 @@ async def get_file_link(
 
 @app.get(
     "/files/download/{token}",
-    summary="Download via link",
-    description="Download a file using a temporary token. No authentication required.",
-    responses={
-        404: {"description": "Invalid or expired download link."},
-    },
+    include_in_schema=False,
 )
 async def download_file(token: str):
     import time
@@ -152,6 +149,74 @@ async def upload_file(
         raise HTTPException(status_code=400, detail="Provide either 'url' or a file upload.")
 
     os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as f:
+        f.write(content)
+    return {"path": path, "size": len(content)}
+
+
+@app.post(
+    "/files/upload/link",
+    summary="Create an upload link",
+    description="Generate a temporary, unauthenticated upload URL. Link expires after 5 minutes.",
+    dependencies=[Depends(verify_api_key)],
+    responses={
+        401: {"description": "Invalid or missing API key."},
+    },
+)
+async def create_upload_link(
+    path: str = Query(..., description="Absolute destination path for the uploaded file."),
+    request: Request = None,
+):
+    import time
+    import uuid
+
+    token = uuid.uuid4().hex
+    _upload_links[token] = (path, time.time() + 300)
+
+    base_url = str(request.base_url).rstrip("/")
+    return {"url": f"{base_url}/files/upload/{token}"}
+
+
+@app.get(
+    "/files/upload/{token}",
+    response_class=HTMLResponse,
+    include_in_schema=False,
+)
+async def upload_page(token: str):
+    import time
+
+    entry = _upload_links.get(token)
+    if not entry or time.time() > entry[1]:
+        return HTMLResponse("Link expired.", status_code=404)
+
+    return HTMLResponse(
+        '<form method="post" enctype="multipart/form-data">'
+        '<input type="file" name="file" required> '
+        '<button type="submit">Upload</button>'
+        '</form>'
+    )
+
+
+@app.post(
+    "/files/upload/{token}",
+    include_in_schema=False,
+)
+async def upload_file_via_link(
+    token: str,
+    file: UploadFile = File(..., description="The file to upload."),
+):
+    import time
+
+    entry = _upload_links.pop(token, None)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Invalid or expired upload link")
+
+    path, expiry = entry
+    if time.time() > expiry:
+        raise HTTPException(status_code=404, detail="Upload link expired")
+
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    content = await file.read()
     with open(path, "wb") as f:
         f.write(content)
     return {"path": path, "size": len(content)}
