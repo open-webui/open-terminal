@@ -1,10 +1,11 @@
 import asyncio
 import json
+import os
 from typing import Optional
 
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
@@ -66,6 +67,62 @@ class ExecResponse(BaseModel):
 )
 async def health():
     return {"status": "ok"}
+
+
+
+# Temporary download links: {token: (path, expiry_timestamp)}
+_download_links: dict[str, tuple[str, float]] = {}
+
+
+@app.get(
+    "/files",
+    summary="Get a file download link",
+    description="Returns a temporary download URL for a file. Link expires after 5 minutes and requires no authentication to use.",
+    responses={
+        404: {"description": "File not found."},
+        401: {"description": "Invalid or missing API key."},
+    },
+)
+async def get_file_link(
+    path: str = Query(..., description="Absolute path to the file."),
+    request: Request = None,
+):
+    import time
+    import uuid
+
+    if not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail="File not found")
+
+    token = uuid.uuid4().hex
+    _download_links[token] = (path, time.time() + 300)
+
+    base_url = str(request.base_url).rstrip("/")
+    return {"url": f"{base_url}/files/download/{token}"}
+
+
+@app.get(
+    "/files/download/{token}",
+    summary="Download via link",
+    description="Download a file using a temporary token. No authentication required.",
+    responses={
+        404: {"description": "Invalid or expired download link."},
+    },
+)
+async def download_file(token: str):
+    import time
+
+    entry = _download_links.pop(token, None)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Invalid or expired download link")
+
+    path, expiry = entry
+    if time.time() > expiry:
+        raise HTTPException(status_code=404, detail="Download link expired")
+
+    if not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail="File not found")
+
+    return FileResponse(path)
 
 
 @app.post(
