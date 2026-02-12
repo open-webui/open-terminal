@@ -26,8 +26,7 @@ async def verify_api_key(
 app = FastAPI(
     title="Open Terminal",
     description="Shell command execution API with synchronous and streaming support.",
-    version="0.1.3",
-    dependencies=[Depends(verify_api_key)],
+    version="0.1.4",
 )
 app.add_middleware(
     CORSMiddleware,
@@ -78,6 +77,7 @@ _download_links: dict[str, tuple[str, float]] = {}
     "/files",
     summary="Get a file download link",
     description="Returns a temporary download URL for a file. Link expires after 5 minutes and requires no authentication to use.",
+    dependencies=[Depends(verify_api_key)],
     responses={
         404: {"description": "File not found."},
         401: {"description": "Invalid or missing API key."},
@@ -129,6 +129,7 @@ async def download_file(token: str):
     "/execute",
     summary="Execute a command",
     description="Run a shell command and return the result.",
+    dependencies=[Depends(verify_api_key)],
     response_model=ExecResponse,
     responses={
         401: {"description": "Invalid or missing API key."},
