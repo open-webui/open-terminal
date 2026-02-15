@@ -1,6 +1,9 @@
 import asyncio
 import base64
 import fnmatch
+import json
+
+import aiofiles
 import os
 import platform
 import re
@@ -18,7 +21,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
-from open_terminal.env import API_KEY, MAX_OUTPUT_LINES
+from open_terminal.env import API_KEY, LOG_DIR
 
 
 def get_system_info() -> str:
@@ -52,7 +55,7 @@ async def verify_api_key(
 app = FastAPI(
     title="Open Terminal",
     description="A remote terminal API.",
-    version="0.2.0",
+    version="0.2.1",
 )
 app.add_middleware(
     CORSMiddleware,
@@ -146,37 +149,107 @@ class BackgroundProcess:
     id: str
     command: str
     process: asyncio.subprocess.Process
-    output: list[dict] = field(default_factory=list)
     status: str = "running"
     exit_code: Optional[int] = None
-    output_truncated: bool = False
-    drain_task: Optional[asyncio.Task] = field(default=None, repr=False)
+    log_task: Optional[asyncio.Task] = field(default=None, repr=False)
     finished_at: Optional[float] = field(default=None, repr=False)
+    log_path: Optional[str] = field(default=None, repr=False)
 
 
 _processes: dict[str, BackgroundProcess] = {}
 _EXPIRY_SECONDS = 300  # auto-clean finished processes after 5 min
 
 
-async def _drain_output(background_process: BackgroundProcess):
-    """Read stdout and stderr concurrently into the output buffer."""
+async def _log_process(background_process: BackgroundProcess):
+    """Read stdout and stderr and persist to a log file."""
+    log_file = None
+    if background_process.log_path:
+        os.makedirs(os.path.dirname(background_process.log_path), exist_ok=True)
+        log_file = await aiofiles.open(background_process.log_path, "a")
+        await log_file.write(
+            json.dumps(
+                {
+                    "type": "start",
+                    "command": background_process.command,
+                    "pid": background_process.process.pid,
+                    "ts": time.time(),
+                }
+            )
+            + "\n"
+        )
+        await log_file.flush()
+
     async def read_stream(stream, label):
         async for line in stream:
-            background_process.output.append(
-                {"type": label, "data": line.decode(errors="replace")}
-            )
-            if len(background_process.output) > MAX_OUTPUT_LINES:
-                background_process.output = background_process.output[-MAX_OUTPUT_LINES:]
-                background_process.output_truncated = True
+            if log_file:
+                await log_file.write(
+                    json.dumps(
+                        {"type": label, "data": line.decode(errors="replace"), "ts": time.time()}
+                    )
+                    + "\n"
+                )
+                await log_file.flush()
 
-    await asyncio.gather(
-        read_stream(background_process.process.stdout, "stdout"),
-        read_stream(background_process.process.stderr, "stderr"),
-    )
-    await background_process.process.wait()
-    background_process.exit_code = background_process.process.returncode
-    background_process.status = "done"
-    background_process.finished_at = time.time()
+    try:
+        await asyncio.gather(
+            read_stream(background_process.process.stdout, "stdout"),
+            read_stream(background_process.process.stderr, "stderr"),
+        )
+    finally:
+        await background_process.process.wait()
+        background_process.exit_code = background_process.process.returncode
+        background_process.status = "done"
+        background_process.finished_at = time.time()
+        if log_file:
+            await log_file.write(
+                json.dumps(
+                    {
+                        "type": "end",
+                        "exit_code": background_process.exit_code,
+                        "ts": time.time(),
+                    }
+                )
+                + "\n"
+            )
+            await log_file.close()
+
+
+async def _read_log(
+    log_path: Optional[str],
+    offset: int = 0,
+    tail: Optional[int] = None,
+) -> tuple[list[dict], int, bool]:
+    """Read output entries from a JSONL log file.
+
+    Returns (entries, next_offset, truncated).
+    """
+    entries: list[dict] = []
+    if not log_path or not os.path.isfile(log_path):
+        return entries, 0, False
+
+    async with aiofiles.open(log_path) as f:
+        lines = await f.readlines()
+
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if record.get("type") in ("stdout", "stderr"):
+            entries.append({"type": record["type"], "data": record["data"]})
+
+    total = len(entries)
+    entries = entries[offset:]
+
+    truncated = False
+    if tail is not None and len(entries) > tail:
+        entries = entries[-tail:]
+        truncated = True
+
+    return entries, total, truncated
 
 
 def _cleanup_expired():
@@ -628,6 +701,7 @@ async def list_processes():
             "command": background_process.command,
             "status": background_process.status,
             "exit_code": background_process.exit_code,
+            "log_path": background_process.log_path,
         }
         for background_process in _processes.values()
     ]
@@ -651,6 +725,11 @@ async def execute(
         ge=0,
         le=300,
     ),
+    tail: Optional[int] = Query(
+        None,
+        description="Return only the last N output entries. Useful to limit response size when only recent output matters.",
+        ge=1,
+    ),
 ):
     subprocess_env = {**os.environ, **request.env} if request.env else None
     process = await asyncio.create_subprocess_shell(
@@ -663,24 +742,26 @@ async def execute(
     )
 
     process_id = uuid.uuid4().hex[:12]
+    log_path = os.path.join(LOG_DIR, "processes", f"{process_id}.jsonl")
     background_process = BackgroundProcess(
-        id=process_id, command=request.command, process=process
+        id=process_id, command=request.command, process=process, log_path=log_path
     )
-    background_process.drain_task = asyncio.create_task(
-        _drain_output(background_process)
+    background_process.log_task = asyncio.create_task(
+        _log_process(background_process)
     )
     _processes[process_id] = background_process
 
     if wait is not None:
         try:
             await asyncio.wait_for(
-                asyncio.shield(background_process.drain_task), timeout=wait
+                asyncio.shield(background_process.log_task), timeout=wait
             )
         except asyncio.TimeoutError:
             pass
 
-    output = background_process.output[:]
-    background_process.output.clear()
+    output, next_offset, truncated = await _read_log(
+        background_process.log_path, offset=0, tail=tail
+    )
 
     return {
         "id": process_id,
@@ -688,6 +769,9 @@ async def execute(
         "status": background_process.status,
         "exit_code": background_process.exit_code,
         "output": output,
+        "truncated": truncated,
+        "next_offset": next_offset,
+        "log_path": background_process.log_path,
     }
 
 
@@ -710,22 +794,30 @@ async def get_status(
         ge=0,
         le=300,
     ),
+    offset: int = Query(
+        0,
+        description="Number of output entries to skip. Use next_offset from the previous response to get only new output.",
+        ge=0,
+    ),
+    tail: Optional[int] = Query(
+        None,
+        description="Return only the last N output entries. Useful to limit response size when only recent output matters.",
+        ge=1,
+    ),
 ):
     background_process = _get_process(process_id)
 
     if wait and background_process.status == "running":
         try:
             await asyncio.wait_for(
-                asyncio.shield(background_process.drain_task), timeout=wait
+                asyncio.shield(background_process.log_task), timeout=wait
             )
         except asyncio.TimeoutError:
             pass
 
-    # Drain the buffer — return and clear
-    output = background_process.output[:]
-    truncated = background_process.output_truncated
-    background_process.output.clear()
-    background_process.output_truncated = False
+    output, next_offset, truncated = await _read_log(
+        background_process.log_path, offset=offset, tail=tail
+    )
 
     return {
         "id": background_process.id,
@@ -734,6 +826,8 @@ async def get_status(
         "exit_code": background_process.exit_code,
         "output": output,
         "truncated": truncated,
+        "next_offset": next_offset,
+        "log_path": background_process.log_path,
     }
 
 

@@ -1,4 +1,7 @@
 import os
 
 API_KEY = os.environ.get("OPEN_TERMINAL_API_KEY", "")
-MAX_OUTPUT_LINES = int(os.environ.get("OPEN_TERMINAL_MAX_OUTPUT_LINES", "10000"))
+LOG_DIR = os.environ.get(
+    "OPEN_TERMINAL_LOG_DIR",
+    os.path.join(os.path.expanduser("~"), ".open-terminal", "logs"),
+)
