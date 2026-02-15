@@ -17,12 +17,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     perl ruby-full lua5.4 \
     # Data processing
     jq xmlstarlet sqlite3 \
+    # Media & documents
+    ffmpeg pandoc imagemagick \
     # Compression
     zip unzip tar gzip bzip2 xz-utils zstd p7zip-full \
     # System
     procps htop lsof strace sysstat \
     sudo tmux screen \
     ca-certificates gnupg apt-transport-https \
+    && rm -rf /var/lib/apt/lists/*
+
+# Node.js (LTS)
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
