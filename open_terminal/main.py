@@ -4,6 +4,7 @@ import fnmatch
 import json
 
 import aiofiles
+import aiofiles.os
 import os
 import platform
 import re
@@ -176,7 +177,7 @@ async def _log_process(background_process: BackgroundProcess):
     """Read stdout and stderr and persist to a log file."""
     log_file = None
     if background_process.log_path:
-        os.makedirs(os.path.dirname(background_process.log_path), exist_ok=True)
+        await aiofiles.os.makedirs(os.path.dirname(background_process.log_path), exist_ok=True)
         log_file = await aiofiles.open(background_process.log_path, "a")
         await log_file.write(
             json.dumps(
@@ -236,7 +237,7 @@ async def _read_log(
     Returns (entries, next_offset, truncated).
     """
     entries: list[dict] = []
-    if not log_path or not os.path.isfile(log_path):
+    if not log_path or not await aiofiles.os.path.isfile(log_path):
         return entries, 0, False
 
     async with aiofiles.open(log_path) as f:
@@ -319,7 +320,7 @@ async def list_files(
     max_entries: int = Query(500, description="Maximum entries to return.", ge=1, le=5000),
 ):
     target = os.path.abspath(directory)
-    if not os.path.isdir(target):
+    if not await aiofiles.os.path.isdir(target):
         raise HTTPException(status_code=404, detail="Directory not found")
 
     def _list_sync():
@@ -365,16 +366,17 @@ async def read_file(
     end_line: Optional[int] = Query(None, description="Last line to return (1-indexed, inclusive).", ge=1),
 ):
     target = os.path.abspath(path)
-    if not os.path.isfile(target):
+    if not await aiofiles.os.path.isfile(target):
         raise HTTPException(status_code=404, detail="File not found")
 
     try:
-        with open(target, "r", errors="strict") as text_file:
-            lines = text_file.readlines()
+        async with aiofiles.open(target, "r", errors="strict") as f:
+            content = await f.read()
+            lines = content.splitlines(keepends=True)
     except (UnicodeDecodeError, ValueError):
         # Binary file — return base64
-        with open(target, "rb") as binary_file:
-            raw = binary_file.read()
+        async with aiofiles.open(target, "rb") as f:
+            raw = await f.read()
         return {
             "path": target,
             "encoding": "base64",
@@ -403,9 +405,9 @@ async def read_file(
 )
 async def write_file(request: WriteRequest):
     target = os.path.abspath(request.path)
-    os.makedirs(os.path.dirname(target), exist_ok=True)
-    with open(target, "w") as output_file:
-        output_file.write(request.content)
+    await aiofiles.os.makedirs(os.path.dirname(target), exist_ok=True)
+    async with aiofiles.open(target, "w") as f:
+        await f.write(request.content)
     return {"path": target, "size": len(request.content.encode())}
 
 
@@ -423,11 +425,11 @@ async def write_file(request: WriteRequest):
 )
 async def replace_file_content(request: ReplaceRequest):
     target = os.path.abspath(request.path)
-    if not os.path.isfile(target):
+    if not await aiofiles.os.path.isfile(target):
         raise HTTPException(status_code=404, detail="File not found")
 
-    with open(target, "r", errors="replace") as text_file:
-        content = text_file.read()
+    async with aiofiles.open(target, "r", errors="replace") as f:
+        content = await f.read()
 
     for chunk in request.replacements:
         if chunk.start_line or chunk.end_line:
@@ -457,8 +459,8 @@ async def replace_file_content(request: ReplaceRequest):
         else:
             content = content.replace(chunk.target, chunk.replacement)
 
-    with open(target, "w") as output_file:
-        output_file.write(content)
+    async with aiofiles.open(target, "w") as f:
+        await f.write(content)
 
     return {"path": target, "size": len(content.encode())}
 
@@ -485,7 +487,7 @@ async def search_files(
     max_results: int = Query(50, description="Maximum number of matches to return.", ge=1, le=500),
 ):
     target = os.path.abspath(path)
-    if not os.path.exists(target):
+    if not await aiofiles.os.path.exists(target):
         raise HTTPException(status_code=404, detail="Search path not found")
 
     flags = re.IGNORECASE if case_insensitive else 0
@@ -497,50 +499,54 @@ async def search_files(
     else:
         pattern = re.compile(re.escape(query), flags)
 
-    def _matches_include(filename: str) -> bool:
-        if not include:
-            return True
-        return any(fnmatch.fnmatch(filename, glob) for glob in include)
+    def _search_sync():
+        def _matches_include(filename: str) -> bool:
+            if not include:
+                return True
+            return any(fnmatch.fnmatch(filename, glob) for glob in include)
 
-    matches = []
-    truncated = False
+        matches = []
+        truncated = False
 
-    def _search_file(file_path: str):
-        nonlocal truncated
-        if truncated:
-            return
-        try:
-            with open(file_path, "r", errors="strict") as f:
-                for line_number, line in enumerate(f, 1):
-                    if pattern.search(line):
-                        if match_per_line:
-                            matches.append({
-                                "file": file_path,
-                                "line": line_number,
-                                "content": line.rstrip("\n\r"),
-                            })
-                            if len(matches) >= max_results:
-                                truncated = True
-                                return
-                        else:
-                            matches.append({"file": file_path})
-                            if len(matches) >= max_results:
-                                truncated = True
-                            return  # one match per file is enough
-        except (UnicodeDecodeError, ValueError, OSError):
-            pass  # skip binary or unreadable files
-
-    if os.path.isfile(target):
-        _search_file(target)
-    else:
-        for dirpath, _, filenames in os.walk(target):
+        def _search_file(file_path: str):
+            nonlocal truncated
             if truncated:
-                break
-            for filename in sorted(filenames):
-                if not _matches_include(filename):
-                    continue
-                _search_file(os.path.join(dirpath, filename))
+                return
+            try:
+                with open(file_path, "r", errors="strict") as f:
+                    for line_number, line in enumerate(f, 1):
+                        if pattern.search(line):
+                            if match_per_line:
+                                matches.append({
+                                    "file": file_path,
+                                    "line": line_number,
+                                    "content": line.rstrip("\n\r"),
+                                })
+                                if len(matches) >= max_results:
+                                    truncated = True
+                                    return
+                            else:
+                                matches.append({"file": file_path})
+                                if len(matches) >= max_results:
+                                    truncated = True
+                                return  # one match per file is enough
+            except (UnicodeDecodeError, ValueError, OSError):
+                pass  # skip binary or unreadable files
 
+        if os.path.isfile(target):
+            _search_file(target)
+        else:
+            for dirpath, _, filenames in os.walk(target):
+                if truncated:
+                    break
+                for filename in sorted(filenames):
+                    if not _matches_include(filename):
+                        continue
+                    _search_file(os.path.join(dirpath, filename))
+
+        return matches, truncated
+
+    matches, truncated = await asyncio.to_thread(_search_sync)
     return {
         "query": query,
         "path": target,
@@ -569,7 +575,7 @@ async def get_file_link(
     path: str = Query(..., description="Absolute path to the file."),
     request: Request = None,
 ):
-    if not os.path.isfile(path):
+    if not await aiofiles.os.path.isfile(path):
         raise HTTPException(status_code=404, detail="File not found")
 
     token = uuid.uuid4().hex
@@ -592,7 +598,7 @@ async def download_file(token: str):
     if time.time() > expiry:
         raise HTTPException(status_code=404, detail="Download link expired")
 
-    if not os.path.isfile(path):
+    if not await aiofiles.os.path.isfile(path):
         raise HTTPException(status_code=404, detail="File not found")
 
     return FileResponse(path)
@@ -628,10 +634,10 @@ async def upload_file(
     else:
         raise HTTPException(status_code=400, detail="Provide either 'url' or a file upload.")
 
-    os.makedirs(directory, exist_ok=True)
+    await aiofiles.os.makedirs(directory, exist_ok=True)
     path = os.path.join(directory, filename)
-    with open(path, "wb") as output_file:
-        output_file.write(content)
+    async with aiofiles.open(path, "wb") as f:
+        await f.write(content)
     return {"path": path, "size": len(content)}
 
 
@@ -691,11 +697,11 @@ async def upload_file_via_link(
         raise HTTPException(status_code=404, detail="Upload link expired")
 
     filename = file.filename or "upload"
-    os.makedirs(directory, exist_ok=True)
+    await aiofiles.os.makedirs(directory, exist_ok=True)
     path = os.path.join(directory, filename)
     content = await file.read()
-    with open(path, "wb") as output_file:
-        output_file.write(content)
+    async with aiofiles.open(path, "wb") as f:
+        await f.write(content)
     return {"path": path, "size": len(content)}
 
 
