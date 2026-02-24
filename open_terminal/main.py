@@ -56,7 +56,7 @@ async def verify_api_key(
 app = FastAPI(
     title="Open Terminal",
     description="A remote terminal API.",
-    version="0.2.4",
+    version="0.2.5",
 )
 app.add_middleware(
     CORSMiddleware,
@@ -176,21 +176,24 @@ _EXPIRY_SECONDS = 300  # auto-clean finished processes after 5 min
 async def _log_process(background_process: BackgroundProcess):
     """Read stdout and stderr and persist to a log file."""
     log_file = None
-    if background_process.log_path:
-        await aiofiles.os.makedirs(os.path.dirname(background_process.log_path), exist_ok=True)
-        log_file = await aiofiles.open(background_process.log_path, "a")
-        await log_file.write(
-            json.dumps(
-                {
-                    "type": "start",
-                    "command": background_process.command,
-                    "pid": background_process.process.pid,
-                    "ts": time.time(),
-                }
+    try:
+        if background_process.log_path:
+            await aiofiles.os.makedirs(os.path.dirname(background_process.log_path), exist_ok=True)
+            log_file = await aiofiles.open(background_process.log_path, "a")
+            await log_file.write(
+                json.dumps(
+                    {
+                        "type": "start",
+                        "command": background_process.command,
+                        "pid": background_process.process.pid,
+                        "ts": time.time(),
+                    }
+                )
+                + "\n"
             )
-            + "\n"
-        )
-        await log_file.flush()
+            await log_file.flush()
+    except OSError:
+        log_file = None
 
     async def read_stream(stream, label):
         async for line in stream:
@@ -400,9 +403,12 @@ async def read_file(
 )
 async def write_file(request: WriteRequest):
     target = os.path.abspath(request.path)
-    await aiofiles.os.makedirs(os.path.dirname(target), exist_ok=True)
-    async with aiofiles.open(target, "w") as f:
-        await f.write(request.content)
+    try:
+        await aiofiles.os.makedirs(os.path.dirname(target), exist_ok=True)
+        async with aiofiles.open(target, "w") as f:
+            await f.write(request.content)
+    except OSError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     return {"path": target, "size": len(request.content.encode())}
 
 
@@ -423,8 +429,11 @@ async def replace_file_content(request: ReplaceRequest):
     if not await aiofiles.os.path.isfile(target):
         raise HTTPException(status_code=404, detail="File not found")
 
-    async with aiofiles.open(target, "r", errors="replace") as f:
-        content = await f.read()
+    try:
+        async with aiofiles.open(target, "r", errors="replace") as f:
+            content = await f.read()
+    except OSError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
     for chunk in request.replacements:
         if chunk.start_line or chunk.end_line:
@@ -454,8 +463,11 @@ async def replace_file_content(request: ReplaceRequest):
         else:
             content = content.replace(chunk.target, chunk.replacement)
 
-    async with aiofiles.open(target, "w") as f:
-        await f.write(content)
+    try:
+        async with aiofiles.open(target, "w") as f:
+            await f.write(content)
+    except OSError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
     return {"path": target, "size": len(content.encode())}
 
@@ -629,10 +641,13 @@ async def upload_file(
     else:
         raise HTTPException(status_code=400, detail="Provide either 'url' or a file upload.")
 
-    await aiofiles.os.makedirs(directory, exist_ok=True)
-    path = os.path.join(directory, filename)
-    async with aiofiles.open(path, "wb") as f:
-        await f.write(content)
+    try:
+        await aiofiles.os.makedirs(directory, exist_ok=True)
+        path = os.path.join(directory, filename)
+        async with aiofiles.open(path, "wb") as f:
+            await f.write(content)
+    except OSError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     return {"path": path, "size": len(content)}
 
 
@@ -692,11 +707,14 @@ async def upload_file_via_link(
         raise HTTPException(status_code=404, detail="Upload link expired")
 
     filename = file.filename or "upload"
-    await aiofiles.os.makedirs(directory, exist_ok=True)
-    path = os.path.join(directory, filename)
-    content = await file.read()
-    async with aiofiles.open(path, "wb") as f:
-        await f.write(content)
+    try:
+        await aiofiles.os.makedirs(directory, exist_ok=True)
+        path = os.path.join(directory, filename)
+        content = await file.read()
+        async with aiofiles.open(path, "wb") as f:
+            await f.write(content)
+    except OSError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     return {"path": path, "size": len(content)}
 
 

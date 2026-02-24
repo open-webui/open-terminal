@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.5] - 2026-02-23
+
+### Fixed
+
+- 🛡️ **Graceful permission error handling** across all file endpoints (`write_file`, `replace_file_content`, `upload_file`). `PermissionError` and other `OSError` exceptions now return HTTP 400 with a descriptive message instead of crashing with HTTP 500.
+- 🐳 **Docker volume permissions** via `entrypoint.sh` that automatically fixes `/home/user` ownership on startup when a host volume is mounted with mismatched permissions.
+- 🔧 **Background process resilience** — `_log_process` no longer crashes if the log directory is unwritable; commands still execute and complete normally.
+
 ## [0.2.4] - 2026-02-19
 
 ### Changed
