@@ -56,7 +56,7 @@ async def verify_api_key(
 app = FastAPI(
     title="Open Terminal",
     description="A remote terminal API.",
-    version="0.2.5",
+    version="0.2.6",
 )
 app.add_middleware(
     CORSMiddleware,
@@ -82,6 +82,7 @@ async def normalize_null_query_params(request: Request, call_next):
 # ---------------------------------------------------------------------------
 # Models
 # ---------------------------------------------------------------------------
+
 
 class ExecRequest(BaseModel):
     command: str = Field(
@@ -157,6 +158,7 @@ class ReplaceRequest(BaseModel):
 # Background process management
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class BackgroundProcess:
     id: str
@@ -178,7 +180,9 @@ async def _log_process(background_process: BackgroundProcess):
     log_file = None
     try:
         if background_process.log_path:
-            await aiofiles.os.makedirs(os.path.dirname(background_process.log_path), exist_ok=True)
+            await aiofiles.os.makedirs(
+                os.path.dirname(background_process.log_path), exist_ok=True
+            )
             log_file = await aiofiles.open(background_process.log_path, "a")
             await log_file.write(
                 json.dumps(
@@ -200,7 +204,11 @@ async def _log_process(background_process: BackgroundProcess):
             if log_file:
                 await log_file.write(
                     json.dumps(
-                        {"type": label, "data": line.decode(errors="replace"), "ts": time.time()}
+                        {
+                            "type": label,
+                            "data": line.decode(errors="replace"),
+                            "ts": time.time(),
+                        }
                     )
                     + "\n"
                 )
@@ -293,6 +301,7 @@ def _get_process(process_id: str) -> BackgroundProcess:
 # Health
 # ---------------------------------------------------------------------------
 
+
 @app.get(
     "/health",
     operation_id="health_check",
@@ -306,6 +315,7 @@ async def health():
 # ---------------------------------------------------------------------------
 # Files
 # ---------------------------------------------------------------------------
+
 
 @app.get(
     "/files/list",
@@ -361,8 +371,12 @@ async def list_files(
 )
 async def read_file(
     path: str = Query(..., description="Path to the file to read."),
-    start_line: Optional[int] = Query(None, description="First line to return (1-indexed, inclusive).", ge=1),
-    end_line: Optional[int] = Query(None, description="Last line to return (1-indexed, inclusive).", ge=1),
+    start_line: Optional[int] = Query(
+        None, description="First line to return (1-indexed, inclusive).", ge=1
+    ),
+    end_line: Optional[int] = Query(
+        None, description="Last line to return (1-indexed, inclusive).", ge=1
+    ),
 ):
     target = os.path.abspath(path)
     if not await aiofiles.os.path.isfile(target):
@@ -482,8 +496,8 @@ async def replace_file_content(request: ReplaceRequest):
 
 
 @app.get(
-    "/files/search",
-    operation_id="search_files",
+    "/files/grep",
+    operation_id="grep_search",
     summary="Search file contents",
     description="Search for a text pattern across files in a directory. Returns structured matches with file paths, line numbers, and matching lines. Skips binary files.",
     dependencies=[Depends(verify_api_key)],
@@ -493,14 +507,24 @@ async def replace_file_content(request: ReplaceRequest):
         401: {"description": "Invalid or missing API key."},
     },
 )
-async def search_files(
+async def grep_search(
     query: str = Query(..., description="Text or regex pattern to search for."),
     path: str = Query(".", description="Directory or file to search in."),
     regex: bool = Query(False, description="Treat query as a regex pattern."),
-    case_insensitive: bool = Query(False, description="Perform case-insensitive matching."),
-    include: Optional[list[str]] = Query(None, description="Glob patterns to filter files (e.g. '*.py'). Files must match at least one pattern."),
-    match_per_line: bool = Query(True, description="If true, return each matching line with line numbers. If false, return only the names of matching files."),
-    max_results: int = Query(50, description="Maximum number of matches to return.", ge=1, le=500),
+    case_insensitive: bool = Query(
+        False, description="Perform case-insensitive matching."
+    ),
+    include: Optional[list[str]] = Query(
+        None,
+        description="Glob patterns to filter files (e.g. '*.py'). Files must match at least one pattern.",
+    ),
+    match_per_line: bool = Query(
+        True,
+        description="If true, return each matching line with line numbers. If false, return only the names of matching files.",
+    ),
+    max_results: int = Query(
+        50, description="Maximum number of matches to return.", ge=1, le=500
+    ),
 ):
     target = os.path.abspath(path)
     if not await aiofiles.os.path.exists(target):
@@ -533,11 +557,13 @@ async def search_files(
                     for line_number, line in enumerate(f, 1):
                         if pattern.search(line):
                             if match_per_line:
-                                matches.append({
-                                    "file": file_path,
-                                    "line": line_number,
-                                    "content": line.rstrip("\n\r"),
-                                })
+                                matches.append(
+                                    {
+                                        "file": file_path,
+                                        "line": line_number,
+                                        "content": line.rstrip("\n\r"),
+                                    }
+                                )
                                 if len(matches) >= max_results:
                                     truncated = True
                                     return
@@ -565,6 +591,98 @@ async def search_files(
     matches, truncated = await asyncio.to_thread(_search_sync)
     return {
         "query": query,
+        "path": target,
+        "matches": matches,
+        "truncated": truncated,
+    }
+
+
+@app.get(
+    "/files/glob",
+    operation_id="glob_search",
+    summary="Search files by name",
+    description="Search for files and subdirectories by name within a specified directory using glob patterns. Results will include the relative path, type, size, and modification time.",
+    dependencies=[Depends(verify_api_key)],
+    responses={
+        404: {"description": "Search directory not found."},
+        401: {"description": "Invalid or missing API key."},
+    },
+)
+async def glob_search(
+    pattern: str = Query(..., description="Glob pattern to search for (e.g. '*.py')."),
+    path: str = Query(".", description="Directory to search within."),
+    exclude: Optional[list[str]] = Query(
+        None, description="Glob patterns to exclude from search results."
+    ),
+    type: Optional[str] = Query(
+        "any",
+        description="Type filter: 'file', 'directory', or 'any'.",
+        pattern="^(file|directory|any)$",
+    ),
+    max_results: int = Query(
+        50, description="Maximum number of matches to return.", ge=1, le=500
+    ),
+):
+    target = os.path.abspath(path)
+    if not await aiofiles.os.path.isdir(target):
+        raise HTTPException(status_code=404, detail="Search directory not found")
+
+    def _glob_sync():
+        matches = []
+        truncated = False
+
+        for dirpath, dirnames, filenames in os.walk(target):
+            if truncated:
+                break
+
+            entries = []
+            if type in ("any", "directory"):
+                entries.extend([(d, "directory") for d in dirnames])
+            if type in ("any", "file"):
+                entries.extend([(f, "file") for f in filenames])
+
+            for name, entry_type in sorted(entries, key=lambda x: x[0]):
+                if truncated:
+                    break
+
+                full_path = os.path.join(dirpath, name)
+                rel_path = os.path.relpath(full_path, target)
+
+                # Check inclusion pattern
+                if not fnmatch.fnmatch(name, pattern) and not fnmatch.fnmatch(
+                    rel_path, pattern
+                ):
+                    continue
+
+                # Check exclusion patterns
+                if exclude and any(
+                    fnmatch.fnmatch(name, excl) or fnmatch.fnmatch(rel_path, excl)
+                    for excl in exclude
+                ):
+                    continue
+
+                try:
+                    file_stat = os.stat(full_path)
+                    matches.append(
+                        {
+                            "path": rel_path,
+                            "type": entry_type,
+                            "size": file_stat.st_size,
+                            "modified": file_stat.st_mtime,
+                        }
+                    )
+
+                    if len(matches) >= max_results:
+                        truncated = True
+                        break
+                except OSError:
+                    pass
+
+        return matches, truncated
+
+    matches, truncated = await asyncio.to_thread(_glob_sync)
+    return {
+        "pattern": pattern,
         "path": target,
         "matches": matches,
         "truncated": truncated,
@@ -632,8 +750,13 @@ async def download_file(token: str):
 )
 async def upload_file(
     directory: str = Query(..., description="Destination directory for the file."),
-    url: Optional[str] = Query(None, description="URL to download the file from. If omitted, expects a multipart file upload."),
-    file: Optional[UploadFile] = File(None, description="The file to upload (if no URL provided)."),
+    url: Optional[str] = Query(
+        None,
+        description="URL to download the file from. If omitted, expects a multipart file upload.",
+    ),
+    file: Optional[UploadFile] = File(
+        None, description="The file to upload (if no URL provided)."
+    ),
 ):
     if url:
         import httpx
@@ -648,7 +771,9 @@ async def upload_file(
         content = await file.read()
         filename = file.filename or "upload"
     else:
-        raise HTTPException(status_code=400, detail="Provide either 'url' or a file upload.")
+        raise HTTPException(
+            status_code=400, detail="Provide either 'url' or a file upload."
+        )
 
     try:
         await aiofiles.os.makedirs(directory, exist_ok=True)
@@ -671,7 +796,9 @@ async def upload_file(
     },
 )
 async def create_upload_link(
-    directory: str = Query(..., description="Destination directory for the uploaded file."),
+    directory: str = Query(
+        ..., description="Destination directory for the uploaded file."
+    ),
     request: Request = None,
 ):
     token = uuid.uuid4().hex
@@ -695,7 +822,7 @@ async def upload_page(token: str):
         '<form method="post" enctype="multipart/form-data">'
         '<input type="file" name="file" required> '
         '<button type="submit">Upload</button>'
-        '</form>'
+        "</form>"
     )
 
 
@@ -730,6 +857,7 @@ async def upload_file_via_link(
 # ---------------------------------------------------------------------------
 # Execute
 # ---------------------------------------------------------------------------
+
 
 @app.get(
     "/execute",
@@ -794,9 +922,7 @@ async def execute(
     background_process = BackgroundProcess(
         id=process_id, command=request.command, process=process, log_path=log_path
     )
-    background_process.log_task = asyncio.create_task(
-        _log_process(background_process)
-    )
+    background_process.log_task = asyncio.create_task(_log_process(background_process))
     _processes[process_id] = background_process
 
     if wait is not None:

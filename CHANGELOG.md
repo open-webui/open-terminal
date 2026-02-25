@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.6] - 2026-02-24
+
+### Added
+
+- 🔍 **File Search Endpoints**: Added a new `/files/glob` endpoint (alias `glob_search`) to search for files by name/pattern using wildcards.
+- 🔄 **Alias Update**: Renamed and aliased the existing `/files/search` endpoint to `/files/grep` (alias `grep_search`) to establish a clear distinction between content-level search (`grep`) and filename-level search (`glob`).
+
 ## [0.2.5] - 2026-02-23
 
 ### Fixed
