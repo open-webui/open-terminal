@@ -1,5 +1,5 @@
 import asyncio
-import base64
+
 import fnmatch
 import json
 
@@ -18,11 +18,11 @@ from typing import Optional
 
 from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
-from open_terminal.env import API_KEY, LOG_DIR
+from open_terminal.env import API_KEY, BINARY_FILE_MIME_PREFIXES, LOG_DIR
 
 
 def get_system_info() -> str:
@@ -351,10 +351,11 @@ async def list_files(
     "/files/read",
     operation_id="read_file",
     summary="Read a file",
-    description="Return the contents of a file as JSON. Text files return a content string; binary files return base64-encoded content. Optionally specify a line range for text files.",
+    description="Return the contents of a file. Text files return JSON with a content string. Supported binary types (configurable, default: image/*) return the raw binary with the appropriate Content-Type. Unsupported binary types are rejected. Optionally specify a line range for text files.",
     dependencies=[Depends(verify_api_key)],
     responses={
         404: {"description": "File not found."},
+        415: {"description": "Unsupported binary file type."},
         401: {"description": "Invalid or missing API key."},
     },
 )
@@ -372,15 +373,23 @@ async def read_file(
             content = await f.read()
             lines = content.splitlines(keepends=True)
     except (UnicodeDecodeError, ValueError):
-        # Binary file — return base64
-        async with aiofiles.open(target, "rb") as f:
-            raw = await f.read()
-        return {
-            "path": target,
-            "encoding": "base64",
-            "size": len(raw),
-            "content": base64.b64encode(raw).decode("ascii"),
-        }
+        import mimetypes
+
+        size = (await aiofiles.os.stat(target)).st_size
+        mime, _ = mimetypes.guess_type(target)
+        mime = mime or "application/octet-stream"
+
+        # Return raw binary for allowed mime type prefixes (e.g. image/*)
+        if any(mime.startswith(prefix) for prefix in BINARY_FILE_MIME_PREFIXES):
+            async with aiofiles.open(target, "rb") as f:
+                raw = await f.read()
+            return Response(content=raw, media_type=mime)
+
+        # Other binary files: reject (LLMs can't interpret raw bytes)
+        raise HTTPException(
+            status_code=415,
+            detail=f"Unsupported binary file type: {mime} ({size} bytes)",
+        )
 
     start = (start_line or 1) - 1
     end = end_line or len(lines)
