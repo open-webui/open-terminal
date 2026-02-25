@@ -1,8 +1,15 @@
 # ⚡ Open Terminal
 
-A lightweight API for running shell commands remotely — designed for AI agents and automation.
+A lightweight, self-hosted terminal that gives AI agents and automation tools a dedicated environment to run commands, manage files, and execute code — all through a simple API.
 
-The container ships with a full toolkit (Python, git, jq, curl, build tools, and more) and runs as a non-root user with passwordless `sudo`.
+## Why Open Terminal?
+
+AI assistants are great at writing code, but they need somewhere to *run* it. Open Terminal is that place — a remote shell with file management, search, and more, accessible over a simple REST API.
+
+You can run it two ways:
+
+- **Docker (sandboxed)** — runs in an isolated container with a full toolkit pre-installed: Python, Node.js, git, build tools, data science libraries, ffmpeg, and more. Great for giving AI agents a safe playground without touching your host system.
+- **Bare metal** — install it directly with `pip` and run it anywhere Python runs. Commands execute on your machine, so you get full access to your local environment.
 
 ## Getting Started
 
@@ -12,16 +19,23 @@ The container ships with a full toolkit (Python, git, jq, curl, build tools, and
 docker run -d --name open-terminal --restart unless-stopped -p 8000:8000 -v open-terminal:/home/user -e OPEN_TERMINAL_API_KEY=your-secret-key ghcr.io/open-webui/open-terminal
 ```
 
-If no API key is provided, one is auto-generated and printed on startup (`docker logs open-terminal`).
+That's it — you're up and running at `http://localhost:8000`.
 
-### Build from Source
+> [!TIP]
+> If you don't set an API key, one is generated automatically. Grab it with `docker logs open-terminal`.
+
+#### Customizing the Docker Environment
+
+The default image ships with a broad set of tools, but you can tailor it to your needs. Fork the repo, edit the [Dockerfile](Dockerfile) to add or remove system packages, Python libraries, or language runtimes, then build your own image:
 
 ```bash
-docker build -t open-terminal .
-docker run -p 8000:8000 open-terminal
+docker build -t my-terminal .
+docker run -d --name open-terminal -p 8000:8000 my-terminal
 ```
 
 ### Bare Metal
+
+No Docker? No problem. Open Terminal is a standard Python package:
 
 ```bash
 # One-liner with uvx (no install needed)
@@ -32,27 +46,32 @@ pip install open-terminal
 open-terminal run --host 0.0.0.0 --port 8000 --api-key your-secret-key
 ```
 
-## Quick Examples
+> [!CAUTION]
+> On bare metal, commands run directly on your machine with your user's permissions. Use Docker if you want sandboxed execution.
 
-**Run a command:**
 
-```bash
-curl -X POST http://localhost:8000/execute?wait=5 \
-  -H "Authorization: Bearer <api-key>" \
-  -H "Content-Type: application/json" \
-  -d '{"command": "echo hello"}'
-```
+## Using with Open WebUI
 
-**Upload a file:**
+Open Terminal integrates directly with [Open WebUI](https://github.com/open-webui/open-webui), giving your AI assistants the ability to run commands, manage files, and interact with the terminal — right from the chat interface.
 
-```bash
-curl -X POST "http://localhost:8000/files/upload?directory=/home/user&url=https://example.com/data.csv" \
-  -H "Authorization: Bearer <api-key>"
-```
+Once connected, you get:
+
+- 🤖 **AI tool access** — your models can execute commands, read/write files, and search your codebase as part of a conversation
+- 📁 **Built-in file browser** — browse, upload, download, and manage files on the terminal instance directly from the Open WebUI sidebar
+
+### Setup
+
+1. **Start an Open Terminal instance** (see [Getting Started](#getting-started) above)
+2. In Open WebUI, go to **User Settings → Integrations**
+3. Under **Open Terminal**, click the **+** button to add a connection
+4. Enter the **URL** (e.g. `http://localhost:8000`) and your **API key**
+5. **Enable** the connection — only one terminal can be active at a time
+
+That's it — your AI assistants now have access to the terminal, and you can browse files from the sidebar.
 
 ## API Docs
 
-Full interactive API documentation is available at [http://localhost:8000/docs](http://localhost:8000/docs).
+Full interactive API documentation is available at [http://localhost:8000/docs](http://localhost:8000/docs) once your instance is running.
 
 ## License
 
