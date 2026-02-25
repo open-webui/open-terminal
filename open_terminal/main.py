@@ -22,6 +22,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
+from pypdf import PdfReader
 
 from open_terminal.env import API_KEY, BINARY_FILE_MIME_PREFIXES, LOG_DIR
 
@@ -56,7 +57,7 @@ async def verify_api_key(
 app = FastAPI(
     title="Open Terminal",
     description="A remote terminal API.",
-    version="0.2.7",
+    version="0.2.8",
 )
 app.add_middleware(
     CORSMiddleware,
@@ -424,6 +425,21 @@ async def read_file(
         size = (await aiofiles.os.stat(target)).st_size
         mime, _ = mimetypes.guess_type(target)
         mime = mime or "application/octet-stream"
+
+        # Extract text from PDFs so LLMs can read the content
+        if mime == "application/pdf":
+            reader = await asyncio.to_thread(PdfReader, target)
+            text = "\n".join(
+                page.extract_text() or "" for page in reader.pages
+            )
+            lines = text.splitlines(keepends=True)
+            start = (start_line or 1) - 1
+            end = end_line or len(lines)
+            return {
+                "path": target,
+                "total_lines": len(lines),
+                "content": "".join(lines[start:end]),
+            }
 
         # Return raw binary for allowed mime type prefixes (e.g. image/*)
         if any(mime.startswith(prefix) for prefix in BINARY_FILE_MIME_PREFIXES):
