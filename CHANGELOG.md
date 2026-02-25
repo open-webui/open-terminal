@@ -4,38 +4,52 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.7] - 2026-02-25
+
+### Added
+
+- 👁️ **File view endpoint** (GET /files/view) for serving raw binary content of any file type with the correct Content-Type. Designed for UI previewing (PDFs, images, etc.) without the MIME restrictions of read_file.
+- 📂 **--cwd CLI option** for both run and mcp commands to set the server's working directory on startup.
+- 📍 **Working directory endpoints** — GET /files/cwd and POST /files/cwd to query and change the current working directory at runtime.
+- 📁 **mkdir endpoint** (POST /files/mkdir) to create directories with automatic parent directory creation.
+- 🗑️ **delete endpoint** (DELETE /files/delete) to remove files and directories.
+
+### Changed
+
+- 📄 **Binary-aware read_file** returns raw binary responses for supported file types (images, etc.) and rejects unsupported binary files with a descriptive error. Configurable via OPEN_TERMINAL_BINARY_MIME_PREFIXES env var.
+
 ## [0.2.6] - 2026-02-24
 
 ### Added
 
-- 🔍 **File Search Endpoints**: Added a new `/files/glob` endpoint (alias `glob_search`) to search for files by name/pattern using wildcards.
-- 🔄 **Alias Update**: Renamed and aliased the existing `/files/search` endpoint to `/files/grep` (alias `grep_search`) to establish a clear distinction between content-level search (`grep`) and filename-level search (`glob`).
+- 🔍 **File Search Endpoints**: Added a new /files/glob endpoint (alias glob_search) to search for files by name/pattern using wildcards.
+- 🔄 **Alias Update**: Renamed and aliased the existing /files/search endpoint to /files/grep (alias grep_search) to establish a clear distinction between content-level search (grep) and filename-level search (glob).
 
 ## [0.2.5] - 2026-02-23
 
 ### Fixed
 
-- 🛡️ **Graceful permission error handling** across all file endpoints (`write_file`, `replace_file_content`, `upload_file`). `PermissionError` and other `OSError` exceptions now return HTTP 400 with a descriptive message instead of crashing with HTTP 500.
-- 🐳 **Docker volume permissions** via `entrypoint.sh` that automatically fixes `/home/user` ownership on startup when a host volume is mounted with mismatched permissions.
-- 🔧 **Background process resilience** — `_log_process` no longer crashes if the log directory is unwritable; commands still execute and complete normally.
+- 🛡️ **Graceful permission error handling** across all file endpoints (write_file, replace_file_content, upload_file). PermissionError and other OSError exceptions now return HTTP 400 with a descriptive message instead of crashing with HTTP 500.
+- 🐳 **Docker volume permissions** via entrypoint.sh that automatically fixes /home/user ownership on startup when a host volume is mounted with mismatched permissions.
+- 🔧 **Background process resilience** — _log_process no longer crashes if the log directory is unwritable; commands still execute and complete normally.
 
 ## [0.2.4] - 2026-02-19
 
 ### Changed
 
-- ⚡ **Fully async I/O** across all file and upload endpoints. Replaced blocking `os.*` and `open()` calls with `aiofiles` and `aiofiles.os` so the event loop is never blocked by filesystem operations. `search_files` and `list_files` inner loops use `asyncio.to_thread` for `os.walk`/`os.listdir` workloads.
+- ⚡ **Fully async I/O** across all file and upload endpoints. Replaced blocking os.* and open() calls with aiofiles and aiofiles.os so the event loop is never blocked by filesystem operations. search_files and list_files inner loops use asyncio.to_thread for os.walk/os.listdir workloads.
 
 ## [0.2.3] - 2026-02-15
 
 ### Added
 
-- 🤖 **Optional MCP server mode** via `open-terminal mcp`, exposing all endpoints as MCP tools for LLM agent integration. Supports `stdio` and `streamable-http` transports. Install with `pip install open-terminal[mcp]`.
+- 🤖 **Optional MCP server mode** via open-terminal mcp, exposing all endpoints as MCP tools for LLM agent integration. Supports stdio and streamable-http transports. Install with pip install open-terminal[mcp].
 
 ## [0.2.2] - 2026-02-15
 
 ### Fixed
 
-- 🛡️ **Null query parameter tolerance** via HTTP middleware that strips query parameters with the literal value `"null"`. Prevents 422 errors when clients serialize `null` into query strings (e.g. `?wait=null`) instead of omitting the parameter.
+- 🛡️ **Null query parameter tolerance** via HTTP middleware that strips query parameters with the literal value "null". Prevents 422 errors when clients serialize null into query strings (e.g. ?wait=null) instead of omitting the parameter.
 
 ## [0.2.1] - 2026-02-14
 

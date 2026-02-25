@@ -56,7 +56,7 @@ async def verify_api_key(
 app = FastAPI(
     title="Open Terminal",
     description="A remote terminal API.",
-    version="0.2.6",
+    version="0.2.7",
 )
 app.add_middleware(
     CORSMiddleware,
@@ -444,6 +444,33 @@ async def read_file(
         "total_lines": len(lines),
         "content": "".join(lines[start:end]),
     }
+
+
+@app.get(
+    "/files/view",
+    include_in_schema=False,
+    dependencies=[Depends(verify_api_key)],
+)
+async def view_file(
+    path: str = Query(..., description="Path to the file to view."),
+):
+    """Return raw file bytes with the appropriate Content-Type.
+
+    Unlike read_file (which is designed for LLM consumption and restricts
+    binary types), this endpoint serves any file as-is for UI previewing.
+    """
+    target = os.path.abspath(path)
+    if not await aiofiles.os.path.isfile(target):
+        raise HTTPException(status_code=404, detail="File not found")
+
+    import mimetypes
+
+    mime, _ = mimetypes.guess_type(target)
+    mime = mime or "application/octet-stream"
+
+    async with aiofiles.open(target, "rb") as f:
+        raw = await f.read()
+    return Response(content=raw, media_type=mime)
 
 
 @app.post(
