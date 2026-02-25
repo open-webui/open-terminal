@@ -8,6 +8,7 @@ import aiofiles.os
 import os
 import platform
 import re
+import shutil
 import signal
 import socket
 import sys
@@ -31,8 +32,7 @@ def get_system_info() -> str:
     return (
         f"This system is running {platform.system()} {platform.release()} ({platform.machine()}) "
         f"on {socket.gethostname()} as user '{os.getenv('USER', 'unknown')}' with {shell}. "
-        f"Python {sys.version.split()[0]} is available. "
-        f"The working directory is {os.getcwd()}."
+        f"Python {sys.version.split()[0]} is available."
     )
 
 
@@ -140,6 +140,13 @@ class ReplacementChunk(BaseModel):
     allow_multiple: bool = Field(
         False,
         description="If true, replaces all occurrences. If false, errors when multiple matches are found.",
+    )
+
+
+class MkdirRequest(BaseModel):
+    path: str = Field(
+        ...,
+        description="Directory path to create. Parent directories are created automatically.",
     )
 
 
@@ -318,6 +325,31 @@ async def health():
 
 
 @app.get(
+    "/files/cwd",
+    include_in_schema=False,
+    dependencies=[Depends(verify_api_key)],
+)
+async def get_cwd():
+    return {"cwd": os.getcwd()}
+
+
+@app.post(
+    "/files/cwd",
+    include_in_schema=False,
+    dependencies=[Depends(verify_api_key)],
+)
+async def set_cwd(request: MkdirRequest):
+    target = os.path.abspath(request.path)
+    if not await aiofiles.os.path.isdir(target):
+        raise HTTPException(status_code=404, detail="Directory not found")
+    try:
+        os.chdir(target)
+    except OSError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"cwd": target}
+
+
+@app.get(
     "/files/list",
     operation_id="list_files",
     summary="List directory contents",
@@ -433,6 +465,43 @@ async def write_file(request: WriteRequest):
     except OSError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return {"path": target, "size": len(request.content.encode())}
+
+
+@app.post(
+    "/files/mkdir",
+    include_in_schema=False,
+    dependencies=[Depends(verify_api_key)],
+)
+async def mkdir(request: MkdirRequest):
+    target = os.path.abspath(request.path)
+    try:
+        await aiofiles.os.makedirs(target, exist_ok=True)
+    except OSError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"path": target}
+
+
+@app.delete(
+    "/files/delete",
+    include_in_schema=False,
+    dependencies=[Depends(verify_api_key)],
+)
+async def delete_entry(
+    path: str = Query(..., description="Path to delete."),
+):
+    target = os.path.abspath(path)
+    if not await aiofiles.os.path.exists(target):
+        raise HTTPException(status_code=404, detail="Path not found")
+
+    is_dir = await aiofiles.os.path.isdir(target)
+    try:
+        if is_dir:
+            await asyncio.to_thread(shutil.rmtree, target)
+        else:
+            await aiofiles.os.remove(target)
+    except OSError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"path": target, "type": "directory" if is_dir else "file"}
 
 
 @app.post(
