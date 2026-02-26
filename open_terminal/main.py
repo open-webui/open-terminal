@@ -57,7 +57,7 @@ async def verify_api_key(
 app = FastAPI(
     title="Open Terminal",
     description="A remote terminal API.",
-    version="0.2.8",
+    version="0.2.9",
 )
 app.add_middleware(
     CORSMiddleware,
@@ -473,6 +473,13 @@ async def read_file(
 async def display_file(
     path: str = Query(..., description="Absolute path to the file to display."),
 ):
+    """Signal that a file should be displayed to the user.
+
+    This endpoint does not serve file content itself. It returns the resolved
+    path and whether the file exists. The consuming client is responsible for
+    intercepting this response and presenting the file in its own UI (e.g.
+    opening a preview pane, launching a viewer, etc.).
+    """
     target = os.path.abspath(path)
     exists = await aiofiles.os.path.isfile(target)
     return {"path": target, "exists": exists}
