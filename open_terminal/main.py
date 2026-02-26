@@ -463,6 +463,24 @@ async def read_file(
 
 
 @app.get(
+    "/files/display",
+    operation_id="display_file",
+    summary="Display a file to the user",
+    description="Open a file in the user's file viewer so they can see it. Use this when the user wants to view or look at a file. This does not return file content to you — use read_file if you need to read the content yourself.",
+    dependencies=[Depends(verify_api_key)],
+    responses={
+        401: {"description": "Invalid or missing API key."},
+    },
+)
+async def display_file(
+    path: str = Query(..., description="Absolute path to the file to display."),
+):
+    target = os.path.abspath(path)
+    exists = await aiofiles.os.path.isfile(target)
+    return {"path": target, "exists": exists}
+
+
+@app.get(
     "/files/view",
     include_in_schema=False,
     dependencies=[Depends(verify_api_key)],
@@ -1093,7 +1111,7 @@ async def get_status(
 ):
     background_process = _get_process(process_id)
 
-    if wait and background_process.status == "running":
+    if wait is not None and background_process.status == "running":
         try:
             await asyncio.wait_for(
                 asyncio.shield(background_process.log_task), timeout=wait
