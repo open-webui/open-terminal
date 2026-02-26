@@ -25,6 +25,7 @@ from pydantic import BaseModel, Field
 from pypdf import PdfReader
 
 from open_terminal.env import API_KEY, BINARY_FILE_MIME_PREFIXES, CORS_ALLOWED_ORIGINS, LOG_DIR
+from open_terminal.runner import PipeRunner, ProcessRunner, create_runner
 
 
 def get_system_info() -> str:
@@ -57,7 +58,7 @@ async def verify_api_key(
 app = FastAPI(
     title="Open Terminal",
     description="A remote terminal API.",
-    version="0.2.9",
+    version="0.3.0",
 )
 app.add_middleware(
     CORSMiddleware,
@@ -162,6 +163,7 @@ class ReplaceRequest(BaseModel):
     )
 
 
+
 # ---------------------------------------------------------------------------
 # Background process management
 # ---------------------------------------------------------------------------
@@ -171,7 +173,7 @@ class ReplaceRequest(BaseModel):
 class BackgroundProcess:
     id: str
     command: str
-    process: asyncio.subprocess.Process
+    runner: ProcessRunner
     status: str = "running"
     exit_code: Optional[int] = None
     log_task: Optional[asyncio.Task] = field(default=None, repr=False)
@@ -184,7 +186,7 @@ _EXPIRY_SECONDS = 300  # auto-clean finished processes after 5 min
 
 
 async def _log_process(background_process: BackgroundProcess):
-    """Read stdout and stderr and persist to a log file."""
+    """Read process output and persist to a log file."""
     log_file = None
     try:
         if background_process.log_path:
@@ -197,7 +199,7 @@ async def _log_process(background_process: BackgroundProcess):
                     {
                         "type": "start",
                         "command": background_process.command,
-                        "pid": background_process.process.pid,
+                        "pid": background_process.runner.pid,
                         "ts": time.time(),
                     }
                 )
@@ -207,31 +209,14 @@ async def _log_process(background_process: BackgroundProcess):
     except OSError:
         log_file = None
 
-    async def read_stream(stream, label):
-        async for line in stream:
-            if log_file:
-                await log_file.write(
-                    json.dumps(
-                        {
-                            "type": label,
-                            "data": line.decode(errors="replace"),
-                            "ts": time.time(),
-                        }
-                    )
-                    + "\n"
-                )
-                await log_file.flush()
-
     try:
-        await asyncio.gather(
-            read_stream(background_process.process.stdout, "stdout"),
-            read_stream(background_process.process.stderr, "stderr"),
-        )
+        await background_process.runner.read_output(log_file)
     finally:
-        await background_process.process.wait()
-        background_process.exit_code = background_process.process.returncode
+        exit_code = await background_process.runner.wait()
+        background_process.exit_code = exit_code
         background_process.status = "done"
         background_process.finished_at = time.time()
+        background_process.runner.close()
         if log_file:
             await log_file.write(
                 json.dumps(
@@ -270,7 +255,7 @@ async def _read_log(
             record = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if record.get("type") in ("stdout", "stderr"):
+        if record.get("type") in ("stdout", "stderr", "output"):
             entries.append({"type": record["type"], "data": record["data"]})
 
     total = len(entries)
@@ -1043,19 +1028,12 @@ async def execute(
     ),
 ):
     subprocess_env = {**os.environ, **request.env} if request.env else None
-    process = await asyncio.create_subprocess_shell(
-        request.command,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        stdin=asyncio.subprocess.PIPE,
-        cwd=request.cwd,
-        env=subprocess_env,
-    )
+    runner = await create_runner(request.command, request.cwd, subprocess_env)
 
     process_id = uuid.uuid4().hex[:12]
     log_path = os.path.join(LOG_DIR, "processes", f"{process_id}.jsonl")
     background_process = BackgroundProcess(
-        id=process_id, command=request.command, process=process, log_path=log_path
+        id=process_id, command=request.command, runner=runner, log_path=log_path
     )
     background_process.log_task = asyncio.create_task(_log_process(background_process))
     _processes[process_id] = background_process
@@ -1157,10 +1135,15 @@ async def send_input(process_id: str, body: InputRequest):
     if background_process.status != "running":
         raise HTTPException(status_code=400, detail="Process has already exited")
 
+    # Convert literal escape sequences (\n, \x03 for Ctrl-C, etc.) into real
+    # characters — LLMs often emit these as literal strings.
+    text = body.input.encode("raw_unicode_escape").decode("unicode_escape")
+
     try:
-        background_process.process.stdin.write(body.input.encode())
-        await background_process.process.stdin.drain()
-    except (BrokenPipeError, ConnectionResetError):
+        background_process.runner.write_input(text.encode())
+        if isinstance(background_process.runner, PipeRunner):
+            await background_process.runner.drain_input()
+    except (BrokenPipeError, ConnectionResetError, OSError):
         raise HTTPException(status_code=400, detail="Process stdin is closed")
 
     return {"status": "ok"}
@@ -1183,12 +1166,10 @@ async def kill_process(
 ):
     background_process = _get_process(process_id)
     if background_process.status == "running":
-        if force:
-            background_process.process.kill()
-        else:
-            background_process.process.send_signal(signal.SIGTERM)
-        await background_process.process.wait()
+        background_process.runner.kill(force=force)
+        exit_code = await background_process.runner.wait()
+        background_process.runner.close()
         background_process.status = "killed"
-        background_process.exit_code = background_process.process.returncode
+        background_process.exit_code = exit_code
     del _processes[process_id]
     return {"status": "killed"}
