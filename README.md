@@ -58,7 +58,7 @@ Open Terminal integrates with [Open WebUI](https://github.com/open-webui/open-we
 
 Requests go directly from your **browser**, so the URL must be reachable from your machine.
 
-1. Go to **User Settings → Integrations**
+1. Go to **User Settings → Integrations → Open Terminal**
 2. Add your terminal **URL** and **API key**
 3. Enable the connection
 
@@ -66,7 +66,7 @@ Requests go directly from your **browser**, so the URL must be reachable from yo
 
 Admins can configure multiple terminals and control access at the user or group level. Requests are proxied through the Open WebUI **backend**, so the terminal only needs to be reachable from the server.
 
-1. Go to **Admin Settings → Integrations**
+1. Go to **Admin Settings → Integrations → Open Terminal**
 2. Add the terminal **URL** and **API key**
 3. Enable the connection
 
