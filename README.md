@@ -9,7 +9,7 @@ AI assistants are great at writing code, but they need somewhere to *run* it. Op
 You can run it two ways:
 
 - **Docker (sandboxed)** — runs in an isolated container with a full toolkit pre-installed: Python, Node.js, git, build tools, data science libraries, ffmpeg, and more. Great for giving AI agents a safe playground without touching your host system.
-- **Bare metal** — install it directly with `pip` and run it anywhere Python runs. Commands execute on your machine, so you get full access to your local environment.
+- **Bare metal** — install it with `pip` and run it anywhere Python runs. Commands run directly on your machine with access to your real files, your real tools, and your real environment, perfect for local development, personal automation, or giving an AI assistant full access to your actual projects.
 
 ## Getting Started
 
