@@ -52,22 +52,25 @@ open-terminal run --host 0.0.0.0 --port 8000 --api-key your-secret-key
 
 ## Using with Open WebUI
 
-Open Terminal integrates directly with [Open WebUI](https://github.com/open-webui/open-webui), giving your AI assistants the ability to run commands, manage files, and interact with the terminal — right from the chat interface.
+Open Terminal integrates with [Open WebUI](https://github.com/open-webui/open-webui), giving your AI assistants the ability to run commands, manage files, and interact with the terminal right from the AI interface. There are two ways to connect:
 
-Once connected, you get:
+### Direct Connection
 
-- 🤖 **AI tool access** — your models can execute commands, read/write files, and search your codebase as part of a conversation
-- 📁 **Built-in file browser** — browse, upload, download, and manage files on the terminal instance directly from the Open WebUI sidebar
+Requests go directly from your **browser**, so the URL must be reachable from your machine.
 
-### Setup
+1. Go to **User Settings → Integrations**
+2. Add your terminal **URL** and **API key**
+3. Enable the connection
 
-1. **Start an Open Terminal instance** (see [Getting Started](#getting-started) above)
-2. In Open WebUI, go to **User Settings → Integrations**
-3. Under **Open Terminal**, click the **+** button to add a connection
-4. Enter the **URL** (e.g. `http://localhost:8000`) and your **API key**
-5. **Enable** the connection — only one terminal can be active at a time
+### System-Level Connection
 
-That's it — your AI assistants now have access to the terminal, and you can browse files from the sidebar.
+Admins can configure multiple terminals and control access at the user or group level. Requests are proxied through the Open WebUI **backend**, so the terminal only needs to be reachable from the server.
+
+1. Go to **Admin Settings → Integrations**
+2. Add the terminal **URL** and **API key**
+3. Enable the connection
+
+For isolated, per-user terminal containers, see **[Terminals](https://github.com/open-webui/terminals)**, which requires an enterprise license for production use.
 
 ## API Docs
 
