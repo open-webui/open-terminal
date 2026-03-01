@@ -52,19 +52,19 @@ open-terminal run --host 0.0.0.0 --port 8000 --api-key your-secret-key
 
 ## Using with Open WebUI
 
-Open Terminal integrates with [Open WebUI](https://github.com/open-webui/open-webui), giving your AI assistants the ability to run commands, manage files, and interact with the terminal right from the AI interface. There are two ways to connect:
+Open Terminal integrates with [Open WebUI](https://github.com/open-webui/open-webui), giving your AI assistants the ability to run commands, manage files, and interact with a terminal right from the AI interface. There are two ways to connect:
 
 ### Direct Connection
 
-Requests go directly from your **browser**, so the URL must be reachable from your machine.
+Users can connect their own Open Terminal instance from their user settings. This is useful when the terminal is running on their local machine or a network only they can reach, since requests go directly from the **browser**.
 
 1. Go to **User Settings → Integrations → Open Terminal**
-2. Add your terminal **URL** and **API key**
+2. Add the terminal **URL** and **API key**
 3. Enable the connection
 
 ### System-Level Connection
 
-Admins can configure multiple terminals and control access at the user or group level. Requests are proxied through the Open WebUI **backend**, so the terminal only needs to be reachable from the server.
+Admins can configure Open Terminal connections for their users from the admin panel. Multiple terminals can be set up with access controlled at the user or group level. Requests are proxied through the Open WebUI **backend**, so the terminal only needs to be reachable from the server.
 
 1. Go to **Admin Settings → Integrations → Open Terminal**
 2. Add the terminal **URL** and **API key**
