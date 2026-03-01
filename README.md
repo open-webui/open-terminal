@@ -83,6 +83,9 @@ Full interactive API documentation is available at [http://localhost:8000/docs](
   </picture>
 </a>
 
+> [!TIP]
+> **Need multi-tenant?** Check out **[Terminals](https://github.com/open-webui/terminals)**, which provisions and manages isolated Open Terminal containers per user with a single authenticated API entry point.
+
 ## License
 
 MIT — see [LICENSE](LICENSE) for details.
