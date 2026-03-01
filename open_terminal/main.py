@@ -19,7 +19,7 @@ from typing import Optional
 
 from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, Response
+from fastapi.responses import Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 from pypdf import PdfReader
@@ -58,7 +58,7 @@ async def verify_api_key(
 app = FastAPI(
     title="Open Terminal",
     description="A remote terminal API.",
-    version="0.3.0",
+    version="0.4.0",
 )
 app.add_middleware(
     CORSMiddleware,
@@ -809,53 +809,6 @@ async def glob_search(
     }
 
 
-# Temporary links: {token: (path, expiry_timestamp)}
-_download_links: dict[str, tuple[str, float]] = {}
-_upload_links: dict[str, tuple[str, float]] = {}
-
-
-@app.get(
-    "/files/download/link",
-    operation_id="create_download_link",
-    summary="Get a file download link",
-    description="Returns a temporary download URL for a file. Link expires after 5 minutes and requires no authentication to use.",
-    dependencies=[Depends(verify_api_key)],
-    responses={
-        404: {"description": "File not found."},
-        401: {"description": "Invalid or missing API key."},
-    },
-)
-async def get_file_link(
-    path: str = Query(..., description="Absolute path to the file."),
-    request: Request = None,
-):
-    if not await aiofiles.os.path.isfile(path):
-        raise HTTPException(status_code=404, detail="File not found")
-
-    token = uuid.uuid4().hex
-    _download_links[token] = (path, time.time() + 300)
-
-    base_url = str(request.base_url).rstrip("/")
-    return {"url": f"{base_url}/files/download/{token}"}
-
-
-@app.get(
-    "/files/download/{token}",
-    include_in_schema=False,
-)
-async def download_file(token: str):
-    entry = _download_links.pop(token, None)
-    if not entry:
-        raise HTTPException(status_code=404, detail="Invalid or expired download link")
-
-    path, expiry = entry
-    if time.time() > expiry:
-        raise HTTPException(status_code=404, detail="Download link expired")
-
-    if not await aiofiles.os.path.isfile(path):
-        raise HTTPException(status_code=404, detail="File not found")
-
-    return FileResponse(path)
 
 
 @app.post(
@@ -905,73 +858,6 @@ async def upload_file(
     return {"path": path, "size": len(content)}
 
 
-@app.post(
-    "/files/upload/link",
-    operation_id="create_upload_link",
-    summary="Create an upload link",
-    description="Generate a temporary, unauthenticated upload URL. Link expires after 5 minutes.",
-    dependencies=[Depends(verify_api_key)],
-    responses={
-        401: {"description": "Invalid or missing API key."},
-    },
-)
-async def create_upload_link(
-    directory: str = Query(
-        ..., description="Destination directory for the uploaded file."
-    ),
-    request: Request = None,
-):
-    token = uuid.uuid4().hex
-    _upload_links[token] = (directory, time.time() + 300)
-
-    base_url = str(request.base_url).rstrip("/")
-    return {"url": f"{base_url}/files/upload/{token}"}
-
-
-@app.get(
-    "/files/upload/{token}",
-    response_class=HTMLResponse,
-    include_in_schema=False,
-)
-async def upload_page(token: str):
-    entry = _upload_links.get(token)
-    if not entry or time.time() > entry[1]:
-        return HTMLResponse("Link expired.", status_code=404)
-
-    return HTMLResponse(
-        '<form method="post" enctype="multipart/form-data">'
-        '<input type="file" name="file" required> '
-        '<button type="submit">Upload</button>'
-        "</form>"
-    )
-
-
-@app.post(
-    "/files/upload/{token}",
-    include_in_schema=False,
-)
-async def upload_file_via_link(
-    token: str,
-    file: UploadFile = File(..., description="The file to upload."),
-):
-    entry = _upload_links.pop(token, None)
-    if not entry:
-        raise HTTPException(status_code=404, detail="Invalid or expired upload link")
-
-    directory, expiry = entry
-    if time.time() > expiry:
-        raise HTTPException(status_code=404, detail="Upload link expired")
-
-    filename = file.filename or "upload"
-    try:
-        await aiofiles.os.makedirs(directory, exist_ok=True)
-        path = os.path.join(directory, filename)
-        content = await file.read()
-        async with aiofiles.open(path, "wb") as f:
-            await f.write(content)
-    except OSError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    return {"path": path, "size": len(content)}
 
 
 # ---------------------------------------------------------------------------
