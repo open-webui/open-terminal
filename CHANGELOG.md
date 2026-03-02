@@ -4,12 +4,18 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.1] - 2026-03-01
+
+### Fixed
+
+- 🙈 **Hidden upload_file from OpenAPI schema** — the /files/upload endpoint is now excluded from the public API docs, consistent with other internal-only file endpoints.
+
 ## [0.4.0] - 2026-03-01
 
 ### Removed
 
-- 📥 **Temporary download links** (`GET /files/download/link` and `GET /files/download/{token}`) — deprecated in favour of direct file navigation built into Open WebUI.
-- 🔗 **Temporary upload links** (`POST /files/upload/link`, `GET /files/upload/{token}`, and `POST /files/upload/{token}`) — deprecated in favour of direct file navigation built into Open WebUI.
+- 📥 **Temporary download links** (GET /files/download/link and GET /files/download/{token}) — deprecated in favour of direct file navigation built into Open WebUI.
+- 🔗 **Temporary upload links** (POST /files/upload/link, GET /files/upload/{token}, and POST /files/upload/{token}) — deprecated in favour of direct file navigation built into Open WebUI.
 
 ## [0.3.0] - 2026-02-25
 

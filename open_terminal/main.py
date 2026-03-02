@@ -813,6 +813,7 @@ async def glob_search(
 
 @app.post(
     "/files/upload",
+    include_in_schema=False,
     operation_id="upload_file",
     summary="Upload a file",
     description="Save a file to the specified path. Provide a `url` to fetch remotely, or send the file directly via multipart form data.",
