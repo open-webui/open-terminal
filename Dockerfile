@@ -1,4 +1,11 @@
-FROM python:3.12
+# FROM python:3.12
+
+ARG ROS_DISTRO=humble
+
+FROM ros:${ROS_DISTRO}
+
+SHELL ["/bin/bash", "-c"]
+
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     # Core utilities
@@ -25,6 +32,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     procps htop lsof strace sysstat \
     sudo tmux screen \
     ca-certificates gnupg apt-transport-https \
+    python3-pip python3-venv \
+    ros-${ROS_DISTRO}-ros-base \
     && rm -rf /var/lib/apt/lists/*
 
 # Node.js (LTS)
