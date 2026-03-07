@@ -918,9 +918,14 @@ async def upload_file(
             status_code=400, detail="Provide either 'url' or a file upload."
         )
 
+    filename = os.path.basename(filename) or "upload"
+    target_dir = os.path.abspath(directory)
+
     try:
-        await aiofiles.os.makedirs(directory, exist_ok=True)
-        path = os.path.join(directory, filename)
+        await aiofiles.os.makedirs(target_dir, exist_ok=True)
+        path = os.path.abspath(os.path.join(target_dir, filename))
+        if os.path.commonpath([target_dir, path]) != target_dir:
+            raise HTTPException(status_code=400, detail="Invalid upload filename")
         async with aiofiles.open(path, "wb") as f:
             await f.write(content)
     except OSError as e:
