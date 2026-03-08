@@ -37,19 +37,15 @@ RUN curl -fsSL https://get.docker.com | sh
 
 WORKDIR /app
 
-RUN pip install --no-cache-dir \
-    numpy pandas scipy scikit-learn \
-    matplotlib seaborn plotly \
-    jupyter ipython \
-    requests beautifulsoup4 lxml \
-    sqlalchemy psycopg2-binary \
-    pyyaml toml jsonlines \
-    tqdm rich \
-    openpyxl weasyprint \
-    python-docx python-pptx pypdf csvkit
+# install uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+# Cached separately, re-runs if core-requirements.txt changes
+COPY core-requirements.txt .
+RUN uv pip install --no-cache-dir --system -r core-requirements.txt
 
 COPY . .
-RUN pip install --no-cache-dir .
+RUN uv pip install --no-cache-dir --system .
 
 RUN useradd -m -s /bin/bash user && echo 'user ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
 USER user
