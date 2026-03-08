@@ -64,7 +64,7 @@ fi
 # Auto-install Python packages
 if [ -n "${OPEN_TERMINAL_PIP_PACKAGES:-}" ]; then
     echo "Installing pip packages: $OPEN_TERMINAL_PIP_PACKAGES"
-    pip install --no-cache-dir $OPEN_TERMINAL_PIP_PACKAGES
+    uv pip install --no-cache-dir --system $OPEN_TERMINAL_PIP_PACKAGES
 fi
 
 exec open-terminal "$@"
