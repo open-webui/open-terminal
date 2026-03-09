@@ -19,7 +19,7 @@ from typing import Optional
 
 from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 from pypdf import PdfReader
@@ -101,6 +101,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(PermissionError)
+async def permission_error_handler(request: Request, exc: PermissionError):
+    return JSONResponse(status_code=403, content={"detail": str(exc)})
 
 
 @app.middleware("http")
@@ -1329,8 +1334,8 @@ if ENABLE_TERMINAL:
 
                 fs = get_filesystem(request)
                 if fs.username:
-                    shell_cmd = ["sudo", "-u", fs.username, "--", "/bin/bash"]
-                    cwd = None  # sudo handles the user context; parent can't chdir into 700 dirs
+                    shell_cmd = ["sudo", "-i", "-u", fs.username]
+                    cwd = fs.home
                 else:
                     shell_cmd = [os.environ.get("SHELL", "/bin/sh")]
                     cwd = os.getcwd()

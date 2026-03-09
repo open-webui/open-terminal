@@ -31,11 +31,32 @@ class UserFS:
 
     *username* controls write-side ``sudo -u`` wrapping (``None`` = stdlib).
     *home* is the user's home directory (default working directory).
+
+    When *username* is set, path validation prevents access to other
+    users' home directories (``/home/<other_user>/…``).
     """
 
     def __init__(self, username: str | None = None, home: str | None = None):
         self.username = username
         self.home = home or os.getcwd()
+
+    def _check_path(self, path: str) -> None:
+        """Reject paths inside another user's home directory."""
+        if not self.username:
+            return
+        resolved = os.path.abspath(path)
+        # Only restrict paths under /home/
+        if not resolved.startswith("/home/"):
+            return
+        # Extract the first component after /home/
+        parts = resolved.split("/")  # ['', 'home', '<user>', ...]
+        if len(parts) >= 3:
+            target_user_dir = parts[2]
+            own_home_name = os.path.basename(self.home)
+            if target_user_dir != own_home_name:
+                raise PermissionError(
+                    f"Access denied: {resolved} belongs to another user"
+                )
 
     # ------------------------------------------------------------------
     # Read operations (always native Python — group membership allows it)
@@ -43,28 +64,34 @@ class UserFS:
 
     async def read(self, path: str) -> bytes:
         """Read raw bytes from *path*."""
+        self._check_path(path)
         async with aiofiles.open(path, "rb") as f:
             return await f.read()
 
     async def read_text(self, path: str, encoding: str = "utf-8") -> str:
         """Read text from *path*."""
+        self._check_path(path)
         async with aiofiles.open(path, "r", encoding=encoding, errors="strict") as f:
             return await f.read()
 
     async def exists(self, path: str) -> bool:
         """Check if *path* exists."""
+        self._check_path(path)
         return await aiofiles.os.path.exists(path)
 
     async def isfile(self, path: str) -> bool:
         """Check if *path* is a regular file."""
+        self._check_path(path)
         return await aiofiles.os.path.isfile(path)
 
     async def isdir(self, path: str) -> bool:
         """Check if *path* is a directory."""
+        self._check_path(path)
         return await aiofiles.os.path.isdir(path)
 
     async def stat(self, path: str) -> dict:
         """Return size, mtime, and type for *path*."""
+        self._check_path(path)
         s = await aiofiles.os.stat(path)
         return {
             "size": s.st_size,
@@ -74,6 +101,7 @@ class UserFS:
 
     async def listdir(self, path: str) -> list[dict]:
         """List directory contents with type, size, and mtime."""
+        self._check_path(path)
         def _list_sync():
             entries = []
             for name in sorted(os.listdir(path)):
@@ -93,6 +121,7 @@ class UserFS:
 
     async def walk(self, path: str) -> list[tuple[str, list[str], list[str]]]:
         """Walk directory tree. Returns list of (dirpath, dirnames, filenames)."""
+        self._check_path(path)
         return await asyncio.to_thread(lambda: list(os.walk(path)))
 
     # ------------------------------------------------------------------
@@ -101,6 +130,7 @@ class UserFS:
 
     async def write(self, path: str, content: str, encoding: str = "utf-8") -> None:
         """Write text *content* to *path*, creating parent dirs."""
+        self._check_path(path)
         if self.username:
             parent = os.path.dirname(path)
             if parent:
@@ -124,6 +154,7 @@ class UserFS:
 
     async def write_bytes(self, path: str, data: bytes) -> None:
         """Write raw *data* to *path*, creating parent dirs."""
+        self._check_path(path)
         if self.username:
             parent = os.path.dirname(path)
             if parent:
@@ -147,6 +178,7 @@ class UserFS:
 
     async def mkdir(self, path: str) -> None:
         """Create directory *path* and parents."""
+        self._check_path(path)
         if self.username:
             await asyncio.to_thread(
                 subprocess.run,
@@ -158,6 +190,7 @@ class UserFS:
 
     async def remove(self, path: str) -> None:
         """Remove *path* (file or directory)."""
+        self._check_path(path)
         if self.username:
             await asyncio.to_thread(
                 subprocess.run,
@@ -172,6 +205,8 @@ class UserFS:
 
     async def move(self, source: str, destination: str) -> None:
         """Move *source* to *destination*."""
+        self._check_path(source)
+        self._check_path(destination)
         if self.username:
             await asyncio.to_thread(
                 subprocess.run,
