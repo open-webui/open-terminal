@@ -30,7 +30,7 @@ from open_terminal.runner import PipeRunner, ProcessRunner, create_runner
 if MULTI_USER:
     from open_terminal.user_isolation import (
         check_environment, resolve_user,
-        sudo_mkdir, sudo_mv, sudo_rm, sudo_write_file,
+        sudo_list_dir, sudo_mkdir, sudo_mv, sudo_read_file, sudo_rm, sudo_write_file,
     )
     check_environment()
 
@@ -390,8 +390,12 @@ async def get_cwd(request: Request):
     include_in_schema=False,
     dependencies=[Depends(verify_api_key)],
 )
-async def set_cwd(request: MkdirRequest):
+async def set_cwd(http_request: Request, request: MkdirRequest):
+    run_as_user, _ = get_user_context(http_request)
     target = os.path.abspath(request.path)
+    if run_as_user:
+        # In multi-user mode, cwd is per-user; don't touch the global server cwd.
+        return {"cwd": target}
     if not await aiofiles.os.path.isdir(target):
         raise HTTPException(status_code=404, detail="Directory not found")
     try:
@@ -413,9 +417,16 @@ async def set_cwd(request: MkdirRequest):
     },
 )
 async def list_files(
+    request: Request,
     directory: str = Query(".", description="Directory path to list."),
 ):
+    run_as_user, user_home = get_user_context(request)
     target = os.path.abspath(directory)
+
+    if run_as_user:
+        entries = await sudo_list_dir(run_as_user, target)
+        return {"dir": target, "entries": entries}
+
     if not await aiofiles.os.path.isdir(target):
         raise HTTPException(status_code=404, detail="Directory not found")
 
@@ -454,6 +465,7 @@ async def list_files(
     },
 )
 async def read_file(
+    request: Request,
     path: str = Query(..., description="Path to the file to read."),
     start_line: Optional[int] = Query(
         None, description="First line to return (1-indexed, inclusive).", ge=1
@@ -462,14 +474,20 @@ async def read_file(
         None, description="Last line to return (1-indexed, inclusive).", ge=1
     ),
 ):
+    run_as_user, _ = get_user_context(request)
     target = os.path.abspath(path)
-    if not await aiofiles.os.path.isfile(target):
+    if not run_as_user and not await aiofiles.os.path.isfile(target):
         raise HTTPException(status_code=404, detail="File not found")
 
     try:
-        async with aiofiles.open(target, "r", encoding="utf-8", errors="strict") as f:
-            content = await f.read()
+        if run_as_user:
+            raw = await sudo_read_file(run_as_user, target)
+            content = raw.decode("utf-8")
             lines = content.splitlines(keepends=True)
+        else:
+            async with aiofiles.open(target, "r", encoding="utf-8", errors="strict") as f:
+                content = await f.read()
+                lines = content.splitlines(keepends=True)
     except (UnicodeDecodeError, ValueError):
         import mimetypes
 

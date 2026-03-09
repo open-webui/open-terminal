@@ -162,3 +162,44 @@ async def sudo_mv(username: str, source: str, destination: str) -> None:
         check=True, capture_output=True,
     )
 
+
+async def sudo_list_dir(username: str, path: str) -> list[dict]:
+    """List directory contents as *username*."""
+    script = (
+        f'for f in $(ls -A {shlex.quote(path)} 2>/dev/null); do '
+        f'  full="{path}/$f"; '
+        f'  if [ -d "$full" ]; then t=directory; else t=file; fi; '
+        f'  s=$(stat -c %s "$full" 2>/dev/null || echo 0); '
+        f'  m=$(stat -c %Y "$full" 2>/dev/null || echo 0); '
+        f'  echo "$f|$t|$s|$m"; '
+        f'done'
+    )
+    result = await asyncio.to_thread(
+        subprocess.run,
+        _sudo_cmd(username) + ["bash", "-c", script],
+        capture_output=True, text=True,
+    )
+    entries = []
+    for line in result.stdout.strip().splitlines():
+        parts = line.split("|", 3)
+        if len(parts) == 4:
+            entries.append({
+                "name": parts[0],
+                "type": parts[1],
+                "size": int(parts[2]),
+                "modified": float(parts[3]),
+            })
+    return sorted(entries, key=lambda e: e["name"])
+
+
+async def sudo_read_file(username: str, path: str) -> bytes:
+    """Read file contents as *username*. Returns raw bytes."""
+    result = await asyncio.to_thread(
+        subprocess.run,
+        _sudo_cmd(username) + ["cat", path],
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        raise PermissionError(result.stderr.decode().strip())
+    return result.stdout
+
