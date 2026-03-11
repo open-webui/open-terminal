@@ -23,7 +23,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     zip unzip tar gzip bzip2 xz-utils zstd p7zip-full \
     # System
     procps htop lsof strace sysstat \
-    sudo tmux screen \
+    sudo tmux screen tini \
     ca-certificates gnupg apt-transport-https \
     # Capabilities (needed for setcap on Python binary)
     libcap2-bin \
@@ -67,5 +67,5 @@ EXPOSE 8000
 
 COPY entrypoint.sh /app/entrypoint.sh
 
-ENTRYPOINT ["/app/entrypoint.sh"]
+ENTRYPOINT ["/usr/bin/tini", "--", "/app/entrypoint.sh"]
 CMD ["run"]

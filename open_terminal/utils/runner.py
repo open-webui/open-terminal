@@ -110,10 +110,11 @@ class PtyRunner(ProcessRunner):
         os.write(self._master_fd, data)
 
     def kill(self, force: bool = False) -> None:
-        if force:
-            self._process.kill()
-        else:
-            self._process.send_signal(signal.SIGTERM)
+        sig = signal.SIGKILL if force else signal.SIGTERM
+        try:
+            os.killpg(self._process.pid, sig)
+        except ProcessLookupError:
+            pass
 
     async def wait(self) -> int:
         return await asyncio.to_thread(self._process.wait)

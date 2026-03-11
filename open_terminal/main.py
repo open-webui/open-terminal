@@ -1310,11 +1310,18 @@ if ENABLE_TERMINAL:
                 pass
             process = session["process"]
             if process.poll() is None:
-                process.terminate()
+                try:
+                    os.killpg(process.pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
                 try:
                     process.wait(timeout=2)
                 except subprocess.TimeoutExpired:
-                    process.kill()
+                    try:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    process.wait()
 
         elif backend == "winpty":
             pty_proc = session["pty_process"]
