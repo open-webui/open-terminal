@@ -67,4 +67,10 @@ if [ -n "${OPEN_TERMINAL_PIP_PACKAGES:-}" ]; then
     pip install --no-cache-dir $OPEN_TERMINAL_PIP_PACKAGES
 fi
 
+# Auto-install npm packages
+if [ -n "${OPEN_TERMINAL_NPM_PACKAGES:-}" ]; then
+    echo "Installing npm packages: $OPEN_TERMINAL_NPM_PACKAGES"
+    sudo npm install -g $OPEN_TERMINAL_NPM_PACKAGES
+fi
+
 exec open-terminal "$@"
