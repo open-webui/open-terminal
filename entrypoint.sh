@@ -70,7 +70,7 @@ fi
 # Auto-install npm packages
 if [ -n "${OPEN_TERMINAL_NPM_PACKAGES:-}" ]; then
     echo "Installing npm packages: $OPEN_TERMINAL_NPM_PACKAGES"
-    npm install -g $OPEN_TERMINAL_NPM_PACKAGES
+    sudo npm install -g $OPEN_TERMINAL_NPM_PACKAGES
 fi
 
 exec open-terminal "$@"
