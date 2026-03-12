@@ -4,7 +4,7 @@ A lightweight, self-hosted terminal that gives AI agents and automation tools a 
 
 ## Why Open Terminal?
 
-AI assistants are great at writing code, but they need somewhere to *run* it. Open Terminal is that place — a remote shell with file management, search, and more, accessible over a simple REST API.
+AI assistants are great at writing code, but they need somewhere to _run_ it. Open Terminal is that place — a remote shell with file management, search, and more, accessible over a simple REST API.
 
 You can run it two ways:
 
@@ -60,10 +60,11 @@ docker run -d --name open-terminal -p 8000:8000 \
   ghcr.io/open-webui/open-terminal
 ```
 
-| Variable | Description |
-|---|---|
-| `OPEN_TERMINAL_PACKAGES` | Space-separated list of **apt** packages to install at startup |
-| `OPEN_TERMINAL_PIP_PACKAGES` | Space-separated list of **pip** packages to install at startup |
+| Variable                     | Description                                                             |
+| ---------------------------- | ----------------------------------------------------------------------- |
+| `OPEN_TERMINAL_PACKAGES`     | Space-separated list of **apt** packages to install at startup          |
+| `OPEN_TERMINAL_PIP_PACKAGES` | Space-separated list of **pip** packages to install at startup          |
+| `OPEN_TERMINAL_NPM_PACKAGES` | Space-separated list of **npm** packages to install globally at startup |
 
 > [!NOTE]
 > Packages are installed each time the container starts, so startup will take longer with large package lists. For heavy customization, build a custom image instead.
@@ -88,7 +89,6 @@ For full control, fork the repo, edit the [Dockerfile](Dockerfile), and build yo
 docker build -t my-terminal .
 docker run -d --name open-terminal -p 8000:8000 my-terminal
 ```
-
 
 ## Configuration
 
