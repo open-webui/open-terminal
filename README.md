@@ -100,7 +100,7 @@ docker run -d --name open-terminal -p 8000:8000 \
 ```
 
 > [!CAUTION]
-> Mounting the Docker socket gives the container full access to the host's Docker daemon. Only do this in trusted environments.
+> Mounting the Docker socket is the equivalent of giving the container root on the host system. Only do this in trusted environments.
 
 For full control, fork the repo, edit the [Dockerfile](Dockerfile), and build your own image:
 
