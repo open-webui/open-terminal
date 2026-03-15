@@ -16,7 +16,7 @@ def _resolve_file_env(var: str, default: str = "") -> str:
     value = os.environ.get(var)
     file_path = os.environ.get(f"{var}_FILE")
 
-    if value and file_path:
+    if value is not None and file_path is not None:
         raise ValueError(
             f"Both {var} and {var}_FILE are set, but they are mutually exclusive."
         )
