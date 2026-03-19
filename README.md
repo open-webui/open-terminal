@@ -32,7 +32,8 @@ That's it — you're up and running at `http://localhost:8000`.
 | **Size** | ~4 GB | ~430 MB | ~230 MB |
 | **Bundled tooling** | Node.js, gcc, ffmpeg, LaTeX, Docker CLI, data science libs | git, curl, jq | git, curl, jq |
 | **Install packages at runtime** | ✔ (has `sudo`) | ✘ | ✘ |
-| **Multi-user / egress firewall** | ✔ | ✔ | ✔ |
+| **Multi-user mode** | ✔ | ✘ | ✘ |
+| **Egress firewall** | ✔ | ✔ | ✔ |
 
 **`slim`** and **`alpine`** have the same feature set. Slim uses Debian (glibc) for broader binary compatibility; Alpine uses musl libc and is smaller, but some C-extension pip packages may need to compile from source.
 
