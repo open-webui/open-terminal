@@ -92,12 +92,12 @@ jobs:
           - name: default
             suffix: ""
             short_tag: "latest"
-          - name: slim
-            suffix: "-slim"
-            short_tag: "slim"
-          - name: alpine
-            suffix: "-alpine"
-            short_tag: "alpine"
+          # - name: slim
+          #   suffix: "-slim"
+          #   short_tag: "slim"
+          # - name: alpine
+          #   suffix: "-alpine"
+          #   short_tag: "alpine"
     permissions:
       contents: read
       packages: write
