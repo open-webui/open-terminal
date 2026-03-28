@@ -39,9 +39,15 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
 # Docker CLI + Compose + Buildx (mount socket at runtime for access)
 RUN curl -fsSL https://get.docker.com | sh
 
+# GH CLI
+RUN curl -fsSLo /usr/share/keyrings/githubcli-archive-keyring.gpg https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+    && printf 'Types: deb\nURIs: https://cli.github.com/packages\nSuites: stable\nComponents: main\nArchitectures: %s\nSigned-By: /usr/share/keyrings/githubcli-archive-keyring.gpg\n' "$(dpkg --print-architecture)" \
+        | tee /etc/apt/sources.list.d/github-cli.sources > /dev/null \
+    && apt-get update && apt-get install -y --no-install-recommends gh
+
 # Uncomment to apply security patches beyond what the base image provides.
 # Not recommended for reproducible builds; prefer bumping the base image tag.
-# RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
 
 
 WORKDIR /app
