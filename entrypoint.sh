@@ -43,7 +43,7 @@ if [ ! -f "$HOME/.profile" ]; then
     cp /etc/skel/.profile "$HOME/.profile" 2>/dev/null || true
 fi
 if [ ! -f "$HOME/.kube/config" ]; then
-    cp -r /etc/skel/.kube/ "$HOME/.kube" 2>/dev/null || true
+    cp -r /etc/skel/.kube/ "$HOME/" 2>/dev/null || true
     # the $HOME/.kube/config file is often created with root ownership due to the copy, so fix that
     sudo chown -R user:user "$HOME/.kube" 2>/dev/null || true
     # and set restrictive permissions since kubeconfig often contains sensitive credentials
