@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.11.32] - 2026-03-30
+
+### Changed
+
+- 🗂️ **Session-aware relative path resolution** — all LLM-exposed file endpoints (`list_files`, `read_file`, `write_file`, `display_file`, `replace_file_content`, `grep_search`, `glob_search`) now read the `X-Session-Id` header and resolve relative paths (e.g. `.`) against the session's working directory instead of always defaulting to `fs.home`. Added an optional `cwd` parameter to `UserFS.resolve_path()` to support this. Absolute paths are unaffected.
+
 ## [0.11.31] - 2026-03-30
 
 ### Changed
