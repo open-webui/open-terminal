@@ -1816,6 +1816,10 @@ if ENABLE_DESKTOP:
 
     class TypeRequest(BaseModel):
         text: str = Field(..., description="Text to type into the active window.")
+        human_like: bool = Field(
+            True,
+            description="When true (default), add a randomized, human-like delay between keystrokes.",
+        )
 
     class KeyPressRequest(BaseModel):
         key: str = Field(
@@ -2015,7 +2019,7 @@ if ENABLE_DESKTOP:
     )
     async def desktop_type(request: TypeRequest):
         dm = get_desktop()
-        await asyncio.to_thread(dm.type_text, request.text)
+        await asyncio.to_thread(dm.type_text, request.text, request.human_like)
         return {"status": "ok"}
 
     @app.post(

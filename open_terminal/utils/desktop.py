@@ -364,15 +364,28 @@ class DesktopManager:
             timeout=5,
         )
 
-    def type_text(self, text: str) -> None:
+    def type_text(self, text: str, human_like: bool = True) -> None:
         self._require_running()
-        subprocess.run(
-            ["xdotool", "type", "--clearmodifiers", "--delay", "12", text],
-            env=self._env(),
-            check=True,
-            capture_output=True,
-            timeout=max(10, len(text) // 5),
-        )
+        env = self._env()
+        if human_like:
+            for char in text:
+                delay = max(5, min(120, int(30 + 25 * ((ord(char) * 7 % 11) / 10.0))))
+                subprocess.run(
+                    ["xdotool", "type", "--clearmodifiers", "--delay", str(delay), char],
+                    env=env,
+                    check=True,
+                    capture_output=True,
+                    timeout=5,
+                )
+                time.sleep(delay / 1000.0 + 0.005 * (ord(char) % 5))
+        else:
+            subprocess.run(
+                ["xdotool", "type", "--clearmodifiers", "--delay", "12", text],
+                env=env,
+                check=True,
+                capture_output=True,
+                timeout=max(10, len(text) // 5),
+            )
 
     def key_press(self, key: str) -> None:
         self._require_running()
