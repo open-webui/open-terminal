@@ -36,6 +36,9 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 
+# insgall ACT so we can test github workflows
+RUN curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/nektos/act/master/install.sh | sudo bash
+
 # Docker CLI + Compose + Buildx (mount socket at runtime for access)
 RUN curl -fsSL https://get.docker.com | sh
 
