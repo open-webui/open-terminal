@@ -24,7 +24,7 @@ from fastapi.responses import JSONResponse, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
-from open_terminal.env import API_KEY, BINARY_FILE_MIME_PREFIXES, CORS_ALLOWED_ORIGINS, ENABLE_NOTEBOOKS, ENABLE_SYSTEM_PROMPT, ENABLE_TERMINAL, EXECUTE_DESCRIPTION, EXECUTE_TIMEOUT, LOG_DIR, MAX_TERMINAL_SESSIONS, MULTI_USER, OPEN_TERMINAL_INFO, PROCESS_LOG_RETENTION, SESSION_CWD_TTL, SYSTEM_PROMPT, TERMINAL_TERM
+from open_terminal.env import API_KEY, BINARY_FILE_MIME_PREFIXES, CORS_ALLOWED_ORIGINS, ENABLE_DESKTOP, ENABLE_NOTEBOOKS, ENABLE_SYSTEM_PROMPT, ENABLE_TERMINAL, EXECUTE_DESCRIPTION, EXECUTE_TIMEOUT, LOG_DIR, MAX_TERMINAL_SESSIONS, MULTI_USER, OPEN_TERMINAL_INFO, PROCESS_LOG_RETENTION, SESSION_CWD_TTL, SYSTEM_PROMPT, TERMINAL_TERM
 from open_terminal.utils.runner import PipeRunner, ProcessRunner, create_runner
 from open_terminal.utils.fs import UserFS
 
@@ -84,6 +84,14 @@ def get_system_prompt() -> str:
 
     if OPEN_TERMINAL_INFO:
         prompt += f"\n\n{OPEN_TERMINAL_INFO}"
+
+    if ENABLE_DESKTOP:
+        prompt += (
+            "\n\nThis environment has a virtual desktop with a graphical display. "
+            "You can use the desktop tools to take screenshots, click, type, and "
+            "interact with GUI applications — enabling \"computer use\" capabilities. "
+            "Start the desktop with POST /desktop/start before using desktop tools."
+        )
 
     return prompt
 
@@ -373,6 +381,7 @@ async def get_config():
             "terminal": ENABLE_TERMINAL,
             "notebooks": ENABLE_NOTEBOOKS,
             "system": ENABLE_SYSTEM_PROMPT,
+            "desktop": ENABLE_DESKTOP,
         },
     }
 
@@ -1772,4 +1781,277 @@ if ENABLE_NOTEBOOKS:
     from open_terminal.utils.notebooks import create_notebooks_router
 
     app.include_router(create_notebooks_router(verify_api_key))
+
+
+# ---------------------------------------------------------------------------
+# Virtual Desktop ("Computer Use")
+# ---------------------------------------------------------------------------
+
+if ENABLE_DESKTOP:
+    import base64
+
+    from open_terminal.utils.desktop import DesktopNotRunningError, get_desktop
+
+    class ClickRequest(BaseModel):
+        x: int = Field(..., description="X coordinate (pixels from left).")
+        y: int = Field(..., description="Y coordinate (pixels from top).")
+        button: int = Field(
+            1,
+            description="Mouse button: 1 = left (default), 2 = middle, 3 = right.",
+        )
+
+    class MouseMoveRequest(BaseModel):
+        x: int = Field(..., description="X coordinate to move to.")
+        y: int = Field(..., description="Y coordinate to move to.")
+
+    class DragRequest(BaseModel):
+        start_x: int = Field(..., description="Starting X coordinate.")
+        start_y: int = Field(..., description="Starting Y coordinate.")
+        end_x: int = Field(..., description="Ending X coordinate.")
+        end_y: int = Field(..., description="Ending Y coordinate.")
+        button: int = Field(
+            1,
+            description="Mouse button to hold: 1 = left, 2 = middle, 3 = right.",
+        )
+
+    class TypeRequest(BaseModel):
+        text: str = Field(..., description="Text to type into the active window.")
+
+    class KeyPressRequest(BaseModel):
+        key: str = Field(
+            ...,
+            description=(
+                "Key or key combination to press. "
+                'Examples: "Return", "Escape", "ctrl+c", "alt+F4", "super".'
+            ),
+        )
+
+    class ScrollRequest(BaseModel):
+        x: int = Field(..., description="X coordinate to scroll at.")
+        y: int = Field(..., description="Y coordinate to scroll at.")
+        direction: str = Field(
+            "down",
+            description="Scroll direction: 'up' or 'down'.",
+            pattern="^(up|down)$",
+        )
+        amount: int = Field(
+            5,
+            description="Number of scroll clicks (each ~3 lines).",
+            ge=1,
+            le=50,
+        )
+
+    @app.exception_handler(DesktopNotRunningError)
+    async def desktop_not_running_handler(
+        request: Request, exc: DesktopNotRunningError
+    ):
+        return JSONResponse(status_code=503, content={"detail": str(exc)})
+
+    @app.get(
+        "/desktop",
+        operation_id="desktop_status",
+        summary="Get desktop status",
+        description="Returns the current state of the virtual desktop: whether it is running, the display dimensions, and the VNC/noVNC ports.",
+        dependencies=[Depends(verify_api_key)],
+        responses={
+            401: {"description": "Invalid or missing API key."},
+        },
+    )
+    async def desktop_status():
+        dm = get_desktop()
+        return dm.status()
+
+    @app.post(
+        "/desktop/start",
+        operation_id="desktop_start",
+        summary="Start the virtual desktop",
+        description=(
+            "Start Xvfb, x11vnc, noVNC, and a window manager. "
+            "Idempotent — returns immediately if already running."
+        ),
+        dependencies=[Depends(verify_api_key)],
+        responses={
+            401: {"description": "Invalid or missing API key."},
+        },
+    )
+    async def desktop_start():
+        dm = get_desktop()
+        await dm.async_start()
+        return dm.status()
+
+    @app.post(
+        "/desktop/stop",
+        operation_id="desktop_stop",
+        summary="Stop the virtual desktop",
+        description="Terminate all desktop processes (Xvfb, x11vnc, noVNC, window manager).",
+        dependencies=[Depends(verify_api_key)],
+        responses={
+            401: {"description": "Invalid or missing API key."},
+        },
+    )
+    async def desktop_stop():
+        dm = get_desktop()
+        await dm.async_stop()
+        return dm.status()
+
+    @app.post(
+        "/desktop/screenshot",
+        operation_id="desktop_screenshot",
+        summary="Capture a screenshot",
+        description=(
+            "Capture a PNG screenshot of the virtual display. "
+            "Returns the image as base64-encoded data inside a JSON body. "
+            "Set the Accept header to 'image/png' (or pass '?format=raw') to "
+            "receive raw binary PNG instead."
+        ),
+        dependencies=[Depends(verify_api_key)],
+        responses={
+            200: {
+                "description": "PNG screenshot (base64 JSON or raw binary).",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "width": 1280,
+                            "height": 720,
+                            "format": "png",
+                            "data": "iVBOR...",
+                        }
+                    },
+                    "image/png": {"schema": {"type": "string", "format": "binary"}},
+                },
+            },
+            503: {"description": "Desktop is not running."},
+            401: {"description": "Invalid or missing API key."},
+        },
+    )
+    async def desktop_screenshot(
+        request: Request,
+        format: Optional[str] = Query(
+            None,
+            description="Set to 'raw' for binary PNG response. Default is base64 JSON.",
+        ),
+    ):
+        dm = get_desktop()
+        png_bytes, width, height = await dm.async_screenshot()
+
+        accept = request.headers.get("accept", "")
+        if format == "raw" or "image/png" in accept:
+            return Response(content=png_bytes, media_type="image/png")
+
+        return {
+            "width": width,
+            "height": height,
+            "format": "png",
+            "data": base64.b64encode(png_bytes).decode("ascii"),
+        }
+
+    @app.post(
+        "/desktop/click",
+        operation_id="desktop_click",
+        summary="Mouse click",
+        description="Move the mouse to (x, y) and click. Button 1 = left, 2 = middle, 3 = right.",
+        dependencies=[Depends(verify_api_key)],
+        responses={
+            503: {"description": "Desktop is not running."},
+            401: {"description": "Invalid or missing API key."},
+        },
+    )
+    async def desktop_click(request: ClickRequest):
+        dm = get_desktop()
+        await asyncio.to_thread(
+            dm.mouse_click, request.x, request.y, request.button
+        )
+        return {"status": "ok"}
+
+    @app.post(
+        "/desktop/mouse_move",
+        operation_id="desktop_mouse_move",
+        summary="Move the mouse",
+        description="Move the mouse cursor to the specified coordinates without clicking.",
+        dependencies=[Depends(verify_api_key)],
+        responses={
+            503: {"description": "Desktop is not running."},
+            401: {"description": "Invalid or missing API key."},
+        },
+    )
+    async def desktop_mouse_move(request: MouseMoveRequest):
+        dm = get_desktop()
+        await asyncio.to_thread(dm.mouse_move, request.x, request.y)
+        return {"status": "ok"}
+
+    @app.post(
+        "/desktop/drag",
+        operation_id="desktop_drag",
+        summary="Drag (mouse down, move, mouse up)",
+        description="Press and hold a mouse button at (start_x, start_y), drag to (end_x, end_y), then release.",
+        dependencies=[Depends(verify_api_key)],
+        responses={
+            503: {"description": "Desktop is not running."},
+            401: {"description": "Invalid or missing API key."},
+        },
+    )
+    async def desktop_drag(request: DragRequest):
+        dm = get_desktop()
+        await asyncio.to_thread(
+            dm.mouse_drag,
+            request.start_x,
+            request.start_y,
+            request.end_x,
+            request.end_y,
+            request.button,
+        )
+        return {"status": "ok"}
+
+    @app.post(
+        "/desktop/type",
+        operation_id="desktop_type",
+        summary="Type text",
+        description="Type text into the currently focused window, as if entered on a keyboard.",
+        dependencies=[Depends(verify_api_key)],
+        responses={
+            503: {"description": "Desktop is not running."},
+            401: {"description": "Invalid or missing API key."},
+        },
+    )
+    async def desktop_type(request: TypeRequest):
+        dm = get_desktop()
+        await asyncio.to_thread(dm.type_text, request.text)
+        return {"status": "ok"}
+
+    @app.post(
+        "/desktop/key",
+        operation_id="desktop_key",
+        summary="Press a key or key combination",
+        description=(
+            "Press a key or key combination. "
+            'Examples: "Return", "Escape", "ctrl+c", "alt+F4", "super", "ctrl+shift+t".'
+        ),
+        dependencies=[Depends(verify_api_key)],
+        responses={
+            503: {"description": "Desktop is not running."},
+            401: {"description": "Invalid or missing API key."},
+        },
+    )
+    async def desktop_key(request: KeyPressRequest):
+        dm = get_desktop()
+        await asyncio.to_thread(dm.key_press, request.key)
+        return {"status": "ok"}
+
+    @app.post(
+        "/desktop/scroll",
+        operation_id="desktop_scroll",
+        summary="Scroll at a position",
+        description="Move to (x, y) and scroll up or down by the given amount.",
+        dependencies=[Depends(verify_api_key)],
+        responses={
+            503: {"description": "Desktop is not running."},
+            401: {"description": "Invalid or missing API key."},
+        },
+    )
+    async def desktop_scroll(request: ScrollRequest):
+        dm = get_desktop()
+        await asyncio.to_thread(
+            dm.scroll, request.x, request.y, request.direction, request.amount
+        )
+        return {"status": "ok"}
 

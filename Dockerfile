@@ -29,11 +29,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates gnupg apt-transport-https \
     # Capabilities (needed for setcap on Python binary)
     libcap2-bin \
+    # Virtual desktop ("Computer Use")
+    xvfb x11vnc novnc openbox xdotool scrot xauth \
+    fonts-liberation fonts-noto-color-emoji \
     && rm -rf /var/lib/apt/lists/*
 
 # Node.js (LTS)
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# Chromium (for headful browser automation via the virtual desktop)
+RUN apt-get update && apt-get install -y --no-install-recommends chromium \
     && rm -rf /var/lib/apt/lists/*
 
 # Docker CLI + Compose + Buildx (mount socket at runtime for access)
@@ -68,12 +75,20 @@ RUN pip install --no-cache-dir . \
 
 RUN useradd -m -s /bin/bash user && echo 'user ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
 
+# Chromium needs a writable /dev/shm for shared memory.  When running
+# without --no-sandbox (the default inside Docker) we need at least 64 MB.
+# Some container runtimes mount /dev/shm as 64 MB which is too small for
+# Chromium; the kernel will silently OOM the renderer.  We work around
+# this by creating a small tmpfs in the user's home directory.
+RUN echo "kernel.shmmax = 268435456" >> /etc/sysctl.conf || true
+
 USER user
 ENV SHELL=/bin/bash
 ENV PATH="/home/user/.local/bin:${PATH}"
+ENV CHROMIUM_FLAGS="--no-sandbox --disable-gpu --disable-software-rasterizer"
 WORKDIR /home/user
 
-EXPOSE 8000
+EXPOSE 8000 6080
 
 COPY entrypoint.sh /app/entrypoint.sh
 
