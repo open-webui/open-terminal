@@ -31,6 +31,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libcap2-bin \
     # Virtual desktop ("Computer Use")
     xvfb x11vnc novnc openbox xdotool scrot xauth \
+    xterm \
     fonts-liberation fonts-noto-color-emoji \
     && rm -rf /var/lib/apt/lists/*
 
@@ -82,10 +83,12 @@ RUN useradd -m -s /bin/bash user && echo 'user ALL=(ALL) NOPASSWD:ALL' >> /etc/s
 # this by creating a small tmpfs in the user's home directory.
 RUN echo "kernel.shmmax = 268435456" >> /etc/sysctl.conf || true
 
+RUN printf '#!/bin/sh\nexport CHROMIUM_FLAGS="$CHROMIUM_FLAGS --no-sandbox --disable-gpu --disable-software-rasterizer"\n' \
+    > /etc/chromium.d/00-container
+
 USER user
 ENV SHELL=/bin/bash
 ENV PATH="/home/user/.local/bin:${PATH}"
-ENV CHROMIUM_FLAGS="--no-sandbox --disable-gpu --disable-software-rasterizer"
 WORKDIR /home/user
 
 EXPOSE 8000 6080
