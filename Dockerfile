@@ -9,7 +9,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         apt-transport-https \
         gnupg \
-    && KUBE_VER=v1.32 \
+    && KUBE_VER=v1.34 \
     && curl -fsSL "https://pkgs.k8s.io/core:/stable:/${KUBE_VER}/deb/Release.key" \
         | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg \
     && echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/${KUBE_VER}/deb/ /" \
