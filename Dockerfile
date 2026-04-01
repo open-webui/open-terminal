@@ -31,8 +31,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libcap2-bin \
     # Virtual desktop ("Computer Use")
     xvfb x11vnc novnc openbox xdotool scrot xauth \
-    xterm \
+    xterm x11-xserver-utils \
     fonts-liberation fonts-noto-color-emoji \
+    dmz-cursor-theme \
     && rm -rf /var/lib/apt/lists/*
 
 # Node.js (LTS)

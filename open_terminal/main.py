@@ -24,20 +24,36 @@ from fastapi.responses import JSONResponse, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
-from open_terminal.env import API_KEY, BINARY_FILE_MIME_PREFIXES, CORS_ALLOWED_ORIGINS, ENABLE_DESKTOP, ENABLE_NOTEBOOKS, ENABLE_SYSTEM_PROMPT, ENABLE_TERMINAL, EXECUTE_DESCRIPTION, EXECUTE_TIMEOUT, LOG_DIR, MAX_TERMINAL_SESSIONS, MULTI_USER, OPEN_TERMINAL_INFO, PROCESS_LOG_RETENTION, SESSION_CWD_TTL, SYSTEM_PROMPT, TERMINAL_TERM
+from open_terminal.env import (
+    API_KEY,
+    BINARY_FILE_MIME_PREFIXES,
+    CORS_ALLOWED_ORIGINS,
+    ENABLE_DESKTOP,
+    ENABLE_NOTEBOOKS,
+    ENABLE_SYSTEM_PROMPT,
+    ENABLE_TERMINAL,
+    EXECUTE_DESCRIPTION,
+    EXECUTE_TIMEOUT,
+    LOG_DIR,
+    MAX_TERMINAL_SESSIONS,
+    MULTI_USER,
+    OPEN_TERMINAL_INFO,
+    PROCESS_LOG_RETENTION,
+    SESSION_CWD_TTL,
+    SYSTEM_PROMPT,
+    TERMINAL_TERM,
+)
 from open_terminal.utils.runner import PipeRunner, ProcessRunner, create_runner
 from open_terminal.utils.fs import UserFS
 
 if MULTI_USER:
     from open_terminal.utils.user_isolation import check_environment, resolve_user
+
     check_environment()
 
 if not API_KEY:
     raise SystemExit(
-        "\n\033[91m"
-        "  OPEN_TERMINAL_API_KEY is required.\n"
-        "  Set via environment variable or --api-key flag.\n"
-        "\033[0m"
+        '\n\033[91m  OPEN_TERMINAL_API_KEY is required.\n  Set via environment variable or --api-key flag.\n\033[0m'
     )
 
 try:
@@ -54,12 +70,12 @@ except ImportError:
 
 def get_system_info() -> str:
     """Gather runtime system metadata for the OpenAPI description."""
-    shell = os.environ.get("SHELL", "/bin/sh")
-    user_part = f" as user '{os.getenv('USER', 'unknown')}'" if not MULTI_USER else ""
+    shell = os.environ.get('SHELL', '/bin/sh')
+    user_part = f" as user '{os.getenv('USER', 'unknown')}'" if not MULTI_USER else ''
     return (
-        f"This system is running {platform.system()} {platform.release()} ({platform.machine()}) "
-        f"on {socket.gethostname()}{user_part} with {shell}. "
-        f"Python {sys.version.split()[0]} is available."
+        f'This system is running {platform.system()} {platform.release()} ({platform.machine()}) '
+        f'on {socket.gethostname()}{user_part} with {shell}. '
+        f'Python {sys.version.split()[0]} is available.'
     )
 
 
@@ -68,40 +84,40 @@ def get_system_prompt() -> str:
     if SYSTEM_PROMPT:
         return SYSTEM_PROMPT
 
-    shell = os.environ.get("SHELL", "/bin/sh")
-    user_part = f" as user '{os.getenv('USER', 'unknown')}'" if not MULTI_USER else ""
+    shell = os.environ.get('SHELL', '/bin/sh')
+    user_part = f" as user '{os.getenv('USER', 'unknown')}'" if not MULTI_USER else ''
 
     prompt = (
-        f"You have access to a computer running {platform.system()} {platform.release()} ({platform.machine()}) "
+        f'You have access to a computer running {platform.system()} {platform.release()} ({platform.machine()}) '
         f'on host "{socket.gethostname()}"{user_part} with {shell}. '
-        f"Python {sys.version.split()[0]} is available.\n\n"
-        "Use your tools to directly interact with the system \u2014 run commands, read and write files, "
-        "and search the filesystem. "
-        "Prefer verifying the current state before making changes. "
-        "When running commands, check the output to confirm success. "
-        "If a command produces no output, that typically means it succeeded."
+        f'Python {sys.version.split()[0]} is available.\n\n'
+        'Use your tools to directly interact with the system \u2014 run commands, read and write files, '
+        'and search the filesystem. '
+        'Prefer verifying the current state before making changes. '
+        'When running commands, check the output to confirm success. '
+        'If a command produces no output, that typically means it succeeded.'
     )
 
     if OPEN_TERMINAL_INFO:
-        prompt += f"\n\n{OPEN_TERMINAL_INFO}"
+        prompt += f'\n\n{OPEN_TERMINAL_INFO}'
 
     if ENABLE_DESKTOP:
         prompt += (
-            "\n\nThis environment has a virtual desktop with a graphical display. "
-            "You can use the desktop tools to take screenshots, click, type, and "
-            "interact with GUI applications — enabling \"computer use\" capabilities. "
-            "Start the desktop with POST /desktop/start before using desktop tools."
+            '\n\nThis environment has a virtual desktop with a graphical display. '
+            'You can use the desktop tools to take screenshots, click, type, and '
+            'interact with GUI applications — enabling "computer use" capabilities. '
+            'Start the desktop with POST /desktop/start before using desktop tools.\n\n'
+            'IMPORTANT: Always call desktop_locate to find UI elements before interacting with them. '
+            'The workflow is: desktop_locate(description="...") → get bounding box with coordinates → '
+            'desktop_click(x=..., y=...). Never guess coordinates — always locate first.'
         )
 
     return prompt
 
 
-_EXECUTE_DESCRIPTION = (
-    "Run a shell command in the background and return a command ID.\n\n"
-    + get_system_info()
-)
+_EXECUTE_DESCRIPTION = 'Run a shell command in the background and return a command ID.\n\n' + get_system_info()
 if EXECUTE_DESCRIPTION:
-    _EXECUTE_DESCRIPTION += "\n\n" + EXECUTE_DESCRIPTION
+    _EXECUTE_DESCRIPTION += '\n\n' + EXECUTE_DESCRIPTION
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -112,7 +128,7 @@ async def verify_api_key(
     if not API_KEY:
         return
     if not credentials or not hmac.compare_digest(credentials.credentials, API_KEY):
-        raise HTTPException(status_code=401, detail="Invalid API key")
+        raise HTTPException(status_code=401, detail='Invalid API key')
 
 
 def get_filesystem(request: Request) -> UserFS:
@@ -124,7 +140,7 @@ def get_filesystem(request: Request) -> UserFS:
     """
     if not MULTI_USER:
         return UserFS()
-    user_id = request.headers.get("x-user-id")
+    user_id = request.headers.get('x-user-id')
     if not user_id:
         return UserFS()
     username, home = resolve_user(user_id)
@@ -132,33 +148,33 @@ def get_filesystem(request: Request) -> UserFS:
 
 
 app = FastAPI(
-    title="Open Terminal",
-    description="A remote terminal API.",
-    version=_pkg_version("open-terminal"),
+    title='Open Terminal',
+    description='A remote terminal API.',
+    version=_pkg_version('open-terminal'),
 )
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[o.strip() for o in CORS_ALLOWED_ORIGINS.split(",")],
+    allow_origins=[o.strip() for o in CORS_ALLOWED_ORIGINS.split(',')],
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=['*'],
+    allow_headers=['*'],
 )
 
 
 @app.exception_handler(PermissionError)
 async def permission_error_handler(request: Request, exc: PermissionError):
-    return JSONResponse(status_code=403, content={"detail": str(exc)})
+    return JSONResponse(status_code=403, content={'detail': str(exc)})
 
 
-@app.middleware("http")
+@app.middleware('http')
 async def normalize_null_query_params(request: Request, call_next):
     """Strip query parameters whose value is the literal string 'null'."""
     from urllib.parse import urlencode
 
     raw_params = request.query_params.multi_items()
-    cleaned = [(k, v) for k, v in raw_params if v.lower() != "null"]
+    cleaned = [(k, v) for k, v in raw_params if v.lower() != 'null']
     if len(cleaned) != len(raw_params):
-        request.scope["query_string"] = urlencode(cleaned).encode("utf-8")
+        request.scope['query_string'] = urlencode(cleaned).encode('utf-8')
     return await call_next(request)
 
 
@@ -170,8 +186,8 @@ async def normalize_null_query_params(request: Request, call_next):
 class ExecRequest(BaseModel):
     command: str = Field(
         ...,
-        description="Shell command to execute. Supports chaining (&&, ||, ;), pipes (|), and redirections.",
-        json_schema_extra={"examples": ["echo hello", "ls -la && whoami"]},
+        description='Shell command to execute. Supports chaining (&&, ||, ;), pipes (|), and redirections.',
+        json_schema_extra={'examples': ['echo hello', 'ls -la && whoami']},
     )
     cwd: Optional[str] = Field(
         None,
@@ -179,7 +195,7 @@ class ExecRequest(BaseModel):
     )
     env: Optional[dict[str, str]] = Field(
         None,
-        description="Extra environment variables merged into the subprocess environment.",
+        description='Extra environment variables merged into the subprocess environment.',
     )
 
 
@@ -193,67 +209,66 @@ class InputRequest(BaseModel):
 class WriteRequest(BaseModel):
     path: str = Field(
         ...,
-        description="Absolute or relative path to write to. Parent directories are created automatically.",
+        description='Absolute or relative path to write to. Parent directories are created automatically.',
     )
     content: str = Field(
         ...,
-        description="Text content to write to the file.",
+        description='Text content to write to the file.',
     )
 
 
 class ReplacementChunk(BaseModel):
     target: str = Field(
         ...,
-        description="Exact string to find. Must match precisely, including whitespace.",
+        description='Exact string to find. Must match precisely, including whitespace.',
     )
     replacement: str = Field(
         ...,
-        description="Content to replace the target with.",
+        description='Content to replace the target with.',
     )
     start_line: Optional[int] = Field(
         None,
-        description="Narrow the search to lines at or after this (1-indexed).",
+        description='Narrow the search to lines at or after this (1-indexed).',
         ge=1,
     )
     end_line: Optional[int] = Field(
         None,
-        description="Narrow the search to lines at or before this (1-indexed).",
+        description='Narrow the search to lines at or before this (1-indexed).',
         ge=1,
     )
     allow_multiple: bool = Field(
         False,
-        description="If true, replaces all occurrences. If false, errors when multiple matches are found.",
+        description='If true, replaces all occurrences. If false, errors when multiple matches are found.',
     )
 
 
 class MkdirRequest(BaseModel):
     path: str = Field(
         ...,
-        description="Directory path to create. Parent directories are created automatically.",
+        description='Directory path to create. Parent directories are created automatically.',
     )
 
 
 class MoveRequest(BaseModel):
     source: str = Field(
         ...,
-        description="Path to the file or directory to move.",
+        description='Path to the file or directory to move.',
     )
     destination: str = Field(
         ...,
-        description="Destination path (new location).",
+        description='Destination path (new location).',
     )
 
 
 class ReplaceRequest(BaseModel):
     path: str = Field(
         ...,
-        description="Path to the file to modify.",
+        description='Path to the file to modify.',
     )
     replacements: list[ReplacementChunk] = Field(
         ...,
-        description="List of find-and-replace operations to apply sequentially.",
+        description='List of find-and-replace operations to apply sequentially.',
     )
-
 
 
 # ---------------------------------------------------------------------------
@@ -266,7 +281,7 @@ class BackgroundProcess:
     id: str
     command: str
     runner: ProcessRunner
-    status: str = "running"
+    status: str = 'running'
     exit_code: Optional[int] = None
     log_task: Optional[asyncio.Task] = field(default=None, repr=False)
     finished_at: Optional[float] = field(default=None, repr=False)
@@ -286,7 +301,6 @@ _EXPIRY_SECONDS = 300  # auto-clean finished processes after 5 min
 _session_cwds: dict[str, tuple[str, float]] = {}
 
 
-
 def _expire_session_cwds():
     """Remove session cwd entries that haven't been accessed within the TTL."""
     now = time.time()
@@ -295,7 +309,7 @@ def _expire_session_cwds():
         del _session_cwds[sid]
 
 
-def _get_session_cwd(session_id: str | None, fs: "UserFS") -> str:
+def _get_session_cwd(session_id: str | None, fs: 'UserFS') -> str:
     """Return the tracked cwd for *session_id*, or ``fs.home`` as default."""
     _expire_session_cwds()
     if session_id and session_id in _session_cwds:
@@ -314,8 +328,6 @@ def _set_session_cwd(session_id: str | None, path: str):
 from open_terminal.utils.log import log_process, read_log
 
 
-
-
 def _cleanup_expired():
     """Remove finished processes that have expired.
 
@@ -325,17 +337,12 @@ def _cleanup_expired():
     expired = [
         process_id
         for process_id, background_process in _processes.items()
-        if background_process.finished_at
-        and now - background_process.finished_at > _EXPIRY_SECONDS
+        if background_process.finished_at and now - background_process.finished_at > _EXPIRY_SECONDS
     ]
     for process_id in expired:
         bp = _processes.pop(process_id)
         # Delete the log file if it has exceeded the retention period.
-        if (
-            bp.log_path
-            and bp.finished_at
-            and now - bp.finished_at > PROCESS_LOG_RETENTION
-        ):
+        if bp.log_path and bp.finished_at and now - bp.finished_at > PROCESS_LOG_RETENTION:
             try:
                 os.remove(bp.log_path)
             except OSError:
@@ -346,7 +353,7 @@ def _get_process(process_id: str) -> BackgroundProcess:
     _cleanup_expired()
     background_process = _processes.get(process_id)
     if not background_process:
-        raise HTTPException(status_code=404, detail="Process not found")
+        raise HTTPException(status_code=404, detail='Process not found')
     return background_process
 
 
@@ -356,13 +363,13 @@ def _get_process(process_id: str) -> BackgroundProcess:
 
 
 @app.get(
-    "/health",
-    operation_id="health_check",
-    summary="Health check",
-    description="Returns service status. No authentication required.",
+    '/health',
+    operation_id='health_check',
+    summary='Health check',
+    description='Returns service status. No authentication required.',
 )
 async def health():
-    return {"status": "ok"}
+    return {'status': 'ok'}
 
 
 # ---------------------------------------------------------------------------
@@ -371,17 +378,17 @@ async def health():
 
 
 @app.get(
-    "/api/config",
+    '/api/config',
     include_in_schema=False,
 )
 async def get_config():
     """Return server feature flags for client-side discovery."""
     return {
-        "features": {
-            "terminal": ENABLE_TERMINAL,
-            "notebooks": ENABLE_NOTEBOOKS,
-            "system": ENABLE_SYSTEM_PROMPT,
-            "desktop": ENABLE_DESKTOP,
+        'features': {
+            'terminal': ENABLE_TERMINAL,
+            'notebooks': ENABLE_NOTEBOOKS,
+            'system': ENABLE_SYSTEM_PROMPT,
+            'desktop': ENABLE_DESKTOP,
         },
     }
 
@@ -389,26 +396,26 @@ async def get_config():
 if ENABLE_SYSTEM_PROMPT:
 
     @app.get(
-        "/system",
+        '/system',
         include_in_schema=False,
         dependencies=[Depends(verify_api_key)],
     )
     async def get_system():
         """Return a system prompt for LLM integration."""
-        return {"prompt": get_system_prompt()}
+        return {'prompt': get_system_prompt()}
 
 
 if OPEN_TERMINAL_INFO:
 
     @app.get(
-        "/info",
-        operation_id="get_info",
-        summary="Get environment info",
-        description="Return operator-provided information about this environment. Use this to understand the system you are working with.",
+        '/info',
+        operation_id='get_info',
+        summary='Get environment info',
+        description='Return operator-provided information about this environment. Use this to understand the system you are working with.',
         dependencies=[Depends(verify_api_key)],
     )
     async def get_info():
-        return {"info": OPEN_TERMINAL_INFO}
+        return {'info': OPEN_TERMINAL_INFO}
 
 
 # ---------------------------------------------------------------------------
@@ -417,7 +424,7 @@ if OPEN_TERMINAL_INFO:
 
 
 @app.get(
-    "/files/cwd",
+    '/files/cwd',
     include_in_schema=False,
     dependencies=[Depends(verify_api_key)],
 )
@@ -425,12 +432,12 @@ async def get_cwd(
     http_request: Request,
     fs: UserFS = Depends(get_filesystem),
 ):
-    session_id = http_request.headers.get("x-session-id")
-    return {"cwd": _get_session_cwd(session_id, fs)}
+    session_id = http_request.headers.get('x-session-id')
+    return {'cwd': _get_session_cwd(session_id, fs)}
 
 
 @app.post(
-    "/files/cwd",
+    '/files/cwd',
     include_in_schema=False,
     dependencies=[Depends(verify_api_key)],
 )
@@ -439,67 +446,67 @@ async def set_cwd(
     request: MkdirRequest,
     fs: UserFS = Depends(get_filesystem),
 ):
-    session_id = http_request.headers.get("x-session-id")
+    session_id = http_request.headers.get('x-session-id')
     target = fs.resolve_path(request.path)
     if not fs.username and not await fs.isdir(target):
-        raise HTTPException(status_code=404, detail="Directory not found")
+        raise HTTPException(status_code=404, detail='Directory not found')
     _set_session_cwd(session_id, target)
-    return {"cwd": target}
+    return {'cwd': target}
 
 
 @app.get(
-    "/files/list",
-    operation_id="list_files",
-    summary="List directory contents",
-    description="Return a structured listing of files and directories at the given path.",
+    '/files/list',
+    operation_id='list_files',
+    summary='List directory contents',
+    description='Return a structured listing of files and directories at the given path.',
     dependencies=[Depends(verify_api_key)],
     responses={
-        404: {"description": "Directory not found."},
-        401: {"description": "Invalid or missing API key."},
+        404: {'description': 'Directory not found.'},
+        401: {'description': 'Invalid or missing API key.'},
     },
 )
 async def list_files(
     http_request: Request,
-    directory: str = Query(".", description="Directory path to list."),
+    directory: str = Query('.', description='Directory path to list.'),
     fs: UserFS = Depends(get_filesystem),
 ):
-    session_id = http_request.headers.get("x-session-id")
+    session_id = http_request.headers.get('x-session-id')
     session_cwd = _get_session_cwd(session_id, fs) if session_id else None
     target = fs.resolve_path(directory, cwd=session_cwd)
     if not await fs.isdir(target):
-        raise HTTPException(status_code=404, detail="Directory not found")
+        raise HTTPException(status_code=404, detail='Directory not found')
     entries = await fs.listdir(target)
-    return {"dir": target, "entries": entries}
+    return {'dir': target, 'entries': entries}
 
 
 @app.get(
-    "/files/read",
-    operation_id="read_file",
-    summary="Read a file",
-    description="Read a file and return its contents. Supports text files and images (PNG, JPEG, WebP, etc.). For text files you can optionally request a specific line range. Images are returned as binary so you can view and analyze them directly. Use display_file to show a file to the user.",
+    '/files/read',
+    operation_id='read_file',
+    summary='Read a file',
+    description='Read a file and return its contents. Supports text files and images (PNG, JPEG, WebP, etc.). For text files you can optionally request a specific line range. Images are returned as binary so you can view and analyze them directly. Use display_file to show a file to the user.',
     dependencies=[Depends(verify_api_key)],
     responses={
-        404: {"description": "File not found."},
-        415: {"description": "Unsupported binary file type."},
-        401: {"description": "Invalid or missing API key."},
+        404: {'description': 'File not found.'},
+        415: {'description': 'Unsupported binary file type.'},
+        401: {'description': 'Invalid or missing API key.'},
     },
 )
 async def read_file(
     http_request: Request,
-    path: str = Query(..., description="Path to the file to read."),
+    path: str = Query(..., description='Path to the file to read.'),
     start_line: Optional[int] = Query(
-        None, description="First line to return (1-indexed, inclusive). Defaults to the beginning of the file.", ge=1
+        None, description='First line to return (1-indexed, inclusive). Defaults to the beginning of the file.', ge=1
     ),
     end_line: Optional[int] = Query(
-        None, description="Last line to return (1-indexed, inclusive). Defaults to the end of the file.", ge=1
+        None, description='Last line to return (1-indexed, inclusive). Defaults to the end of the file.', ge=1
     ),
     fs: UserFS = Depends(get_filesystem),
 ):
-    session_id = http_request.headers.get("x-session-id")
+    session_id = http_request.headers.get('x-session-id')
     session_cwd = _get_session_cwd(session_id, fs) if session_id else None
     target = fs.resolve_path(path, cwd=session_cwd)
     if not await fs.isfile(target):
-        raise HTTPException(status_code=404, detail="File not found")
+        raise HTTPException(status_code=404, detail='File not found')
 
     try:
         content = await fs.read_text(target)
@@ -509,23 +516,21 @@ async def read_file(
 
         raw = await fs.read(target)
         mime, _ = mimetypes.guess_type(target)
-        mime = mime or "application/octet-stream"
+        mime = mime or 'application/octet-stream'
 
         # Try document text extraction (PDF, Office, OpenDocument, etc.)
         from open_terminal.utils.documents import EXTRACTORS
 
         for ext_mime, ext_suffix, extractor in EXTRACTORS:
-            if (ext_mime and mime == ext_mime) or (
-                ext_suffix and target.lower().endswith(ext_suffix)
-            ):
+            if (ext_mime and mime == ext_mime) or (ext_suffix and target.lower().endswith(ext_suffix)):
                 text = await asyncio.to_thread(extractor, target)
                 lines = text.splitlines(keepends=True)
                 start = (start_line or 1) - 1
                 end = end_line or len(lines)
                 return {
-                    "path": target,
-                    "total_lines": len(lines),
-                    "content": "".join(lines[start:end]),
+                    'path': target,
+                    'total_lines': len(lines),
+                    'content': ''.join(lines[start:end]),
                 }
 
         # Return raw binary for allowed mime type prefixes (e.g. image/*)
@@ -535,31 +540,31 @@ async def read_file(
         # Other binary files: reject (LLMs can't interpret raw bytes)
         raise HTTPException(
             status_code=415,
-            detail=f"Unsupported binary file type: {mime} ({len(raw)} bytes)",
+            detail=f'Unsupported binary file type: {mime} ({len(raw)} bytes)',
         )
 
     start = (start_line or 1) - 1
     end = end_line or len(lines)
     return {
-        "path": target,
-        "total_lines": len(lines),
-        "content": "".join(lines[start:end]),
+        'path': target,
+        'total_lines': len(lines),
+        'content': ''.join(lines[start:end]),
     }
 
 
 @app.get(
-    "/files/display",
-    operation_id="display_file",
-    summary="Display a file to the user",
+    '/files/display',
+    operation_id='display_file',
+    summary='Display a file to the user',
     description="Open a file in the user's file viewer so they can see it. Use this when the user wants to view or look at a file. This does not return file content to you — use read_file if you need to read the content yourself.",
     dependencies=[Depends(verify_api_key)],
     responses={
-        401: {"description": "Invalid or missing API key."},
+        401: {'description': 'Invalid or missing API key.'},
     },
 )
 async def display_file(
     http_request: Request,
-    path: str = Query(..., description="Absolute path to the file to display."),
+    path: str = Query(..., description='Absolute path to the file to display.'),
     fs: UserFS = Depends(get_filesystem),
 ):
     """Signal that a file should be displayed to the user.
@@ -569,20 +574,20 @@ async def display_file(
     intercepting this response and presenting the file in its own UI (e.g.
     opening a preview pane, launching a viewer, etc.).
     """
-    session_id = http_request.headers.get("x-session-id")
+    session_id = http_request.headers.get('x-session-id')
     session_cwd = _get_session_cwd(session_id, fs) if session_id else None
     target = fs.resolve_path(path, cwd=session_cwd)
     exists = await fs.isfile(target)
-    return {"path": target, "exists": exists}
+    return {'path': target, 'exists': exists}
 
 
 @app.get(
-    "/files/view",
+    '/files/view',
     include_in_schema=False,
     dependencies=[Depends(verify_api_key)],
 )
 async def view_file(
-    path: str = Query(..., description="Path to the file to view."),
+    path: str = Query(..., description='Path to the file to view.'),
     fs: UserFS = Depends(get_filesystem),
 ):
     """Return raw file bytes with the appropriate Content-Type.
@@ -592,39 +597,39 @@ async def view_file(
     """
     target = fs.resolve_path(path)
     if not await fs.isfile(target):
-        raise HTTPException(status_code=404, detail="File not found")
+        raise HTTPException(status_code=404, detail='File not found')
 
     import mimetypes
 
     mime, _ = mimetypes.guess_type(target)
-    mime = mime or "application/octet-stream"
+    mime = mime or 'application/octet-stream'
     raw = await fs.read(target)
     return Response(content=raw, media_type=mime)
 
 
 @app.post(
-    "/files/write",
-    operation_id="write_file",
-    summary="Write a file",
-    description="Write text content to a file. Creates parent directories automatically. Overwrites if the file already exists.",
+    '/files/write',
+    operation_id='write_file',
+    summary='Write a file',
+    description='Write text content to a file. Creates parent directories automatically. Overwrites if the file already exists.',
     dependencies=[Depends(verify_api_key)],
     responses={
-        401: {"description": "Invalid or missing API key."},
+        401: {'description': 'Invalid or missing API key.'},
     },
 )
 async def write_file(http_request: Request, request: WriteRequest, fs: UserFS = Depends(get_filesystem)):
-    session_id = http_request.headers.get("x-session-id")
+    session_id = http_request.headers.get('x-session-id')
     session_cwd = _get_session_cwd(session_id, fs) if session_id else None
     target = fs.resolve_path(request.path, cwd=session_cwd)
     try:
         await fs.write(target, request.content)
     except (OSError, subprocess.CalledProcessError) as e:
         raise HTTPException(status_code=400, detail=str(e))
-    return {"path": target, "size": len(request.content.encode())}
+    return {'path': target, 'size': len(request.content.encode())}
 
 
 @app.post(
-    "/files/mkdir",
+    '/files/mkdir',
     include_in_schema=False,
     dependencies=[Depends(verify_api_key)],
 )
@@ -634,31 +639,31 @@ async def mkdir(request: MkdirRequest, fs: UserFS = Depends(get_filesystem)):
         await fs.mkdir(target)
     except (OSError, subprocess.CalledProcessError) as e:
         raise HTTPException(status_code=400, detail=str(e))
-    return {"path": target}
+    return {'path': target}
 
 
 @app.delete(
-    "/files/delete",
+    '/files/delete',
     include_in_schema=False,
     dependencies=[Depends(verify_api_key)],
 )
 async def delete_entry(
-    path: str = Query(..., description="Path to delete."),
+    path: str = Query(..., description='Path to delete.'),
     fs: UserFS = Depends(get_filesystem),
 ):
     target = fs.resolve_path(path)
     if not await fs.exists(target):
-        raise HTTPException(status_code=404, detail="Path not found")
+        raise HTTPException(status_code=404, detail='Path not found')
     is_dir = await fs.isdir(target)
     try:
         await fs.remove(target)
     except (OSError, subprocess.CalledProcessError) as e:
         raise HTTPException(status_code=400, detail=str(e))
-    return {"path": target, "type": "directory" if is_dir else "file"}
+    return {'path': target, 'type': 'directory' if is_dir else 'file'}
 
 
 @app.post(
-    "/files/move",
+    '/files/move',
     include_in_schema=False,
     dependencies=[Depends(verify_api_key)],
 )
@@ -667,40 +672,40 @@ async def move_entry(request: MoveRequest, fs: UserFS = Depends(get_filesystem))
     destination = fs.resolve_path(request.destination)
 
     if not await fs.exists(source):
-        raise HTTPException(status_code=404, detail="Source path not found")
+        raise HTTPException(status_code=404, detail='Source path not found')
 
     dest_parent = os.path.dirname(destination)
     if not await fs.isdir(dest_parent):
-        raise HTTPException(status_code=400, detail="Destination parent directory not found")
+        raise HTTPException(status_code=400, detail='Destination parent directory not found')
 
     if await fs.exists(destination):
-        raise HTTPException(status_code=409, detail="Destination already exists")
+        raise HTTPException(status_code=409, detail='Destination already exists')
 
     try:
         await fs.move(source, destination)
     except (OSError, subprocess.CalledProcessError) as e:
         raise HTTPException(status_code=400, detail=str(e))
-    return {"source": source, "destination": destination}
+    return {'source': source, 'destination': destination}
 
 
 @app.post(
-    "/files/replace",
-    operation_id="replace_file_content",
-    summary="Replace content in a file",
-    description="Find and replace exact strings in a file. Supports multiple replacements in one call with optional line range narrowing.",
+    '/files/replace',
+    operation_id='replace_file_content',
+    summary='Replace content in a file',
+    description='Find and replace exact strings in a file. Supports multiple replacements in one call with optional line range narrowing.',
     dependencies=[Depends(verify_api_key)],
     responses={
-        404: {"description": "File not found."},
-        400: {"description": "Target string not found or ambiguous match."},
-        401: {"description": "Invalid or missing API key."},
+        404: {'description': 'File not found.'},
+        400: {'description': 'Target string not found or ambiguous match.'},
+        401: {'description': 'Invalid or missing API key.'},
     },
 )
 async def replace_file_content(http_request: Request, request: ReplaceRequest, fs: UserFS = Depends(get_filesystem)):
-    session_id = http_request.headers.get("x-session-id")
+    session_id = http_request.headers.get('x-session-id')
     session_cwd = _get_session_cwd(session_id, fs) if session_id else None
     target = fs.resolve_path(request.path, cwd=session_cwd)
     if not await fs.isfile(target):
-        raise HTTPException(status_code=404, detail="File not found")
+        raise HTTPException(status_code=404, detail='File not found')
 
     try:
         content = await fs.read_text(target)
@@ -712,7 +717,7 @@ async def replace_file_content(http_request: Request, request: ReplaceRequest, f
             lines = content.splitlines(keepends=True)
             start = (chunk.start_line or 1) - 1
             end = chunk.end_line or len(lines)
-            search_region = "".join(lines[start:end])
+            search_region = ''.join(lines[start:end])
         else:
             search_region = content
 
@@ -720,18 +725,18 @@ async def replace_file_content(http_request: Request, request: ReplaceRequest, f
         if count == 0:
             raise HTTPException(
                 status_code=400,
-                detail=f"Target string not found: {chunk.target[:100]!r}",
+                detail=f'Target string not found: {chunk.target[:100]!r}',
             )
         if count > 1 and not chunk.allow_multiple:
             raise HTTPException(
                 status_code=400,
-                detail=f"Found {count} occurrences of target string but allow_multiple is false",
+                detail=f'Found {count} occurrences of target string but allow_multiple is false',
             )
 
         if chunk.start_line or chunk.end_line:
             new_region = search_region.replace(chunk.target, chunk.replacement)
             lines[start:end] = [new_region]
-            content = "".join(lines)
+            content = ''.join(lines)
         else:
             content = content.replace(chunk.target, chunk.replacement)
 
@@ -740,54 +745,50 @@ async def replace_file_content(http_request: Request, request: ReplaceRequest, f
     except OSError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    return {"path": target, "size": len(content.encode())}
+    return {'path': target, 'size': len(content.encode())}
 
 
 @app.get(
-    "/files/grep",
-    operation_id="grep_search",
-    summary="Search file contents",
-    description="Search for a text pattern across files in a directory. Returns structured matches with file paths, line numbers, and matching lines. Skips binary files.",
+    '/files/grep',
+    operation_id='grep_search',
+    summary='Search file contents',
+    description='Search for a text pattern across files in a directory. Returns structured matches with file paths, line numbers, and matching lines. Skips binary files.',
     dependencies=[Depends(verify_api_key)],
     responses={
-        404: {"description": "Search path not found."},
-        400: {"description": "Invalid regex pattern."},
-        401: {"description": "Invalid or missing API key."},
+        404: {'description': 'Search path not found.'},
+        400: {'description': 'Invalid regex pattern.'},
+        401: {'description': 'Invalid or missing API key.'},
     },
 )
 async def grep_search(
     http_request: Request,
-    query: str = Query(..., description="Text or regex pattern to search for."),
-    path: str = Query(".", description="Directory or file to search in."),
-    regex: bool = Query(False, description="Treat query as a regex pattern."),
-    case_insensitive: bool = Query(
-        False, description="Perform case-insensitive matching."
-    ),
+    query: str = Query(..., description='Text or regex pattern to search for.'),
+    path: str = Query('.', description='Directory or file to search in.'),
+    regex: bool = Query(False, description='Treat query as a regex pattern.'),
+    case_insensitive: bool = Query(False, description='Perform case-insensitive matching.'),
     include: Optional[list[str]] = Query(
         None,
         description="Glob patterns to filter files (e.g. '*.py'). Files must match at least one pattern.",
     ),
     match_per_line: bool = Query(
         True,
-        description="If true, return each matching line with line numbers. If false, return only the names of matching files.",
+        description='If true, return each matching line with line numbers. If false, return only the names of matching files.',
     ),
-    max_results: int = Query(
-        50, description="Maximum number of matches to return.", ge=1, le=500
-    ),
+    max_results: int = Query(50, description='Maximum number of matches to return.', ge=1, le=500),
     fs: UserFS = Depends(get_filesystem),
 ):
-    session_id = http_request.headers.get("x-session-id")
+    session_id = http_request.headers.get('x-session-id')
     session_cwd = _get_session_cwd(session_id, fs) if session_id else None
     target = fs.resolve_path(path, cwd=session_cwd)
     if not await aiofiles.os.path.exists(target):
-        raise HTTPException(status_code=404, detail="Search path not found")
+        raise HTTPException(status_code=404, detail='Search path not found')
 
     flags = re.IGNORECASE if case_insensitive else 0
     if regex:
         try:
             pattern = re.compile(query, flags)
         except re.error as exc:
-            raise HTTPException(status_code=400, detail=f"Invalid regex: {exc}")
+            raise HTTPException(status_code=400, detail=f'Invalid regex: {exc}')
     else:
         pattern = re.compile(re.escape(query), flags)
 
@@ -805,22 +806,22 @@ async def grep_search(
             if truncated:
                 return
             try:
-                with open(file_path, "r", encoding="utf-8", errors="strict") as f:
+                with open(file_path, 'r', encoding='utf-8', errors='strict') as f:
                     for line_number, line in enumerate(f, 1):
                         if pattern.search(line):
                             if match_per_line:
                                 matches.append(
                                     {
-                                        "file": file_path,
-                                        "line": line_number,
-                                        "content": line.rstrip("\n\r"),
+                                        'file': file_path,
+                                        'line': line_number,
+                                        'content': line.rstrip('\n\r'),
                                     }
                                 )
                                 if len(matches) >= max_results:
                                     truncated = True
                                     return
                             else:
-                                matches.append({"file": file_path})
+                                matches.append({'file': file_path})
                                 if len(matches) >= max_results:
                                     truncated = True
                                 return  # one match per file is enough
@@ -832,10 +833,7 @@ async def grep_search(
         else:
             for dirpath, dirnames, filenames in os.walk(target):
                 # Prune directories belonging to other users.
-                dirnames[:] = [
-                    d for d in dirnames
-                    if fs.is_path_allowed(os.path.join(dirpath, d))
-                ]
+                dirnames[:] = [d for d in dirnames if fs.is_path_allowed(os.path.join(dirpath, d))]
                 if truncated:
                     break
                 for filename in sorted(filenames):
@@ -850,46 +848,42 @@ async def grep_search(
 
     matches, truncated = await asyncio.to_thread(_search_sync)
     return {
-        "query": query,
-        "path": target,
-        "matches": matches,
-        "truncated": truncated,
+        'query': query,
+        'path': target,
+        'matches': matches,
+        'truncated': truncated,
     }
 
 
 @app.get(
-    "/files/glob",
-    operation_id="glob_search",
-    summary="Search files by name",
-    description="Search for files and subdirectories by name within a specified directory using glob patterns. Results will include the relative path, type, size, and modification time.",
+    '/files/glob',
+    operation_id='glob_search',
+    summary='Search files by name',
+    description='Search for files and subdirectories by name within a specified directory using glob patterns. Results will include the relative path, type, size, and modification time.',
     dependencies=[Depends(verify_api_key)],
     responses={
-        404: {"description": "Search directory not found."},
-        401: {"description": "Invalid or missing API key."},
+        404: {'description': 'Search directory not found.'},
+        401: {'description': 'Invalid or missing API key.'},
     },
 )
 async def glob_search(
     http_request: Request,
     pattern: str = Query(..., description="Glob pattern to search for (e.g. '*.py')."),
-    path: str = Query(".", description="Directory to search within."),
-    exclude: Optional[list[str]] = Query(
-        None, description="Glob patterns to exclude from search results."
-    ),
+    path: str = Query('.', description='Directory to search within.'),
+    exclude: Optional[list[str]] = Query(None, description='Glob patterns to exclude from search results.'),
     type: Optional[str] = Query(
-        "any",
+        'any',
         description="Type filter: 'file', 'directory', or 'any'.",
-        pattern="^(file|directory|any)$",
+        pattern='^(file|directory|any)$',
     ),
-    max_results: int = Query(
-        50, description="Maximum number of matches to return.", ge=1, le=500
-    ),
+    max_results: int = Query(50, description='Maximum number of matches to return.', ge=1, le=500),
     fs: UserFS = Depends(get_filesystem),
 ):
-    session_id = http_request.headers.get("x-session-id")
+    session_id = http_request.headers.get('x-session-id')
     session_cwd = _get_session_cwd(session_id, fs) if session_id else None
     target = fs.resolve_path(path, cwd=session_cwd)
     if not await aiofiles.os.path.isdir(target):
-        raise HTTPException(status_code=404, detail="Search directory not found")
+        raise HTTPException(status_code=404, detail='Search directory not found')
 
     def _glob_sync():
         matches = []
@@ -900,16 +894,13 @@ async def glob_search(
                 break
 
             # Prune directories belonging to other users.
-            dirnames[:] = [
-                d for d in dirnames
-                if fs.is_path_allowed(os.path.join(dirpath, d))
-            ]
+            dirnames[:] = [d for d in dirnames if fs.is_path_allowed(os.path.join(dirpath, d))]
 
             entries = []
-            if type in ("any", "directory"):
-                entries.extend([(d, "directory") for d in dirnames])
-            if type in ("any", "file"):
-                entries.extend([(f, "file") for f in filenames])
+            if type in ('any', 'directory'):
+                entries.extend([(d, 'directory') for d in dirnames])
+            if type in ('any', 'file'):
+                entries.extend([(f, 'file') for f in filenames])
 
             for name, entry_type in sorted(entries, key=lambda x: x[0]):
                 if truncated:
@@ -919,26 +910,21 @@ async def glob_search(
                 rel_path = os.path.relpath(full_path, target)
 
                 # Check inclusion pattern
-                if not fnmatch.fnmatch(name, pattern) and not fnmatch.fnmatch(
-                    rel_path, pattern
-                ):
+                if not fnmatch.fnmatch(name, pattern) and not fnmatch.fnmatch(rel_path, pattern):
                     continue
 
                 # Check exclusion patterns
-                if exclude and any(
-                    fnmatch.fnmatch(name, excl) or fnmatch.fnmatch(rel_path, excl)
-                    for excl in exclude
-                ):
+                if exclude and any(fnmatch.fnmatch(name, excl) or fnmatch.fnmatch(rel_path, excl) for excl in exclude):
                     continue
 
                 try:
                     file_stat = os.stat(full_path)
                     matches.append(
                         {
-                            "path": rel_path,
-                            "type": entry_type,
-                            "size": file_stat.st_size,
-                            "modified": file_stat.st_mtime,
+                            'path': rel_path,
+                            'type': entry_type,
+                            'size': file_stat.st_size,
+                            'modified': file_stat.st_mtime,
                         }
                     )
 
@@ -952,35 +938,31 @@ async def glob_search(
 
     matches, truncated = await asyncio.to_thread(_glob_sync)
     return {
-        "pattern": pattern,
-        "path": target,
-        "matches": matches,
-        "truncated": truncated,
+        'pattern': pattern,
+        'path': target,
+        'matches': matches,
+        'truncated': truncated,
     }
 
 
-
-
 @app.post(
-    "/files/upload",
+    '/files/upload',
     include_in_schema=False,
-    operation_id="upload_file",
-    summary="Upload a file",
-    description="Save a file to the specified path via multipart form data.",
+    operation_id='upload_file',
+    summary='Upload a file',
+    description='Save a file to the specified path via multipart form data.',
     dependencies=[Depends(verify_api_key)],
     responses={
-        401: {"description": "Invalid or missing API key."},
+        401: {'description': 'Invalid or missing API key.'},
     },
 )
 async def upload_file(
-    directory: str = Query(..., description="Destination directory for the file."),
-    file: UploadFile = File(
-        ..., description="The file to upload."
-    ),
+    directory: str = Query(..., description='Destination directory for the file.'),
+    file: UploadFile = File(..., description='The file to upload.'),
     fs: UserFS = Depends(get_filesystem),
 ):
     content = await file.read()
-    filename = os.path.basename(file.filename or "upload")
+    filename = os.path.basename(file.filename or 'upload')
 
     directory = fs.resolve_path(directory)
     path = os.path.normpath(os.path.join(directory, filename))
@@ -992,18 +974,18 @@ async def upload_file(
         raise HTTPException(status_code=403, detail=str(e))
     except OSError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    return {"path": path, "size": len(content)}
+    return {'path': path, 'size': len(content)}
 
 
 class ArchiveRequest(BaseModel):
     paths: list[str] = Field(
         ...,
-        description="List of file or directory paths to include in the ZIP archive.",
+        description='List of file or directory paths to include in the ZIP archive.',
     )
 
 
 @app.post(
-    "/files/archive",
+    '/files/archive',
     include_in_schema=False,
     dependencies=[Depends(verify_api_key)],
 )
@@ -1016,50 +998,45 @@ async def archive_paths(
     import zipfile
 
     if not request.paths:
-        raise HTTPException(status_code=400, detail="No paths provided")
+        raise HTTPException(status_code=400, detail='No paths provided')
 
     resolved = []
     for p in request.paths:
         target = fs.resolve_path(p)
         if not await fs.exists(target):
-            raise HTTPException(status_code=404, detail=f"Path not found: {p}")
+            raise HTTPException(status_code=404, detail=f'Path not found: {p}')
         resolved.append(target)
 
     # Derive a meaningful archive name from the input paths.
     if len(resolved) == 1:
-        archive_name = os.path.basename(resolved[0].rstrip("/\\")) or "archive"
+        archive_name = os.path.basename(resolved[0].rstrip('/\\')) or 'archive'
     else:
-        archive_name = "download"
+        archive_name = 'download'
 
     def _build_zip() -> bytes:
         buf = io.BytesIO()
-        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
             for target in resolved:
                 if os.path.isfile(target):
                     zf.write(target, os.path.basename(target))
                 elif os.path.isdir(target):
-                    dirname = os.path.basename(target.rstrip("/\\")) or "dir"
+                    dirname = os.path.basename(target.rstrip('/\\')) or 'dir'
                     for dirpath, dirnames, filenames in os.walk(target):
-                        dirnames[:] = [
-                            d for d in dirnames
-                            if fs.is_path_allowed(os.path.join(dirpath, d))
-                        ]
+                        dirnames[:] = [d for d in dirnames if fs.is_path_allowed(os.path.join(dirpath, d))]
                         for fname in filenames:
                             full = os.path.join(dirpath, fname)
                             if not fs.is_path_allowed(full):
                                 continue
-                            arcname = os.path.join(
-                                dirname, os.path.relpath(full, target)
-                            )
+                            arcname = os.path.join(dirname, os.path.relpath(full, target))
                             zf.write(full, arcname)
         return buf.getvalue()
 
     data = await asyncio.to_thread(_build_zip)
     return Response(
         content=data,
-        media_type="application/zip",
+        media_type='application/zip',
         headers={
-            "Content-Disposition": f'attachment; filename="{archive_name}.zip"',
+            'Content-Disposition': f'attachment; filename="{archive_name}.zip"',
         },
     )
 
@@ -1070,37 +1047,37 @@ async def archive_paths(
 
 
 @app.get(
-    "/execute",
-    operation_id="list_processes",
-    summary="List running commands",
-    description="Returns a list of all tracked background processes, including running, done, and killed.",
+    '/execute',
+    operation_id='list_processes',
+    summary='List running commands',
+    description='Returns a list of all tracked background processes, including running, done, and killed.',
     dependencies=[Depends(verify_api_key)],
     responses={
-        401: {"description": "Invalid or missing API key."},
+        401: {'description': 'Invalid or missing API key.'},
     },
 )
 async def list_processes():
     _cleanup_expired()
     return [
         {
-            "id": background_process.id,
-            "command": background_process.command,
-            "status": background_process.status,
-            "exit_code": background_process.exit_code,
-            "log_path": background_process.log_path,
+            'id': background_process.id,
+            'command': background_process.command,
+            'status': background_process.status,
+            'exit_code': background_process.exit_code,
+            'log_path': background_process.log_path,
         }
         for background_process in _processes.values()
     ]
 
 
 @app.post(
-    "/execute",
-    operation_id="run_command",
-    summary="Execute a command",
+    '/execute',
+    operation_id='run_command',
+    summary='Execute a command',
     description=_EXECUTE_DESCRIPTION,
     dependencies=[Depends(verify_api_key)],
     responses={
-        401: {"description": "Invalid or missing API key."},
+        401: {'description': 'Invalid or missing API key.'},
     },
 )
 async def execute(
@@ -1108,31 +1085,27 @@ async def execute(
     request: ExecRequest,
     wait: Optional[float] = Query(
         None,
-        description="Seconds to wait for the command to finish before returning. If the command completes in time, output is included inline. Null to return immediately.",
+        description='Seconds to wait for the command to finish before returning. If the command completes in time, output is included inline. Null to return immediately.',
         ge=0,
         le=300,
     ),
     tail: Optional[int] = Query(
         None,
-        description="Return only the last N output entries. Useful to limit response size when only recent output matters.",
+        description='Return only the last N output entries. Useful to limit response size when only recent output matters.',
         ge=1,
     ),
 ):
     fs = get_filesystem(http_request)
-    session_id = http_request.headers.get("x-session-id")
+    session_id = http_request.headers.get('x-session-id')
     session_cwd = _get_session_cwd(session_id, fs) if session_id else None
     cwd = fs.resolve_path(request.cwd, cwd=session_cwd) if request.cwd else (session_cwd or fs.home)
 
     subprocess_env = {**os.environ, **request.env} if request.env else None
-    runner = await create_runner(
-        request.command, cwd, subprocess_env, run_as_user=fs.username
-    )
+    runner = await create_runner(request.command, cwd, subprocess_env, run_as_user=fs.username)
 
-    process_id = time.strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:6]
-    log_path = os.path.join(LOG_DIR, "processes", f"{process_id}.jsonl")
-    background_process = BackgroundProcess(
-        id=process_id, command=request.command, runner=runner, log_path=log_path
-    )
+    process_id = time.strftime('%Y%m%d-%H%M%S-') + uuid.uuid4().hex[:6]
+    log_path = os.path.join(LOG_DIR, 'processes', f'{process_id}.jsonl')
+    background_process = BackgroundProcess(id=process_id, command=request.command, runner=runner, log_path=log_path)
     background_process.log_task = asyncio.create_task(log_process(background_process))
     _processes[process_id] = background_process
 
@@ -1140,55 +1113,51 @@ async def execute(
         wait = EXECUTE_TIMEOUT
     if wait is not None:
         try:
-            await asyncio.wait_for(
-                asyncio.shield(background_process.log_task), timeout=wait
-            )
+            await asyncio.wait_for(asyncio.shield(background_process.log_task), timeout=wait)
         except asyncio.TimeoutError:
             pass
 
-    output, next_offset, truncated = await read_log(
-        background_process.log_path, offset=0, tail=tail
-    )
+    output, next_offset, truncated = await read_log(background_process.log_path, offset=0, tail=tail)
 
     return {
-        "id": process_id,
-        "command": request.command,
-        "status": background_process.status,
-        "exit_code": background_process.exit_code,
-        "output": output,
-        "truncated": truncated,
-        "next_offset": next_offset,
-        "log_path": background_process.log_path,
+        'id': process_id,
+        'command': request.command,
+        'status': background_process.status,
+        'exit_code': background_process.exit_code,
+        'output': output,
+        'truncated': truncated,
+        'next_offset': next_offset,
+        'log_path': background_process.log_path,
     }
 
 
 @app.get(
-    "/execute/{process_id}/status",
-    operation_id="get_process_status",
-    summary="Get command status and output",
-    description="Returns new output since the last poll, process status, and exit code. Output is drained on read to keep memory bounded.",
+    '/execute/{process_id}/status',
+    operation_id='get_process_status',
+    summary='Get command status and output',
+    description='Returns new output since the last poll, process status, and exit code. Output is drained on read to keep memory bounded.',
     dependencies=[Depends(verify_api_key)],
     responses={
-        404: {"description": "Process not found."},
-        401: {"description": "Invalid or missing API key."},
+        404: {'description': 'Process not found.'},
+        401: {'description': 'Invalid or missing API key.'},
     },
 )
 async def get_status(
     process_id: str,
     wait: Optional[float] = Query(
         None,
-        description="Seconds to wait for the process to finish before returning. Returns early if the process exits. Null to return immediately.",
+        description='Seconds to wait for the process to finish before returning. Returns early if the process exits. Null to return immediately.',
         ge=0,
         le=300,
     ),
     offset: int = Query(
         0,
-        description="Number of output entries to skip. Use next_offset from the previous response to get only new output.",
+        description='Number of output entries to skip. Use next_offset from the previous response to get only new output.',
         ge=0,
     ),
     tail: Optional[int] = Query(
         None,
-        description="Return only the last N output entries. Useful to limit response size when only recent output matters.",
+        description='Return only the last N output entries. Useful to limit response size when only recent output matters.',
         ge=1,
     ),
 ):
@@ -1196,85 +1165,81 @@ async def get_status(
 
     if wait is None and EXECUTE_TIMEOUT:
         wait = EXECUTE_TIMEOUT
-    if wait is not None and background_process.status == "running":
+    if wait is not None and background_process.status == 'running':
         try:
-            await asyncio.wait_for(
-                asyncio.shield(background_process.log_task), timeout=wait
-            )
+            await asyncio.wait_for(asyncio.shield(background_process.log_task), timeout=wait)
         except asyncio.TimeoutError:
             pass
 
-    output, next_offset, truncated = await read_log(
-        background_process.log_path, offset=offset, tail=tail
-    )
+    output, next_offset, truncated = await read_log(background_process.log_path, offset=offset, tail=tail)
 
     return {
-        "id": background_process.id,
-        "command": background_process.command,
-        "status": background_process.status,
-        "exit_code": background_process.exit_code,
-        "output": output,
-        "truncated": truncated,
-        "next_offset": next_offset,
-        "log_path": background_process.log_path,
+        'id': background_process.id,
+        'command': background_process.command,
+        'status': background_process.status,
+        'exit_code': background_process.exit_code,
+        'output': output,
+        'truncated': truncated,
+        'next_offset': next_offset,
+        'log_path': background_process.log_path,
     }
 
 
 @app.post(
-    "/execute/{process_id}/input",
-    operation_id="send_process_input",
-    summary="Send input to a running command",
+    '/execute/{process_id}/input',
+    operation_id='send_process_input',
+    summary='Send input to a running command',
     description="Write text to the process's stdin. Include newline characters as needed.",
     dependencies=[Depends(verify_api_key)],
     responses={
-        404: {"description": "Process not found."},
-        400: {"description": "Process has already exited or stdin is closed."},
-        401: {"description": "Invalid or missing API key."},
+        404: {'description': 'Process not found.'},
+        400: {'description': 'Process has already exited or stdin is closed.'},
+        401: {'description': 'Invalid or missing API key.'},
     },
 )
 async def send_input(process_id: str, body: InputRequest):
     background_process = _get_process(process_id)
-    if background_process.status != "running":
-        raise HTTPException(status_code=400, detail="Process has already exited")
+    if background_process.status != 'running':
+        raise HTTPException(status_code=400, detail='Process has already exited')
 
     # Convert literal escape sequences (\n, \x03 for Ctrl-C, etc.) into real
     # characters — LLMs often emit these as literal strings.
-    text = body.input.encode("raw_unicode_escape").decode("unicode_escape")
+    text = body.input.encode('raw_unicode_escape').decode('unicode_escape')
 
     try:
         background_process.runner.write_input(text.encode())
         if isinstance(background_process.runner, PipeRunner):
             await background_process.runner.drain_input()
     except (BrokenPipeError, ConnectionResetError, OSError):
-        raise HTTPException(status_code=400, detail="Process stdin is closed")
+        raise HTTPException(status_code=400, detail='Process stdin is closed')
 
-    return {"status": "ok"}
+    return {'status': 'ok'}
 
 
 @app.delete(
-    "/execute/{process_id}",
-    operation_id="kill_process",
-    summary="Kill a running command",
-    description="Terminate the process. Sends SIGTERM by default for graceful shutdown. Use force=true to send SIGKILL.",
+    '/execute/{process_id}',
+    operation_id='kill_process',
+    summary='Kill a running command',
+    description='Terminate the process. Sends SIGTERM by default for graceful shutdown. Use force=true to send SIGKILL.',
     dependencies=[Depends(verify_api_key)],
     responses={
-        404: {"description": "Process not found."},
-        401: {"description": "Invalid or missing API key."},
+        404: {'description': 'Process not found.'},
+        401: {'description': 'Invalid or missing API key.'},
     },
 )
 async def kill_process(
     process_id: str,
-    force: bool = Query(False, description="Send SIGKILL instead of SIGTERM."),
+    force: bool = Query(False, description='Send SIGKILL instead of SIGTERM.'),
 ):
     background_process = _get_process(process_id)
-    if background_process.status == "running":
+    if background_process.status == 'running':
         background_process.runner.kill(force=force)
         exit_code = await background_process.runner.wait()
         background_process.runner.close()
-        background_process.status = "killed"
+        background_process.status = 'killed'
         background_process.exit_code = exit_code
     del _processes[process_id]
-    return {"status": "killed"}
+    return {'status': 'killed'}
 
 
 # ---------------------------------------------------------------------------
@@ -1283,8 +1248,9 @@ async def kill_process(
 
 from open_terminal.utils.port import detect_listening_ports, get_descendant_pids
 
+
 @app.get(
-    "/ports",
+    '/ports',
     include_in_schema=False,
     dependencies=[Depends(verify_api_key)],
 )
@@ -1301,26 +1267,27 @@ async def list_ports(request: Request):
     except Exception:
         # User provisioning failed (e.g. useradd rejected in restricted
         # container runtimes).  An unprovisioned user has no ports.
-        return {"ports": []}
+        return {'ports': []}
 
     if fs.username:
         # Filter by user UID
         import pwd
+
         try:
             user_uid = pwd.getpwnam(fs.username).pw_uid
-            all_ports = [p for p in all_ports if p.get("uid") == user_uid]
+            all_ports = [p for p in all_ports if p.get('uid') == user_uid]
         except KeyError:
             all_ports = []
     else:
         own_pid = os.getpid()
         descendant_pids = await asyncio.to_thread(get_descendant_pids, own_pid)
-        all_ports = [p for p in all_ports if p.get("pid") in descendant_pids]
+        all_ports = [p for p in all_ports if p.get('pid') in descendant_pids]
 
     # Strip uid from response (internal detail)
     for p in all_ports:
-        p.pop("uid", None)
+        p.pop('uid', None)
 
-    return {"ports": all_ports}
+    return {'ports': all_ports}
 
 
 # -- Port proxy client (reused across requests) --
@@ -1331,6 +1298,7 @@ async def _get_port_proxy_client():
     global _port_proxy_client
     if _port_proxy_client is None:
         import httpx
+
         _port_proxy_client = httpx.AsyncClient(
             timeout=httpx.Timeout(300.0, connect=5.0),
             follow_redirects=False,
@@ -1339,23 +1307,23 @@ async def _get_port_proxy_client():
 
 
 @app.api_route(
-    "/proxy/{port}/{path:path}",
-    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"],
+    '/proxy/{port}/{path:path}',
+    methods=['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'],
     include_in_schema=False,
     dependencies=[Depends(verify_api_key)],
 )
 async def port_proxy(port: int, path: str, request: Request):
     """Reverse-proxy a request to localhost:{port}/{path}."""
     if port < 1 or port > 65535:
-        raise HTTPException(status_code=422, detail="Port must be between 1 and 65535")
+        raise HTTPException(status_code=422, detail='Port must be between 1 and 65535')
 
-    target_url = f"http://localhost:{port}/{path}"
+    target_url = f'http://localhost:{port}/{path}'
     if request.query_params:
-        target_url += f"?{request.query_params}"
+        target_url += f'?{request.query_params}'
 
     # Forward headers, stripping hop-by-hop and host.
     headers = dict(request.headers)
-    for h in ("host", "transfer-encoding", "connection", "authorization"):
+    for h in ('host', 'transfer-encoding', 'connection', 'authorization'):
         headers.pop(h, None)
 
     body = await request.body()
@@ -1373,16 +1341,16 @@ async def port_proxy(port: int, path: str, request: Request):
     except httpx.ConnectError:
         raise HTTPException(
             status_code=502,
-            detail=f"Connection refused: localhost:{port}",
+            detail=f'Connection refused: localhost:{port}',
         )
     except httpx.TimeoutException:
         raise HTTPException(
             status_code=504,
-            detail=f"Timeout connecting to localhost:{port}",
+            detail=f'Timeout connecting to localhost:{port}',
         )
 
     response_headers = dict(upstream.headers)
-    for h in ("transfer-encoding", "connection", "content-encoding", "content-length"):
+    for h in ('transfer-encoding', 'connection', 'content-encoding', 'content-length'):
         response_headers.pop(h, None)
 
     return Response(
@@ -1397,7 +1365,6 @@ async def port_proxy(port: int, path: str, request: Request):
 # ---------------------------------------------------------------------------
 
 if ENABLE_TERMINAL:
-
     import uuid as _uuid
     from datetime import datetime as _datetime
     from fastapi.responses import JSONResponse
@@ -1409,18 +1376,17 @@ if ENABLE_TERMINAL:
 
     # Determine terminal backend: prefer Unix PTY, then pywinpty, else None
     if _PTY_AVAILABLE:
-        _TERMINAL_BACKEND = "pty"
+        _TERMINAL_BACKEND = 'pty'
     else:
         try:
             from winpty import PtyProcess as _WinPtyProcess
 
-            _TERMINAL_BACKEND = "winpty"
+            _TERMINAL_BACKEND = 'winpty'
         except ImportError:
             _TERMINAL_BACKEND = None
 
     # Active terminal sessions: {id: {...}}
     _terminal_sessions: dict[str, dict] = {}
-
 
     def _cleanup_session(session_id: str):
         """Clean up a terminal session's resources.
@@ -1434,15 +1400,15 @@ if ENABLE_TERMINAL:
         if session is None:
             return
 
-        backend = session.get("backend")
+        backend = session.get('backend')
 
-        if backend == "pty":
+        if backend == 'pty':
             try:
-                os.close(session["master_fd"])
+                os.close(session['master_fd'])
             except OSError:
                 pass
 
-            process = session["process"]
+            process = session['process']
             if process.poll() is None:
                 # Signal the whole process group first (graceful).
                 try:
@@ -1459,68 +1425,68 @@ if ENABLE_TERMINAL:
                         pass
                     process.wait()
 
-        elif backend == "winpty":
-            pty_proc = session["pty_process"]
+        elif backend == 'winpty':
+            pty_proc = session['pty_process']
             if pty_proc.isalive():
                 pty_proc.terminate()
 
-
-    @app.post("/api/terminals", dependencies=[Depends(verify_api_key)], include_in_schema=False)
+    @app.post('/api/terminals', dependencies=[Depends(verify_api_key)], include_in_schema=False)
     async def create_terminal(request: Request):
         """Create a new terminal session and return its ID."""
         if _TERMINAL_BACKEND is None:
             return JSONResponse(
-                {"error": "PTY not available on this platform (install pywinpty on Windows)"},
+                {'error': 'PTY not available on this platform (install pywinpty on Windows)'},
                 status_code=503,
             )
 
         # Prune dead sessions before checking limit
-        if _TERMINAL_BACKEND == "pty":
-            dead = [sid for sid, s in _terminal_sessions.items() if s["process"].poll() is not None]
+        if _TERMINAL_BACKEND == 'pty':
+            dead = [sid for sid, s in _terminal_sessions.items() if s['process'].poll() is not None]
         else:
-            dead = [sid for sid, s in _terminal_sessions.items() if not s["pty_process"].isalive()]
+            dead = [sid for sid, s in _terminal_sessions.items() if not s['pty_process'].isalive()]
         for sid in dead:
             _cleanup_session(sid)
 
         if len(_terminal_sessions) >= MAX_TERMINAL_SESSIONS:
             return JSONResponse(
-                {"error": f"Maximum number of terminal sessions ({MAX_TERMINAL_SESSIONS}) reached"},
+                {'error': f'Maximum number of terminal sessions ({MAX_TERMINAL_SESSIONS}) reached'},
                 status_code=429,
             )
 
         session_id = str(_uuid.uuid4())[:8]
 
-        if _TERMINAL_BACKEND == "pty":
+        if _TERMINAL_BACKEND == 'pty':
             try:
                 master_fd, slave_fd = pty.openpty()
             except OSError:
                 return JSONResponse(
-                    {"error": "Out of PTY devices — too many active terminals or processes"},
+                    {'error': 'Out of PTY devices — too many active terminals or processes'},
                     status_code=503,
                 )
 
             try:
-                fcntl.ioctl(slave_fd, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
+                fcntl.ioctl(slave_fd, termios.TIOCSWINSZ, struct.pack('HHHH', 24, 80, 0, 0))
 
                 fs = get_filesystem(request)
 
                 # Use per-session cwd if available, else fall back to home
-                session_id = request.headers.get("x-session-id", session_id)
+                session_id = request.headers.get('x-session-id', session_id)
                 session_cwd = _get_session_cwd(session_id, fs) if session_id else None
 
                 if fs.username:
                     shell_cmd = [
-                        "script", "-qc",
-                        f"sudo -i -u {fs.username}",
-                        "/dev/null",
+                        'script',
+                        '-qc',
+                        f'sudo -i -u {fs.username}',
+                        '/dev/null',
                     ]
                     cwd = session_cwd or fs.home
                 else:
-                    shell_cmd = [os.environ.get("SHELL", "/bin/sh")]
+                    shell_cmd = [os.environ.get('SHELL', '/bin/sh')]
                     cwd = session_cwd or os.getcwd()
 
                 spawn_env = os.environ.copy()
-                spawn_env.setdefault("TERM", TERMINAL_TERM)
+                spawn_env.setdefault('TERM', TERMINAL_TERM)
                 process = subprocess.Popen(
                     shell_cmd,
                     stdin=slave_fd,
@@ -1541,17 +1507,17 @@ if ENABLE_TERMINAL:
             fcntl.fcntl(master_fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
 
             _terminal_sessions[session_id] = {
-                "backend": "pty",
-                "master_fd": master_fd,
-                "process": process,
-                "created_at": _datetime.utcnow().isoformat() + "Z",
-                "pid": process.pid,
+                'backend': 'pty',
+                'master_fd': master_fd,
+                'process': process,
+                'created_at': _datetime.utcnow().isoformat() + 'Z',
+                'pid': process.pid,
             }
 
         else:  # winpty
-            shell = os.environ.get("COMSPEC", "cmd.exe")
+            shell = os.environ.get('COMSPEC', 'cmd.exe')
             spawn_env = os.environ.copy()
-            spawn_env.setdefault("TERM", TERMINAL_TERM)
+            spawn_env.setdefault('TERM', TERMINAL_TERM)
             pty_proc = _WinPtyProcess.spawn(
                 [shell],
                 cwd=os.getcwd(),
@@ -1559,29 +1525,27 @@ if ENABLE_TERMINAL:
                 dimensions=(24, 80),
             )
             _terminal_sessions[session_id] = {
-                "backend": "winpty",
-                "pty_process": pty_proc,
-                "created_at": _datetime.utcnow().isoformat() + "Z",
-                "pid": pty_proc.pid,
+                'backend': 'winpty',
+                'pty_process': pty_proc,
+                'created_at': _datetime.utcnow().isoformat() + 'Z',
+                'pid': pty_proc.pid,
             }
 
         session = _terminal_sessions[session_id]
         return {
-            "id": session_id,
-            "created_at": session["created_at"],
-            "pid": session["pid"],
+            'id': session_id,
+            'created_at': session['created_at'],
+            'pid': session['pid'],
         }
-
 
     def _session_is_alive(session: dict) -> bool:
         """Check if a terminal session's process is still running."""
-        if session["backend"] == "pty":
-            return session["process"].poll() is None
+        if session['backend'] == 'pty':
+            return session['process'].poll() is None
         else:
-            return session["pty_process"].isalive()
+            return session['pty_process'].isalive()
 
-
-    @app.get("/api/terminals", dependencies=[Depends(verify_api_key)], include_in_schema=False)
+    @app.get('/api/terminals', dependencies=[Depends(verify_api_key)], include_in_schema=False)
     async def list_terminals(request: Request):
         """List active terminal sessions."""
         result = []
@@ -1590,42 +1554,41 @@ if ENABLE_TERMINAL:
             if not _session_is_alive(session):
                 to_remove.append(sid)
                 continue
-            result.append({
-                "id": sid,
-                "created_at": session["created_at"],
-                "pid": session["pid"],
-            })
+            result.append(
+                {
+                    'id': sid,
+                    'created_at': session['created_at'],
+                    'pid': session['pid'],
+                }
+            )
         for sid in to_remove:
             _cleanup_session(sid)
         return result
 
-
-    @app.get("/api/terminals/{session_id}", dependencies=[Depends(verify_api_key)], include_in_schema=False)
+    @app.get('/api/terminals/{session_id}', dependencies=[Depends(verify_api_key)], include_in_schema=False)
     async def get_terminal(session_id: str, request: Request):
         """Get info about a terminal session."""
         session = _terminal_sessions.get(session_id)
         if session is None:
-            return JSONResponse({"error": "Session not found"}, status_code=404)
+            return JSONResponse({'error': 'Session not found'}, status_code=404)
         if not _session_is_alive(session):
             _cleanup_session(session_id)
-            return JSONResponse({"error": "Session not found"}, status_code=404)
+            return JSONResponse({'error': 'Session not found'}, status_code=404)
         return {
-            "id": session_id,
-            "created_at": session["created_at"],
-            "pid": session["pid"],
+            'id': session_id,
+            'created_at': session['created_at'],
+            'pid': session['pid'],
         }
 
-
-    @app.delete("/api/terminals/{session_id}", dependencies=[Depends(verify_api_key)], include_in_schema=False)
+    @app.delete('/api/terminals/{session_id}', dependencies=[Depends(verify_api_key)], include_in_schema=False)
     async def delete_terminal(session_id: str, request: Request):
         """Kill and remove a terminal session."""
         if session_id not in _terminal_sessions:
-            return JSONResponse({"error": "Session not found"}, status_code=404)
+            return JSONResponse({'error': 'Session not found'}, status_code=404)
         _cleanup_session(session_id)
-        return {"status": "deleted"}
+        return {'status': 'deleted'}
 
-
-    @app.websocket("/api/terminals/{session_id}")
+    @app.websocket('/api/terminals/{session_id}')
     async def ws_terminal(ws: WebSocket, session_id: str):
         """Attach to an existing terminal session via WebSocket.
 
@@ -1644,12 +1607,12 @@ if ENABLE_TERMINAL:
         """
         session = _terminal_sessions.get(session_id)
         if session is None:
-            await ws.close(code=4004, reason="Session not found")
+            await ws.close(code=4004, reason='Session not found')
             return
 
         if not _session_is_alive(session):
             _cleanup_session(session_id)
-            await ws.close(code=4004, reason="Session has ended")
+            await ws.close(code=4004, reason='Session has ended')
             return
 
         await ws.accept()
@@ -1659,22 +1622,22 @@ if ENABLE_TERMINAL:
             try:
                 msg = await asyncio.wait_for(ws.receive_text(), timeout=10.0)
                 payload = json.loads(msg)
-                if payload.get("type") != "auth" or not hmac.compare_digest(payload.get("token", ""), API_KEY):
-                    await ws.close(code=4001, reason="Invalid API key")
+                if payload.get('type') != 'auth' or not hmac.compare_digest(payload.get('token', ''), API_KEY):
+                    await ws.close(code=4001, reason='Invalid API key')
                     return
             except (asyncio.TimeoutError, json.JSONDecodeError, Exception):
-                await ws.close(code=4001, reason="Auth timeout or invalid payload")
+                await ws.close(code=4001, reason='Auth timeout or invalid payload')
                 return
 
-        backend = session["backend"]
+        backend = session['backend']
         loop = asyncio.get_event_loop()
         stop_event = asyncio.Event()
 
         # --- Platform-specific read/write/resize helpers ---
 
-        if backend == "pty":
-            master_fd = session["master_fd"]
-            process = session["process"]
+        if backend == 'pty':
+            master_fd = session['master_fd']
+            process = session['process']
 
             def _blocking_read():
                 """Read from PTY using select() so we don't block forever."""
@@ -1684,8 +1647,8 @@ if ENABLE_TERMINAL:
                         if rlist:
                             return os.read(master_fd, 4096)
                     except (OSError, ValueError):
-                        return b""
-                return b""
+                        return b''
+                return b''
 
             def _check_alive():
                 return process.poll() is None
@@ -1697,27 +1660,27 @@ if ENABLE_TERMINAL:
                 fcntl.ioctl(
                     master_fd,
                     termios.TIOCSWINSZ,
-                    struct.pack("HHHH", rows, cols, 0, 0),
+                    struct.pack('HHHH', rows, cols, 0, 0),
                 )
 
         else:  # winpty
-            pty_proc = session["pty_process"]
+            pty_proc = session['pty_process']
 
             def _blocking_read():
                 """Read from WinPTY process."""
                 try:
                     data = pty_proc.read(4096)
-                    return data.encode(errors="replace") if data else b""
+                    return data.encode(errors='replace') if data else b''
                 except EOFError:
-                    return b""
+                    return b''
                 except Exception:
-                    return b""
+                    return b''
 
             def _check_alive():
                 return pty_proc.isalive()
 
             def _write_data(data: bytes):
-                pty_proc.write(data.decode(errors="replace"))
+                pty_proc.write(data.decode(errors='replace'))
 
             def _do_resize(rows: int, cols: int):
                 pty_proc.setwinsize(rows, cols)
@@ -1747,16 +1710,16 @@ if ENABLE_TERMINAL:
         try:
             while True:
                 msg = await ws.receive()
-                if msg["type"] == "websocket.disconnect":
+                if msg['type'] == 'websocket.disconnect':
                     break
-                elif "bytes" in msg and msg["bytes"]:
-                    await loop.run_in_executor(None, _write_data, msg["bytes"])
-                elif "text" in msg and msg["text"]:
+                elif 'bytes' in msg and msg['bytes']:
+                    await loop.run_in_executor(None, _write_data, msg['bytes'])
+                elif 'text' in msg and msg['text']:
                     try:
-                        payload = json.loads(msg["text"])
-                        if payload.get("type") == "resize":
-                            cols = payload.get("cols", 80)
-                            rows = payload.get("rows", 24)
+                        payload = json.loads(msg['text'])
+                        if payload.get('type') == 'resize':
+                            cols = payload.get('cols', 80)
+                            rows = payload.get('rows', 24)
                             _do_resize(rows, cols)
                     except (json.JSONDecodeError, KeyError):
                         pass
@@ -1793,72 +1756,99 @@ if ENABLE_DESKTOP:
     from open_terminal.utils.desktop import DesktopNotRunningError, get_desktop
 
     class ClickRequest(BaseModel):
-        x: int = Field(..., description="X coordinate (pixels from left).")
-        y: int = Field(..., description="Y coordinate (pixels from top).")
+        x: int = Field(
+            0,
+            description='X coordinate in pixels from left edge of screen.',
+        )
+        y: int = Field(
+            0,
+            description='Y coordinate in pixels from top edge of screen.',
+        )
         button: int = Field(
             1,
-            description="Mouse button: 1 = left (default), 2 = middle, 3 = right.",
+            description='Mouse button: 1 = left (default), 2 = middle, 3 = right.',
         )
 
     class MouseMoveRequest(BaseModel):
-        x: int = Field(..., description="X coordinate to move to.")
-        y: int = Field(..., description="Y coordinate to move to.")
+        x: int = Field(..., description='X coordinate to move to.')
+        y: int = Field(..., description='Y coordinate to move to.')
 
     class DragRequest(BaseModel):
-        start_x: int = Field(..., description="Starting X coordinate.")
-        start_y: int = Field(..., description="Starting Y coordinate.")
-        end_x: int = Field(..., description="Ending X coordinate.")
-        end_y: int = Field(..., description="Ending Y coordinate.")
+        start_x: int = Field(..., description='Starting X coordinate.')
+        start_y: int = Field(..., description='Starting Y coordinate.')
+        end_x: int = Field(..., description='Ending X coordinate.')
+        end_y: int = Field(..., description='Ending Y coordinate.')
         button: int = Field(
             1,
-            description="Mouse button to hold: 1 = left, 2 = middle, 3 = right.",
+            description='Mouse button to hold: 1 = left, 2 = middle, 3 = right.',
         )
 
     class TypeRequest(BaseModel):
-        text: str = Field(..., description="Text to type into the active window.")
+        text: str = Field(..., description='Text to type into the active window.')
         human_like: bool = Field(
             True,
-            description="When true (default), add a randomized, human-like delay between keystrokes.",
+            description='When true (default), add a randomized, human-like delay between keystrokes.',
         )
 
     class KeyPressRequest(BaseModel):
         key: str = Field(
             ...,
-            description=(
-                "Key or key combination to press. "
-                'Examples: "Return", "Escape", "ctrl+c", "alt+F4", "super".'
-            ),
+            description=('Key or key combination to press. Examples: "Return", "Escape", "ctrl+c", "alt+F4", "super".'),
         )
 
     class ScrollRequest(BaseModel):
-        x: int = Field(..., description="X coordinate to scroll at.")
-        y: int = Field(..., description="Y coordinate to scroll at.")
+        x: int = Field(..., description='X coordinate to scroll at.')
+        y: int = Field(..., description='Y coordinate to scroll at.')
         direction: str = Field(
-            "down",
+            'down',
             description="Scroll direction: 'up' or 'down'.",
-            pattern="^(up|down)$",
+            pattern='^(up|down)$',
         )
         amount: int = Field(
             5,
-            description="Number of scroll clicks (each ~3 lines).",
+            description='Number of scroll clicks (each ~3 lines).',
             ge=1,
             le=50,
         )
 
+    async def _ensure_desktop():
+        dm = get_desktop()
+        if not dm.is_running:
+            await dm.async_start()
+
     @app.exception_handler(DesktopNotRunningError)
-    async def desktop_not_running_handler(
-        request: Request, exc: DesktopNotRunningError
-    ):
-        return JSONResponse(status_code=503, content={"detail": str(exc)})
+    async def desktop_not_running_handler(request: Request, exc: DesktopNotRunningError):
+        return JSONResponse(status_code=503, content={'detail': str(exc)})
+
+    async def _auto_screenshot():
+        await asyncio.sleep(1.0)
+        dm = get_desktop()
+        jpg_bytes, width, height = await dm.async_annotated_screenshot()
+        mx, my = await asyncio.to_thread(dm.get_mouse_location)
+
+        b64 = base64.b64encode(jpg_bytes).decode('ascii')
+        image_data = f'data:image/jpeg;base64,{b64}'
+
+        return {
+            'image': image_data,
+            'cursor': {'x': mx, 'y': my},
+            'context': (
+                f'Desktop {width}x{height} after the action. '
+                f'Cursor at ({mx},{my}). '
+                f'Use desktop_locate to find elements, then use the returned coordinates with desktop_click.'
+            ),
+            'width': width,
+            'height': height,
+        }
 
     @app.get(
-        "/desktop",
-        operation_id="desktop_status",
-        summary="Get desktop status",
-        description="Returns the current state of the virtual desktop: whether it is running, the display dimensions, and the VNC/noVNC ports.",
+        '/desktop',
+        operation_id='desktop_status',
+        summary='Get desktop status',
+        description='Returns the current state of the virtual desktop: whether it is running, the display dimensions, and the VNC/noVNC ports.',
         dependencies=[Depends(verify_api_key)],
         responses={
-            401: {"description": "Invalid or missing API key."},
+            401: {'description': 'Invalid or missing API key.'},
         },
     )
     async def desktop_status():
@@ -1866,16 +1856,15 @@ if ENABLE_DESKTOP:
         return dm.status()
 
     @app.post(
-        "/desktop/start",
-        operation_id="desktop_start",
-        summary="Start the virtual desktop",
+        '/desktop/start',
+        operation_id='desktop_start',
+        summary='Start the virtual desktop',
         description=(
-            "Start Xvfb, x11vnc, noVNC, and a window manager. "
-            "Idempotent — returns immediately if already running."
+            'Start Xvfb, x11vnc, noVNC, and a window manager. Idempotent — returns immediately if already running.'
         ),
         dependencies=[Depends(verify_api_key)],
         responses={
-            401: {"description": "Invalid or missing API key."},
+            401: {'description': 'Invalid or missing API key.'},
         },
     )
     async def desktop_start():
@@ -1884,13 +1873,13 @@ if ENABLE_DESKTOP:
         return dm.status()
 
     @app.post(
-        "/desktop/stop",
-        operation_id="desktop_stop",
-        summary="Stop the virtual desktop",
-        description="Terminate all desktop processes (Xvfb, x11vnc, noVNC, window manager).",
+        '/desktop/stop',
+        operation_id='desktop_stop',
+        summary='Stop the virtual desktop',
+        description='Terminate all desktop processes (Xvfb, x11vnc, noVNC, window manager).',
         dependencies=[Depends(verify_api_key)],
         responses={
-            401: {"description": "Invalid or missing API key."},
+            401: {'description': 'Invalid or missing API key.'},
         },
     )
     async def desktop_stop():
@@ -1899,102 +1888,106 @@ if ENABLE_DESKTOP:
         return dm.status()
 
     @app.post(
-        "/desktop/screenshot",
-        operation_id="desktop_screenshot",
-        summary="Capture a screenshot",
+        '/desktop/screenshot',
+        operation_id='desktop_screenshot',
+        summary='DEPRECATED: Use desktop_locate instead',
         description=(
-            "Capture a PNG screenshot of the virtual display. "
-            "Returns the image as base64-encoded data inside a JSON body. "
-            "Set the Accept header to 'image/png' (or pass '?format=raw') to "
-            "receive raw binary PNG instead."
+            'DEPRECATED — do NOT call this tool. '
+            'Use desktop_locate(description="...") instead to see and locate UI elements on the desktop. '
+            'desktop_locate takes a screenshot automatically and returns bounding boxes with coordinates. '
+            'Calling this tool will only return a text reminder to use desktop_locate.'
         ),
         dependencies=[Depends(verify_api_key)],
         responses={
             200: {
-                "description": "PNG screenshot (base64 JSON or raw binary).",
-                "content": {
-                    "application/json": {
-                        "example": {
-                            "width": 1280,
-                            "height": 720,
-                            "format": "png",
-                            "data": "iVBOR...",
-                        }
-                    },
-                    "image/png": {"schema": {"type": "string", "format": "binary"}},
-                },
+                'description': 'Screenshot with cursor position and context.',
             },
-            503: {"description": "Desktop is not running."},
-            401: {"description": "Invalid or missing API key."},
+            503: {'description': 'Desktop is not running.'},
+            401: {'description': 'Invalid or missing API key.'},
         },
     )
-    async def desktop_screenshot(
-        request: Request,
-        format: Optional[str] = Query(
-            None,
-            description="Set to 'raw' for binary PNG response. Default is base64 JSON.",
-        ),
-    ):
-        dm = get_desktop()
-        png_bytes, width, height = await dm.async_screenshot()
+    async def desktop_screenshot(request: Request):
+        await _ensure_desktop()
+        result = await _auto_screenshot_without_action()
+        accept = request.headers.get('accept', '')
+        if 'image/png' in accept or 'image/jpeg' in accept:
+            dm = get_desktop()
+            jpg_bytes, width, height = await dm.async_annotated_screenshot()
+            return Response(content=jpg_bytes, media_type='image/jpeg')
+        return result
 
-        accept = request.headers.get("accept", "")
-        if format == "raw" or "image/png" in accept:
-            return Response(content=png_bytes, media_type="image/png")
-
-        return {
-            "width": width,
-            "height": height,
-            "format": "png",
-            "data": base64.b64encode(png_bytes).decode("ascii"),
-        }
+    async def _auto_screenshot_without_action():
+        return await _auto_screenshot()
 
     @app.post(
-        "/desktop/click",
-        operation_id="desktop_click",
-        summary="Mouse click",
-        description="Move the mouse to (x, y) and click. Button 1 = left, 2 = middle, 3 = right.",
+        '/desktop/click',
+        operation_id='desktop_click',
+        summary='Mouse click',
+        description=(
+            'Click on the desktop. You MUST call desktop_locate first to find the correct coordinates. '
+            'After clicking, call desktop_locate again to verify the result. '
+            'Button: 1=left, 2=middle, 3=right.'
+        ),
         dependencies=[Depends(verify_api_key)],
         responses={
-            503: {"description": "Desktop is not running."},
-            401: {"description": "Invalid or missing API key."},
+            503: {'description': 'Desktop is not running.'},
+            401: {'description': 'Invalid or missing API key.'},
         },
     )
     async def desktop_click(request: ClickRequest):
+        await _ensure_desktop()
         dm = get_desktop()
-        await asyncio.to_thread(
-            dm.mouse_click, request.x, request.y, request.button
-        )
-        return {"status": "ok"}
+        x, y = request.x, request.y
+        await asyncio.to_thread(dm.mouse_click, x, y, request.button)
+        return {'status': 'ok', 'x': x, 'y': y}
 
     @app.post(
-        "/desktop/mouse_move",
-        operation_id="desktop_mouse_move",
-        summary="Move the mouse",
-        description="Move the mouse cursor to the specified coordinates without clicking.",
+        '/desktop/mouse_move',
+        operation_id='desktop_mouse_move',
+        summary='Move the mouse',
+        description='Move the mouse cursor to the specified screen pixel coordinates without clicking. Use desktop_locate first to find coordinates.',
         dependencies=[Depends(verify_api_key)],
         responses={
-            503: {"description": "Desktop is not running."},
-            401: {"description": "Invalid or missing API key."},
+            503: {'description': 'Desktop is not running.'},
+            401: {'description': 'Invalid or missing API key.'},
         },
     )
     async def desktop_mouse_move(request: MouseMoveRequest):
+        await _ensure_desktop()
         dm = get_desktop()
         await asyncio.to_thread(dm.mouse_move, request.x, request.y)
-        return {"status": "ok"}
+        return {'status': 'ok', 'x': request.x, 'y': request.y}
 
     @app.post(
-        "/desktop/drag",
-        operation_id="desktop_drag",
-        summary="Drag (mouse down, move, mouse up)",
-        description="Press and hold a mouse button at (start_x, start_y), drag to (end_x, end_y), then release.",
+        '/desktop/mouse_location',
+        operation_id='desktop_mouse_location',
+        summary='Get mouse location',
+        description='Return the current mouse cursor position as (x, y) in screen pixel coordinates.',
         dependencies=[Depends(verify_api_key)],
         responses={
-            503: {"description": "Desktop is not running."},
-            401: {"description": "Invalid or missing API key."},
+            503: {'description': 'Desktop is not running.'},
+            401: {'description': 'Invalid or missing API key.'},
+        },
+    )
+    async def desktop_mouse_location():
+        await _ensure_desktop()
+        dm = get_desktop()
+        x, y = await asyncio.to_thread(dm.get_mouse_location)
+        return {'x': x, 'y': y}
+
+    @app.post(
+        '/desktop/drag',
+        operation_id='desktop_drag',
+        summary='Drag (mouse down, move, mouse up)',
+        description='Press and hold a mouse button at (start_x, start_y), drag to (end_x, end_y), then release. Use desktop_locate first to find coordinates.',
+        dependencies=[Depends(verify_api_key)],
+        responses={
+            503: {'description': 'Desktop is not running.'},
+            401: {'description': 'Invalid or missing API key.'},
         },
     )
     async def desktop_drag(request: DragRequest):
+        await _ensure_desktop()
         dm = get_desktop()
         await asyncio.to_thread(
             dm.mouse_drag,
@@ -2004,58 +1997,101 @@ if ENABLE_DESKTOP:
             request.end_y,
             request.button,
         )
-        return {"status": "ok"}
+        return {'status': 'ok'}
 
     @app.post(
-        "/desktop/type",
-        operation_id="desktop_type",
-        summary="Type text",
-        description="Type text into the currently focused window, as if entered on a keyboard.",
+        '/desktop/type',
+        operation_id='desktop_type',
+        summary='Type text',
+        description='Type text into the currently focused window, as if entered on a keyboard.',
         dependencies=[Depends(verify_api_key)],
         responses={
-            503: {"description": "Desktop is not running."},
-            401: {"description": "Invalid or missing API key."},
+            503: {'description': 'Desktop is not running.'},
+            401: {'description': 'Invalid or missing API key.'},
         },
     )
     async def desktop_type(request: TypeRequest):
+        await _ensure_desktop()
         dm = get_desktop()
         await asyncio.to_thread(dm.type_text, request.text, request.human_like)
-        return {"status": "ok"}
+        return {'status': 'ok'}
 
     @app.post(
-        "/desktop/key",
-        operation_id="desktop_key",
-        summary="Press a key or key combination",
+        '/desktop/key',
+        operation_id='desktop_key',
+        summary='Press a key or key combination',
         description=(
-            "Press a key or key combination. "
-            'Examples: "Return", "Escape", "ctrl+c", "alt+F4", "super", "ctrl+shift+t".'
+            'Press a key or key combination. Examples: "Return", "Escape", "ctrl+c", "alt+F4", "super", "ctrl+shift+t".'
         ),
         dependencies=[Depends(verify_api_key)],
         responses={
-            503: {"description": "Desktop is not running."},
-            401: {"description": "Invalid or missing API key."},
+            503: {'description': 'Desktop is not running.'},
+            401: {'description': 'Invalid or missing API key.'},
         },
     )
     async def desktop_key(request: KeyPressRequest):
+        await _ensure_desktop()
         dm = get_desktop()
         await asyncio.to_thread(dm.key_press, request.key)
-        return {"status": "ok"}
+        return {'status': 'ok'}
 
     @app.post(
-        "/desktop/scroll",
-        operation_id="desktop_scroll",
-        summary="Scroll at a position",
-        description="Move to (x, y) and scroll up or down by the given amount.",
+        '/desktop/scroll',
+        operation_id='desktop_scroll',
+        summary='Scroll at a position',
+        description='Move to (x, y) and scroll up or down by the given amount. Use desktop_locate first to find coordinates.',
         dependencies=[Depends(verify_api_key)],
         responses={
-            503: {"description": "Desktop is not running."},
-            401: {"description": "Invalid or missing API key."},
+            503: {'description': 'Desktop is not running.'},
+            401: {'description': 'Invalid or missing API key.'},
         },
     )
     async def desktop_scroll(request: ScrollRequest):
+        await _ensure_desktop()
         dm = get_desktop()
-        await asyncio.to_thread(
-            dm.scroll, request.x, request.y, request.direction, request.amount
-        )
-        return {"status": "ok"}
+        await asyncio.to_thread(dm.scroll, request.x, request.y, request.direction, request.amount)
+        return {'status': 'ok'}
 
+    @app.post(
+        '/desktop/windows',
+        operation_id='desktop_windows',
+        summary='List all visible windows',
+        description=(
+            'List all visible windows on the desktop. Returns each window\'s ID, title, '
+            'position (x, y), size (width, height), PID, and whether it is the active (focused) window. '
+            'Use this to understand what applications are open and find a specific window to interact with.'
+        ),
+        dependencies=[Depends(verify_api_key)],
+        responses={
+            503: {'description': 'Desktop is not running.'},
+            401: {'description': 'Invalid or missing API key.'},
+        },
+    )
+    async def desktop_windows():
+        await _ensure_desktop()
+        dm = get_desktop()
+        windows = await dm.async_list_windows()
+        return {'windows': windows}
+
+    class WindowFocusRequest(BaseModel):
+        window_id: str = Field(..., description='Window ID to focus (from desktop_windows).')
+
+    @app.post(
+        '/desktop/window_focus',
+        operation_id='desktop_window_focus',
+        summary='Focus (bring to front) a window',
+        description=(
+            'Activate and bring a window to the foreground by its window ID. '
+            'Use desktop_windows first to get the window ID.'
+        ),
+        dependencies=[Depends(verify_api_key)],
+        responses={
+            503: {'description': 'Desktop is not running.'},
+            401: {'description': 'Invalid or missing API key.'},
+        },
+    )
+    async def desktop_window_focus(request: WindowFocusRequest):
+        await _ensure_desktop()
+        dm = get_desktop()
+        await dm.async_focus_window(request.window_id)
+        return {'status': 'ok', 'window_id': request.window_id}
