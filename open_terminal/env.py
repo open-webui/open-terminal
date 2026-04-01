@@ -170,4 +170,37 @@ SESSION_CWD_TTL: float = float(
     )
 )
 
+# ---------------------------------------------------------------------------
+# Virtual Desktop ("Computer Use")
+# ---------------------------------------------------------------------------
+
+ENABLE_DESKTOP = os.environ.get(
+    "OPEN_TERMINAL_ENABLE_DESKTOP",
+    str(config.get("enable_desktop", False)),
+).lower() not in ("false", "0", "no", "")
+
+DESKTOP_DISPLAY = os.environ.get(
+    "OPEN_TERMINAL_DESKTOP_DISPLAY",
+    config.get("desktop_display", ":0"),
+)
+
+DESKTOP_SCREEN_SIZE = os.environ.get(
+    "OPEN_TERMINAL_DESKTOP_SCREEN_SIZE",
+    config.get("desktop_screen_size", "1280x720x24"),
+)
+
+DESKTOP_VNC_PORT = int(
+    os.environ.get(
+        "OPEN_TERMINAL_DESKTOP_VNC_PORT",
+        config.get("desktop_vnc_port", "5900"),
+    )
+)
+
+DESKTOP_NOVNC_PORT = int(
+    os.environ.get(
+        "OPEN_TERMINAL_DESKTOP_NOVNC_PORT",
+        config.get("desktop_novnc_port", "6080"),
+    )
+)
+
 

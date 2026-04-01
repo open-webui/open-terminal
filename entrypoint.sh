@@ -82,6 +82,32 @@ if [ -n "${OPEN_TERMINAL_NPM_PACKAGES:-}" ]; then
 fi
 
 # -----------------------------------------------------------------------
+# Virtual Desktop ("Computer Use")
+#
+# When OPEN_TERMINAL_ENABLE_DESKTOP is true, start Xvfb, x11vnc, and
+# noVNC so that the agent has a virtual display for GUI interaction.
+# The Python app will manage the actual lifecycle (start/stop) via the
+# DesktopManager, but we pre-seed DISPLAY and clean up stale lock files
+# so the first API call starts faster.
+# -----------------------------------------------------------------------
+if [ "${OPEN_TERMINAL_ENABLE_DESKTOP:-false}" = "true" ]; then
+    DISPLAY="${OPEN_TERMINAL_DESKTOP_DISPLAY:-:0}"
+    SCREEN="${OPEN_TERMINAL_DESKTOP_SCREEN_SIZE:-1280x720x24}"
+    VNC_PORT="${OPEN_TERMINAL_DESKTOP_VNC_PORT:-5900}"
+    NOVNC_PORT="${OPEN_TERMINAL_DESKTOP_NOVNC_PORT:-6080}"
+
+    # Clean up stale lock/pid files from previous runs
+    DISPLAY_NUM="${DISPLAY#:}"
+    DISPLAY_NUM="${DISPLAY_NUM%%.*}"
+    rm -f "/tmp/.X${DISPLAY_NUM}-lock" "/tmp/.X11-unix/X${DISPLAY_NUM}" 2>/dev/null || true
+
+    export DISPLAY
+    echo "Virtual desktop configured: display=${DISPLAY} screen=${SCREEN}"
+    echo "  VNC port: ${VNC_PORT}  |  noVNC port: ${NOVNC_PORT}"
+    echo "  Access noVNC at: http://localhost:${NOVNC_PORT}/vnc.html"
+fi
+
+# -----------------------------------------------------------------------
 # Network egress filtering via DNS whitelist + iptables + capability drop
 #
 #   OPEN_TERMINAL_ALLOWED_DOMAINS unset    → full access
