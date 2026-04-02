@@ -91,14 +91,20 @@ if [ ! -f "$HOME/.kube/config" ]; then
 fi
 mkdir -p "$HOME/.local/bin"
 
-# Docker socket access — add user to the socket's group if mounted
+# Docker socket access — add user to the socket's group if mounted.
+# usermod -aG only takes effect in new sessions, so we re-exec via sg
+# to activate the group membership without requiring a new login.
 if [ -S /var/run/docker.sock ]; then
     SOCK_GID=$(stat -c '%g' /var/run/docker.sock)
     if ! getent group "$SOCK_GID" > /dev/null 2>&1; then
         sudo groupadd -g "$SOCK_GID" docker-host
     fi
     SOCK_GROUP=$(getent group "$SOCK_GID" | cut -d: -f1)
-    sudo usermod -aG "$SOCK_GROUP" user
+    # Only re-exec if we're not already in the group (avoids infinite loop)
+    if ! id -nG | grep -qw "$SOCK_GROUP"; then
+        sudo usermod -aG "$SOCK_GROUP" user
+        exec sg "$SOCK_GROUP" -c "exec $0 $*"
+    fi
 fi
 
 # Auto-install system packages
