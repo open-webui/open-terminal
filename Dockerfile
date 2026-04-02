@@ -4,6 +4,8 @@ FROM ghcr.io/open-webui/open-terminal:latest
 
 USER root
 
+WORKDIR /additional-tools
+
 # kubectl — official Kubernetes apt repository
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
@@ -38,20 +40,14 @@ RUN ARCH=$(dpkg --print-architecture) \
     && rm /tmp/argocd
 
 # YQ — YAML processor (multi-stage build for minimal size)
-# Stage 1: Download yq binary and checksum
-FROM alpine AS yq-builder
-RUN apk --no-cache add curl
 ARG YQ_VERSION=v4.52.5
-ARG ARCH=arm64
-RUN curl -sfL "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_${ARCH}" -o yq \
+RUN ARCH=$(dpkg --print-architecture) \
+    && curl -sfL "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_${ARCH}" -o yq \
     && curl -sfL "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_${ARCH}.sha256" -o yq.sha256 \
     && sha256sum -c yq.sha256 && rm yq.sha256 \
-    && chmod +x yq
+    && chmod +x yq \
+    && cp yq /usr/local/bin/yq
 
-# Copy yq to main builder
-RUN ARCH=$(dpkg --print-architecture)
-
-# Stage 2: Add productivity tools via apt
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ripgrep \
         fd-find \
@@ -79,13 +75,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         gnupg2 \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy yq binary from builder
-COPY --from=yq-builder /yq /usr/local/bin/yq
-RUN chmod +x /usr/local/bin/yq
-
-# Apply security patches on top of the upstream base image
-RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
-
 # Pre-configure kubectl for in-cluster serviceaccount
 RUN mkdir -p /etc/skel/.kube && \
     cat > /etc/skel/.kube/config << 'EOF'
@@ -108,8 +97,8 @@ users:
     tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
 EOF
 
-# Verify yq installation
-RUN yq --version
+# Apply security patches on top of the upstream base image
+RUN apt-get upgrade -y && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
 
 # Custom entrypoint and helper scripts
 COPY entrypoint.sh /app/entrypoint.sh
