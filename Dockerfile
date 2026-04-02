@@ -67,14 +67,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         jq \
         redis-tools \
         postgresql-client \
-        mysql-client \
-        terraform \
         ansible \
-        helm \
-        awscli2 \
-        azure-cli \
         gnupg2 \
     && rm -rf /var/lib/apt/lists/*
+
+# Terraform — HashiCorp apt repository
+RUN curl -fsSL https://apt.releases.hashicorp.com/gpg \
+        | gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg \
+    && echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(. /etc/os-release && echo $VERSION_CODENAME) main" \
+        | tee /etc/apt/sources.list.d/hashicorp.list \
+    && apt-get update && apt-get install -y --no-install-recommends terraform \
+    && rm -rf /var/lib/apt/lists/*
+
+# Helm — official binary install
+RUN ARCH=$(dpkg --print-architecture) \
+    && VERSION=$(curl -fsSL https://api.github.com/repos/helm/helm/releases/latest | grep '"tag_name"' | cut -d'"' -f4) \
+    && curl -fsSL "https://get.helm.sh/helm-${VERSION}-linux-${ARCH}.tar.gz" | tar -xz \
+    && install -m 555 "linux-${ARCH}/helm" /usr/local/bin/helm \
+    && rm -rf "linux-${ARCH}"
 
 # Pre-configure kubectl for in-cluster serviceaccount
 RUN mkdir -p /etc/skel/.kube && \
