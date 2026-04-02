@@ -39,12 +39,13 @@ RUN ARCH=$(dpkg --print-architecture) \
     && install -m 555 /tmp/argocd /usr/local/bin/argocd \
     && rm /tmp/argocd
 
-# YQ — YAML processor (multi-stage build for minimal size)
+# YQ — YAML processor
 ARG YQ_VERSION=v4.52.5
 RUN ARCH=$(dpkg --print-architecture) \
     && curl -sfL "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_${ARCH}" -o yq \
-    && curl -sfL "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_${ARCH}.sha256" -o yq.sha256 \
-    && sha256sum -c yq.sha256 && rm yq.sha256 \
+    && curl -sfL "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/checksums" -o checksums \
+    && grep "^yq_linux_${ARCH} " checksums | awk '{print $19 "  yq"}' | sha256sum -c - \
+    && rm checksums \
     && chmod +x yq \
     && cp yq /usr/local/bin/yq
 
