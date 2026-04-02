@@ -37,6 +37,52 @@ RUN ARCH=$(dpkg --print-architecture) \
     && install -m 555 /tmp/argocd /usr/local/bin/argocd \
     && rm /tmp/argocd
 
+# YQ — YAML processor (multi-stage build for minimal size)
+# Stage 1: Download yq binary and checksum
+FROM alpine AS yq-builder
+RUN apk --no-cache add curl
+ARG YQ_VERSION=v4.52.5
+ARG ARCH=arm64
+RUN curl -sfL "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_${ARCH}" -o yq \
+    && curl -sfL "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_${ARCH}.sha256" -o yq.sha256 \
+    && sha256sum -c yq.sha256 && rm yq.sha256 \
+    && chmod +x yq
+
+# Copy yq to main builder
+RUN ARCH=$(dpkg --print-architecture)
+
+# Stage 2: Add productivity tools via apt
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ripgrep \
+        fd-find \
+        bat \
+        tmux \
+        sqlite3 \
+        httpie \
+        tree \
+        htop \
+        pigz \
+        unar \
+        rsync \
+        zip \
+        unzip \
+        diffutils \
+        jq \
+        redis-tools \
+        postgresql-client \
+        mysql-client \
+        terraform \
+        ansible \
+        helm \
+        awscli2 \
+        azure-cli \
+        gnupg2 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy yq binary from builder
+COPY --from=yq-builder /yq /usr/local/bin/yq
+RUN chmod +x /usr/local/bin/yq
+
 # Apply security patches on top of the upstream base image
 RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
 
@@ -61,6 +107,9 @@ users:
   user:
     tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
 EOF
+
+# Verify yq installation
+RUN yq --version
 
 # Custom entrypoint and helper scripts
 COPY entrypoint.sh /app/entrypoint.sh
