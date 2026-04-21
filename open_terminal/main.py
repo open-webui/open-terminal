@@ -773,7 +773,7 @@ async def replace_file_content(http_request: Request, request: ReplaceRequest, f
     "/files/grep",
     operation_id="grep_search",
     summary="Search file contents",
-    description="Search for a text pattern across files in a directory. Returns structured matches with file paths, line numbers, and matching lines. Skips binary files.",
+    description="Search for a text pattern across files in a directory. Returns structured matches with file paths, line numbers, and matching lines. Searches plain-text files directly and supported document binaries (PDF, Office, OpenDocument, etc.) via text extraction, using the same text-representation behavior as read_file. Unsupported binary files are skipped.",
     dependencies=[Depends(verify_api_key)],
     responses={
         404: {"description": "Search path not found."},
