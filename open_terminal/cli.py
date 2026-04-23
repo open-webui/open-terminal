@@ -156,12 +156,19 @@ def run(
     default=None,
     help="Working directory for the server process.",
 )
+@click.option(
+    "--api-key",
+    default="",
+    envvar="OPEN_TERMINAL_API_KEY",
+    help="Bearer API key (or set OPEN_TERMINAL_API_KEY env var)",
+)
 def mcp(
     transport: str,
     host: str | None,
     port: int | None,
     config_path: str | None,
     cwd: str | None,
+    api_key: str,
 ):
     """Start the MCP server (requires 'pip install open-terminal[mcp]')."""
     from open_terminal import config
@@ -173,6 +180,19 @@ def mcp(
 
     if cwd:
         os.chdir(cwd)
+
+    # Resolve API key: CLI flag > env var > Docker secret file > config file.
+    # Must be set in os.environ BEFORE importing mcp_server so that env.py
+    # picks it up at module-import time (it captures API_KEY at import).
+    if not api_key:
+        file_path = os.environ.get("OPEN_TERMINAL_API_KEY_FILE")
+        if file_path:
+            with open(file_path) as f:
+                api_key = f.read().strip()
+    if not api_key:
+        api_key = cfg.get("api_key", "")
+    if api_key:
+        os.environ["OPEN_TERMINAL_API_KEY"] = api_key
 
     try:
         from open_terminal.mcp_server import mcp as mcp_server
