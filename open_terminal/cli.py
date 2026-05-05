@@ -193,8 +193,25 @@ def mcp(
                 api_key = f.read().strip()
     if not api_key:
         api_key = cfg.get("api_key", "")
-    if api_key:
-        os.environ["OPEN_TERMINAL_API_KEY"] = api_key
+
+    # For stdio transport, auto-generate a temporary API key if not provided.
+    # stdio is local IPC, so a random key is sufficient for security.
+    # For HTTP transports, require an explicit API key.
+    if transport == "stdio":
+        if not api_key:
+            import secrets
+            api_key = secrets.token_hex(32)
+    else:
+        # streamable-http requires explicit authentication
+        if not api_key:
+            click.echo(
+                "Error: --api-key is required for HTTP transport modes.\n"
+                "Set via --api-key flag or OPEN_TERMINAL_API_KEY environment variable.",
+                err=True,
+            )
+            raise SystemExit(1)
+
+    os.environ["OPEN_TERMINAL_API_KEY"] = api_key
 
     try:
         from open_terminal.mcp_server import mcp as mcp_server
