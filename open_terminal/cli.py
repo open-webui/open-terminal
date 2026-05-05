@@ -175,8 +175,10 @@ def mcp(
 
     cfg = config.init(config_path)
 
-    host = host or cfg.get("host", "0.0.0.0")
-    port = port if port is not None else cfg.get("port", 8000)
+    # Only resolve host/port for non-stdio transport modes
+    if transport != "stdio":
+        host = host or cfg.get("host", "0.0.0.0")
+        port = port if port is not None else cfg.get("port", 8000)
 
     if cwd:
         os.chdir(cwd)
@@ -204,7 +206,10 @@ def mcp(
         )
         raise SystemExit(1)
 
-    mcp_server.run(transport=transport, host=host, port=port)
+    if transport == "stdio":
+        mcp_server.run(transport="stdio")
+    else:
+        mcp_server.run(transport=transport, host=host, port=port)
 
 
 if __name__ == "__main__":
