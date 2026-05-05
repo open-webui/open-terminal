@@ -181,6 +181,37 @@ docker run -d --name open-terminal -p 8000:8000 \
 
 Each user automatically gets a dedicated Linux account with its own home directory. Files, commands, and terminals are isolated between users via standard Unix permissions.
 
+## MCP Server
+
+Open Terminal ships with an [MCP](https://modelcontextprotocol.io) server that exposes every API endpoint as an MCP tool. Install the optional dependency first:
+
+```bash
+pip install "open-terminal[mcp]"
+```
+
+### streamable-http (remote)
+
+To run the MCP server as a network service and connect from another machine:
+
+```bash
+open-terminal mcp --transport streamable-http --host 0.0.0.0 --port 8000 --api-key your-secret-key
+```
+
+Then connect from VS Code `mcp.json`:
+
+```json
+{
+  "servers": {
+    "open-terminal": {
+      "type": "http",
+      "url": "http://<server-ip>:8000/mcp"
+    }
+  }
+}
+```
+
+The `--api-key` flag (or `OPEN_TERMINAL_API_KEY` env var, or `api_key` in a config file) is required — it is used for both the MCP server and the underlying REST API.
+
 ## API Docs
 
 Full interactive API documentation is available at [http://localhost:8000/docs](http://localhost:8000/docs) once your instance is running.
