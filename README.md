@@ -186,7 +186,7 @@ Each user automatically gets a dedicated Linux account with its own home directo
 Open Terminal ships with an [MCP](https://modelcontextprotocol.io) server that exposes every API endpoint as an MCP tool. Install the optional dependency first:
 
 ```bash
-pip install "open-terminal[mcp]"
+pip install -e ".[mcp]"
 ```
 
 ### streamable-http (remote)
@@ -203,8 +203,8 @@ Then connect from VS Code `mcp.json`:
 {
   "servers": {
     "open-terminal": {
-      "type": "http",
-      "url": "http://<server-ip>:8000/mcp"
+      "url": "http://<server-ip>:8000/mcp",
+      "type": "http"
     }
   }
 }
