@@ -9,6 +9,8 @@ OWUI_STATE_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/open-webui-custom/model_profi
 DEFAULT_ENDPOINT="http://127.0.0.1:8000/v1"
 CHAT_HISTORY_FILE="${XDG_STATE_HOME:-$HOME/.local/state}/open-terminal/chat_history.jsonl"
 MODEL_ACTIVATE_SCRIPT="${MODEL_ACTIVATE_SCRIPT:-/home/trotsky/Projects/b70-linux-ai-lab/scripts/z490_local_model_activate.sh}"
+WAIT_TIMEOUT_SECONDS="${WAIT_TIMEOUT_SECONDS:-120}"
+OT_AUTO_RETURN_TO_GEMMA=0
 mkdir -p "$(dirname "$CHAT_HISTORY_FILE")"
 
 COMMANDS=(
@@ -27,6 +29,7 @@ COMMANDS=(
   "/model vision"
   "/model gemma"
   "/model qwen (on-demand warm-up)"
+  "/model qwen-temp (one reply, then auto-return to gemma)"
   "/model openvino"
   "/model custom <url>"
   "/endpoint"
@@ -62,7 +65,7 @@ Slash commands inside REPL:
   /health
   /verify
   /model
-  /model text|vision|gemma|qwen|openvino|custom <url>
+  /model text|vision|gemma|qwen|qwen-temp|openvino|custom <url>
   /endpoint
   /endpoint-check
   /clear              # clear local chat history
@@ -81,6 +84,26 @@ do_verify() { "$VERIFY_SCRIPT"; }
 do_clear() {
   : > "$CHAT_HISTORY_FILE"
   echo "Chat history cleared."
+}
+
+wait_for_models_endpoint() {
+  local endpoint models_url waited=0
+  endpoint="$(current_endpoint)"
+  models_url="${endpoint%/}/models"
+  printf "Waiting for endpoint %s " "$endpoint"
+  while (( waited < WAIT_TIMEOUT_SECONDS )); do
+    if curl -fsS "$models_url" >/dev/null 2>&1; then
+      echo
+      echo "Endpoint ready."
+      return 0
+    fi
+    printf "."
+    sleep 2
+    waited=$((waited + 2))
+  done
+  echo
+  echo "Endpoint did not become ready within ${WAIT_TIMEOUT_SECONDS}s."
+  return 1
 }
 
 current_endpoint() {
@@ -270,6 +293,12 @@ PY
   printf '{"role":"user","content":%s}\n' "$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$user_text")" >> "$CHAT_HISTORY_FILE"
   printf '{"role":"assistant","content":%s}\n' "$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$assistant")" >> "$CHAT_HISTORY_FILE"
   echo "$assistant"
+  if [[ "$OT_AUTO_RETURN_TO_GEMMA" -eq 1 ]]; then
+    OT_AUTO_RETURN_TO_GEMMA=0
+    echo
+    echo "Auto-returning to Gemma primary..."
+    do_model gemma || true
+  fi
 }
 
 do_model() {
@@ -298,8 +327,22 @@ do_model() {
           echo "Proceeding without one-model guard."
         fi
         ;;
+      qwen-temp)
+        if [[ -x "$MODEL_ACTIVATE_SCRIPT" ]]; then
+          echo "Switching to temporary Qwen session (auto-return to Gemma after one reply)."
+          echo "This usually takes around 30-90 seconds depending on load."
+          "$MODEL_ACTIVATE_SCRIPT" qwen
+          OT_AUTO_RETURN_TO_GEMMA=1
+        else
+          echo "Warning: activation script not found at $MODEL_ACTIVATE_SCRIPT"
+          echo "Proceeding without one-model guard."
+          OT_AUTO_RETURN_TO_GEMMA=1
+        fi
+        set -- qwen
+        ;;
     esac
     "$OWUI_BIN" model "$@"
+    wait_for_models_endpoint || true
   fi
 }
 
@@ -343,6 +386,7 @@ run_repl() {
       /model\ vision ) do_model vision ;;
       /model\ gemma ) do_model gemma ;;
       /model\ qwen ) do_model qwen ;;
+      /model\ qwen-temp ) do_model qwen-temp ;;
       /model\ openvino ) do_model openvino ;;
       /model\ custom\ * )
         custom_url="${line#"/model custom "}"
@@ -353,7 +397,7 @@ run_repl() {
         fi
         ;;
       /model* )
-        echo "Usage: /model | /model text|vision|gemma|qwen|openvino|custom <url>"
+        echo "Usage: /model | /model text|vision|gemma|qwen|qwen-temp|openvino|custom <url>"
         ;;
       "/" ) show_commands "/" ;;
       /[a-zA-Z]* )
