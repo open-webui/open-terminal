@@ -8,6 +8,7 @@ OWUI_BIN="${OWUI_BIN:-$HOME/.local/bin/owui}"
 OWUI_STATE_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/open-webui-custom/model_profile.env"
 DEFAULT_ENDPOINT="http://127.0.0.1:8000/v1"
 CHAT_HISTORY_FILE="${XDG_STATE_HOME:-$HOME/.local/state}/open-terminal/chat_history.jsonl"
+MODEL_ACTIVATE_SCRIPT="${MODEL_ACTIVATE_SCRIPT:-/home/trotsky/Projects/b70-linux-ai-lab/scripts/z490_local_model_activate.sh}"
 mkdir -p "$(dirname "$CHAT_HISTORY_FILE")"
 
 COMMANDS=(
@@ -25,7 +26,7 @@ COMMANDS=(
   "/model text"
   "/model vision"
   "/model gemma"
-  "/model qwen"
+  "/model qwen (on-demand warm-up)"
   "/model openvino"
   "/model custom <url>"
   "/endpoint"
@@ -280,6 +281,24 @@ do_model() {
   if [[ $# -eq 0 ]]; then
     "$OWUI_BIN" model
   else
+    case "${1:-}" in
+      text|gemma)
+        if [[ -x "$MODEL_ACTIVATE_SCRIPT" ]]; then
+          echo "Ensuring Gemma is the only active heavy model..."
+          "$MODEL_ACTIVATE_SCRIPT" gemma
+        fi
+        ;;
+      qwen)
+        if [[ -x "$MODEL_ACTIVATE_SCRIPT" ]]; then
+          echo "Switching to Qwen on-demand (Gemma will be stopped first)."
+          echo "This usually takes around 30-90 seconds depending on load."
+          "$MODEL_ACTIVATE_SCRIPT" qwen
+        else
+          echo "Warning: activation script not found at $MODEL_ACTIVATE_SCRIPT"
+          echo "Proceeding without one-model guard."
+        fi
+        ;;
+    esac
     "$OWUI_BIN" model "$@"
   fi
 }
