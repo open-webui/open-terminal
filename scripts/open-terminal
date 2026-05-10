@@ -22,6 +22,8 @@ COMMANDS=(
   "/verify"
   "/model"
   "/models"
+  "/model text"
+  "/model vision"
   "/model gemma"
   "/model qwen"
   "/model openvino"
@@ -59,7 +61,7 @@ Slash commands inside REPL:
   /health
   /verify
   /model
-  /model gemma|qwen|openvino|custom <url>
+  /model text|vision|gemma|qwen|openvino|custom <url>
   /endpoint
   /endpoint-check
   /clear              # clear local chat history
@@ -318,6 +320,8 @@ run_repl() {
       "/clear" ) do_clear ;;
       "/model" ) do_model || true ;;
       "/models" ) do_model || true ;;
+      /model\ text ) do_model text ;;
+      /model\ vision ) do_model vision ;;
       /model\ gemma ) do_model gemma ;;
       /model\ qwen ) do_model qwen ;;
       /model\ openvino ) do_model openvino ;;
@@ -330,7 +334,7 @@ run_repl() {
         fi
         ;;
       /model* )
-        echo "Usage: /model | /model gemma|qwen|openvino|custom <url>"
+        echo "Usage: /model | /model text|vision|gemma|qwen|openvino|custom <url>"
         ;;
       "/" ) show_commands "/" ;;
       /[a-zA-Z]* )
