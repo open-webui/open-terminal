@@ -1,0 +1,11 @@
+[Unit]
+Description=Run OpenTerminal/OpenWebUI decoupled stack verification periodically
+
+[Timer]
+OnBootSec=2m
+OnUnitActiveSec=15m
+Persistent=true
+Unit=open-terminal-verify.service
+
+[Install]
+WantedBy=timers.target

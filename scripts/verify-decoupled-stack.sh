@@ -23,8 +23,17 @@ check_systemd() {
 }
 
 check_open_terminal_health() {
-  local out
-  if out="$(curl -fsS http://127.0.0.1:8010/health 2>/dev/null)" && [[ "$out" == *'"status":"ok"'* ]]; then
+  local out=""
+  local ok=0
+  local i
+  for i in 1 2 3 4 5; do
+    if out="$(curl -fsS http://127.0.0.1:8010/health 2>/dev/null)" && [[ "$out" == *'"status":"ok"'* ]]; then
+      ok=1
+      break
+    fi
+    sleep 1
+  done
+  if [[ "$ok" -eq 1 ]]; then
     pass "OpenTerminal health endpoint is OK"
   else
     fail "OpenTerminal health endpoint failed"
@@ -62,8 +71,17 @@ check_open_terminal_execute() {
 }
 
 check_openwebui_health() {
-  local out
-  if out="$(curl -fsS http://127.0.0.1:8080/health 2>/dev/null)" && [[ "$out" == *'"status":true'* ]]; then
+  local out=""
+  local ok=0
+  local i
+  for i in 1 2 3 4 5; do
+    if out="$(curl -fsS http://127.0.0.1:8080/health 2>/dev/null)" && [[ "$out" == *'"status":true'* ]]; then
+      ok=1
+      break
+    fi
+    sleep 1
+  done
+  if [[ "$ok" -eq 1 ]]; then
     pass "OpenWebUI health endpoint is OK"
   else
     fail "OpenWebUI health endpoint failed"

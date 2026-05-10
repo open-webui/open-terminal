@@ -1,0 +1,8 @@
+[Unit]
+Description=Verify OpenTerminal/OpenWebUI decoupled stack
+After=network.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/Projects/open-terminal
+ExecStart=%h/Projects/open-terminal/scripts/verify-decoupled-stack.sh

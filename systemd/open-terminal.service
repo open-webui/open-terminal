@@ -10,6 +10,9 @@ EnvironmentFile=-%h/.config/open-terminal/api_key.env
 ExecStart=%h/Projects/open-terminal/.venv/bin/python -m open_terminal.cli run --host ${OPEN_TERMINAL_HOST} --port ${OPEN_TERMINAL_PORT} --cwd ${OPEN_TERMINAL_CWD} --cors-allowed-origins ${OPEN_TERMINAL_CORS_ALLOWED_ORIGINS}
 Restart=on-failure
 RestartSec=2
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectKernelTunables=true
 
 [Install]
 WantedBy=default.target
