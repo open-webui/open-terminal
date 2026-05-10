@@ -26,7 +26,7 @@ check_open_terminal_health() {
   local out=""
   local ok=0
   local i
-  for i in 1 2 3 4 5; do
+  for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
     if out="$(curl -fsS http://127.0.0.1:8010/health 2>/dev/null)" && [[ "$out" == *'"status":"ok"'* ]]; then
       ok=1
       break
@@ -74,7 +74,7 @@ check_openwebui_health() {
   local out=""
   local ok=0
   local i
-  for i in 1 2 3 4 5; do
+  for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
     if out="$(curl -fsS http://127.0.0.1:8080/health 2>/dev/null)" && [[ "$out" == *'"status":true'* ]]; then
       ok=1
       break
