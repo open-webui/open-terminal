@@ -13,6 +13,36 @@ You can run it two ways:
 
 ## Getting Started
 
+### Local Bare-Metal + systemd (no container)
+
+This repo can run as a standalone local service with `systemd --user`.
+
+```bash
+cd /home/trotsky/Projects/open-terminal
+./scripts/setup-local.sh
+./scripts/install-user-service.sh
+./scripts/start.sh
+```
+
+Check service status/logs:
+
+```bash
+./scripts/status.sh
+./scripts/logs.sh
+```
+
+Default local baseline:
+
+- bind: `127.0.0.1`
+- port: `8010`
+- working directory: `/home/trotsky/Projects`
+- API key file: `~/.config/open-terminal/api_key`
+
+See local docs:
+
+- `docs/LOCAL_BASELINE.md`
+- `docs/SAFETY_BOUNDARIES.md`
+
 ### Docker (recommended)
 
 ```bash

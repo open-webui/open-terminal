@@ -1,0 +1,15 @@
+[Unit]
+Description=OpenTerminal local API harness
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Projects/open-terminal
+EnvironmentFile=%h/Projects/open-terminal/.env
+EnvironmentFile=-%h/.config/open-terminal/api_key.env
+ExecStart=%h/Projects/open-terminal/.venv/bin/python -m open_terminal.cli run --host ${OPEN_TERMINAL_HOST} --port ${OPEN_TERMINAL_PORT} --cwd ${OPEN_TERMINAL_CWD} --cors-allowed-origins ${OPEN_TERMINAL_CORS_ALLOWED_ORIGINS}
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target
