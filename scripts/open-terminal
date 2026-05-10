@@ -5,6 +5,31 @@ SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
 ROOT_DIR="$(cd "$(dirname "$SCRIPT_PATH")/.." && pwd)"
 VERIFY_SCRIPT="$ROOT_DIR/scripts/verify-decoupled-stack.sh"
 OWUI_BIN="${OWUI_BIN:-$HOME/.local/bin/owui}"
+OWUI_STATE_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/open-webui-custom/model_profile.env"
+DEFAULT_ENDPOINT="http://127.0.0.1:8000/v1"
+CHAT_HISTORY_FILE="${XDG_STATE_HOME:-$HOME/.local/state}/open-terminal/chat_history.jsonl"
+mkdir -p "$(dirname "$CHAT_HISTORY_FILE")"
+
+COMMANDS=(
+  "/help"
+  "/q"
+  "/start"
+  "/stop"
+  "/restart"
+  "/status"
+  "/logs"
+  "/health"
+  "/verify"
+  "/model"
+  "/models"
+  "/model gemma"
+  "/model qwen"
+  "/model openvino"
+  "/model custom <url>"
+  "/endpoint"
+  "/clear"
+  "/quit"
+)
 
 usage() {
   cat <<'EOF'
@@ -18,6 +43,8 @@ Usage:
   open-terminal help
 
 Slash commands inside REPL:
+  /
+  /<prefix>           # filter commands, e.g. /m
   /start
   /stop
   /restart
@@ -27,6 +54,8 @@ Slash commands inside REPL:
   /verify
   /model
   /model gemma|qwen|openvino|custom <url>
+  /endpoint
+  /clear              # clear local chat history
   /help
   /quit
 EOF
@@ -39,6 +68,147 @@ do_status() { systemctl --user --no-pager status open-terminal; }
 do_logs() { journalctl --user -u open-terminal -n "${1:-120}" --no-pager; }
 do_health() { curl -fsS http://127.0.0.1:8010/health && echo; }
 do_verify() { "$VERIFY_SCRIPT"; }
+do_clear() {
+  : > "$CHAT_HISTORY_FILE"
+  echo "Chat history cleared."
+}
+
+current_endpoint() {
+  if [[ -f "$OWUI_STATE_FILE" ]]; then
+    # shellcheck disable=SC1090
+    source "$OWUI_STATE_FILE"
+    if [[ -n "${OWUI_ENDPOINT:-}" ]]; then
+      echo "$OWUI_ENDPOINT"
+      return
+    fi
+  fi
+  echo "$DEFAULT_ENDPOINT"
+}
+
+show_endpoint() {
+  echo "Current model endpoint: $(current_endpoint)"
+}
+
+show_commands() {
+  local prefix="${1:-/}"
+  local shown=0
+  local normalized="${prefix#/}"
+  local cmd
+
+  # First pass: strict prefix matching
+  for cmd in "${COMMANDS[@]}"; do
+    if [[ "$cmd" == "$prefix"* ]]; then
+      echo "  $cmd"
+      shown=1
+    fi
+  done
+
+  # Second pass: substring matching (copilot-style discoverability)
+  if [[ "$shown" -eq 0 && -n "$normalized" ]]; then
+    for cmd in "${COMMANDS[@]}"; do
+      if [[ "${cmd#/}" == *"$normalized"* ]]; then
+        echo "  $cmd"
+        shown=1
+      fi
+    done
+  fi
+
+  if [[ "$shown" -eq 0 ]]; then
+    echo "No slash commands match: $prefix"
+    echo "Tip: type / to list commands."
+  fi
+}
+
+current_model_id() {
+  local endpoint models_url id
+  endpoint="$(current_endpoint)"
+  models_url="${endpoint%/}/models"
+  id="$(curl -fsS "$models_url" 2>/dev/null | python3 - <<'PY'
+import json,sys
+try:
+    data=json.load(sys.stdin)
+    items=data.get("data") or []
+    if items and isinstance(items, list):
+        first=items[0]
+        if isinstance(first, dict) and first.get("id"):
+            print(first["id"])
+except Exception:
+    pass
+PY
+)"
+  if [[ -n "$id" ]]; then
+    echo "$id"
+  else
+    echo "default"
+  fi
+}
+
+chat_send() {
+  local user_text="$1"
+  local endpoint chat_url model payload resp assistant
+  endpoint="$(current_endpoint)"
+  chat_url="${endpoint%/}/chat/completions"
+  model="$(current_model_id)"
+
+  payload="$(python3 - "$CHAT_HISTORY_FILE" "$model" "$user_text" <<'PY'
+import json,sys
+hist_path,model,user_text=sys.argv[1],sys.argv[2],sys.argv[3]
+msgs=[]
+try:
+    with open(hist_path,"r",encoding="utf-8") as f:
+        for line in f:
+            line=line.strip()
+            if not line:
+                continue
+            obj=json.loads(line)
+            if isinstance(obj,dict) and obj.get("role") in {"user","assistant","system"}:
+                msgs.append({"role":obj["role"],"content":str(obj.get("content",""))})
+except FileNotFoundError:
+    pass
+msgs.append({"role":"user","content":user_text})
+print(json.dumps({"model":model,"messages":msgs,"temperature":0.2}, ensure_ascii=False))
+PY
+)"
+
+  resp="$(curl -fsS \
+    -H 'Content-Type: application/json' \
+    -H 'Authorization: Bearer dummy' \
+    -d "$payload" \
+    "$chat_url" 2>&1)" || {
+      echo "Chat request failed against $chat_url"
+      echo "$resp"
+      echo "Tip: run /model and select a profile with a live endpoint."
+      return 1
+    }
+
+  assistant="$(python3 - <<'PY' "$resp"
+import json,sys
+raw=sys.argv[1]
+try:
+    data=json.loads(raw)
+except Exception:
+    print("")
+    raise SystemExit(0)
+msg=((data.get("choices") or [{}])[0].get("message") or {}).get("content","")
+if isinstance(msg,list):
+    parts=[]
+    for item in msg:
+        if isinstance(item,dict) and item.get("type")=="text":
+            parts.append(str(item.get("text","")))
+    msg="\n".join([p for p in parts if p])
+print(msg if isinstance(msg,str) else str(msg))
+PY
+)"
+
+  if [[ -z "$assistant" ]]; then
+    echo "No assistant content returned."
+    return 1
+  fi
+
+  printf '{"role":"user","content":%s}\n' "$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$user_text")" >> "$CHAT_HISTORY_FILE"
+  printf '{"role":"assistant","content":%s}\n' "$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$assistant")" >> "$CHAT_HISTORY_FILE"
+  echo "$assistant"
+}
 
 do_model() {
   if [[ ! -x "$OWUI_BIN" ]]; then
@@ -54,7 +224,7 @@ do_model() {
 }
 
 run_repl() {
-  echo "open-terminal REPL. Type /help for commands. Press Ctrl+C to exit."
+  echo "open-terminal chat REPL. Type text to chat. Type / for commands. Press Ctrl+C to exit."
   trap 'echo; echo "Exiting open-terminal REPL."; exit 0' INT
 
   while true; do
@@ -62,7 +232,7 @@ run_repl() {
     case "$line" in
       "" ) continue ;;
       "/help" ) usage ;;
-      "/quit"|"/exit" ) break ;;
+      "/quit"|"/exit"|"/q" ) break ;;
       "/start" ) do_start ;;
       "/stop" ) do_stop ;;
       "/restart" ) do_restart ;;
@@ -70,7 +240,10 @@ run_repl() {
       "/logs" ) do_logs ;;
       "/health" ) do_health || echo "Health check failed." ;;
       "/verify" ) do_verify || true ;;
+      "/endpoint" ) show_endpoint ;;
+      "/clear" ) do_clear ;;
       "/model" ) do_model || true ;;
+      "/models" ) do_model || true ;;
       /model\ gemma ) do_model gemma ;;
       /model\ qwen ) do_model qwen ;;
       /model\ openvino ) do_model openvino ;;
@@ -85,7 +258,14 @@ run_repl() {
       /model* )
         echo "Usage: /model | /model gemma|qwen|openvino|custom <url>"
         ;;
-      * ) echo "Unknown command: $line" ;;
+      "/" ) show_commands "/" ;;
+      /[a-zA-Z]* )
+        # If not an exact command above, show prefix matches (e.g. /m, /mo).
+        show_commands "$line"
+        ;;
+      * )
+        chat_send "$line" || true
+        ;;
     esac
   done
 }
