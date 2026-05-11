@@ -42,6 +42,42 @@ Example:
 }
 ```
 
+## Recommended NUC Connectivity (Loopback + SSH Tunnel)
+
+Keep NUC OpenTerminal bound to `127.0.0.1:8010` and expose it on Z490 through a user tunnel.
+
+Example user service on Z490:
+
+`~/.config/systemd/user/otx-nuc-tunnel.service`
+
+```ini
+[Unit]
+Description=OTX SSH tunnel to NUC OpenTerminal
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/ssh -NT -i %h/.ssh/id_ed25519_z490_to_trotsky -o ExitOnForwardFailure=yes -o ServerAliveInterval=20 -o ServerAliveCountMax=3 -L 18010:127.0.0.1:8010 trotsky@100.68.242.114
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=default.target
+```
+
+Enable it:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now otx-nuc-tunnel.service
+systemctl --user status otx-nuc-tunnel.service
+```
+
+Then configure NUC target as:
+
+- `base_url`: `http://127.0.0.1:18010`
+
 ## Commands
 
 List targets:
