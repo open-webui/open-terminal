@@ -86,7 +86,7 @@ Usage:
   open-terminal start|stop|restart|status|logs|health|verify
   open-terminal model [profile]
   open-terminal mode [chat|raw]
-  open-terminal menu
+  open-terminal menu [meta|system|model|chat|session|jobs|safety]
   open-terminal run "<task>"
   open-terminal jobs
   open-terminal job status|wait|result|logs|cancel <job_id>
@@ -102,6 +102,7 @@ Usage:
 Slash commands inside REPL:
   /
   /menu                # interactive command picker
+  /menu <category>     # picker filtered by category
   /<prefix>           # filter commands, e.g. /m
   TAB                 # cycle matching slash commands
   Ctrl+C              # exit REPL
@@ -453,15 +454,25 @@ show_commands() {
 }
 
 pick_command_interactive() {
+  local category_filter="${1:-}"
   local selection=""
   local cat rank
   local tmp
   tmp="$(mktemp)"
   for cmd in "${COMMANDS[@]}"; do
     cat="$(command_category "$cmd")"
+    if [[ -n "$category_filter" && "$cat" != "$category_filter" ]]; then
+      continue
+    fi
     rank="$(category_rank "$cat")"
     printf '%s\t%s\t%s\t%s\n' "$rank" "$cat" "$cmd" "$(command_description "$cmd")" >> "$tmp"
   done
+
+  if [[ ! -s "$tmp" ]]; then
+    rm -f "$tmp"
+    printf '%s' ""
+    return
+  fi
 
   if command -v fzf >/dev/null 2>&1; then
     selection="$(
@@ -490,6 +501,14 @@ pick_command_interactive() {
   fi
   rm -f "$tmp"
   printf '%s' "$selection"
+}
+
+is_valid_category() {
+  local cat="${1:-}"
+  case "$cat" in
+    meta|system|model|chat|session|jobs|safety) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 canonicalize_menu_choice() {
@@ -995,6 +1014,30 @@ run_repl() {
           esac
         fi
         ;;
+      /menu\ * )
+        menu_cat="${line#"/menu "}"
+        if ! is_valid_category "$menu_cat"; then
+          echo "Invalid category: $menu_cat"
+          echo "Valid categories: meta, system, model, chat, session, jobs, safety"
+          continue
+        fi
+        picked="$(pick_command_interactive "$menu_cat")"
+        if [[ -z "$picked" ]]; then
+          echo "No command selected."
+        else
+          picked="$(canonicalize_menu_choice "$picked")"
+          echo "Selected: $picked"
+          case "$picked" in
+            "/start"|"/stop"|"/restart"|"/status"|"/logs"|"/health"|"/verify"|"/endpoint"|"/endpoint-check"|"/model"|"/models"|"/mode"|"/history"|"/resume --all"|"/session list"|"/session new"|"/jobs"|"/contract"|"/statusline"|"/help"|"/clear")
+              line="$picked"
+              ;;
+            *)
+              echo "This command needs extra input. Run it directly: $picked"
+              continue
+              ;;
+          esac
+        fi
+        ;;
       "/quit"|"/exit"|"/q" ) break ;;
       "/start" ) do_start ;;
       "/stop" ) do_stop ;;
@@ -1125,7 +1168,14 @@ main() {
     endpoint) show_endpoint ;;
     endpoint-check) check_endpoint ;;
     menu)
-      picked="$(pick_command_interactive)"
+      shift || true
+      menu_cat="${1:-}"
+      if [[ -n "$menu_cat" ]] && ! is_valid_category "$menu_cat"; then
+        echo "Invalid category: $menu_cat"
+        echo "Valid categories: meta, system, model, chat, session, jobs, safety"
+        exit 1
+      fi
+      picked="$(pick_command_interactive "$menu_cat")"
       if [[ -z "$picked" ]]; then
         echo "No command selected."
         exit 1
