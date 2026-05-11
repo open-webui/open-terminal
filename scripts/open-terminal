@@ -357,16 +357,64 @@ prompt_status() {
   printf 'open-terminal[%s|%s|%s]> ' "$OT_CHAT_MODE" "$model" "$short_cwd"
 }
 
+command_category() {
+  local cmd="$1"
+  case "$cmd" in
+    "/start"|"/stop"|"/restart"|"/status"|"/logs"|"/health"|"/verify"|"/endpoint"|"/endpoint-check")
+      echo "system"
+      ;;
+    "/model"|"/models"|"/model text"|"/model vision"|"/model gemma"|"/model qwen (on-demand warm-up)"|"/model qwen-temp (one reply, then auto-return to gemma)"|"/model openvino"|"/model custom <url>")
+      echo "model"
+      ;;
+    "/session list"|"/session new [name]"|"/session use <id>"|"/history"|"/resume --all"|"/clear")
+      echo "session"
+      ;;
+    "/run <task>"|"/jobs"|"/job status <job_id>"|"/job wait <job_id>"|"/job result <job_id>"|"/job logs <job_id>"|"/job cancel <job_id>")
+      echo "jobs"
+      ;;
+    "/contract"|"/contract strict|off"|"/statusline"|"/statusline on|off")
+      echo "safety"
+      ;;
+    "/mode"|"/mode chat"|"/mode raw"|"/raw <prompt>"|"/diag prompt")
+      echo "chat"
+      ;;
+    "/help"|"/menu"|"/q"|"/quit"|"/exit")
+      echo "meta"
+      ;;
+    *)
+      echo "other"
+      ;;
+  esac
+}
+
+category_rank() {
+  local cat="$1"
+  case "$cat" in
+    meta) echo 1 ;;
+    system) echo 2 ;;
+    model) echo 3 ;;
+    chat) echo 4 ;;
+    session) echo 5 ;;
+    jobs) echo 6 ;;
+    safety) echo 7 ;;
+    *) echo 9 ;;
+  esac
+}
+
 show_commands() {
   local prefix="${1:-/}"
   local shown=0
   local normalized="${prefix#/}"
-  local cmd
+  local cmd cat rank
+  local tmp
+  tmp="$(mktemp)"
 
   # First pass: strict prefix matching
   for cmd in "${COMMANDS[@]}"; do
     if [[ "$cmd" == "$prefix"* ]]; then
-      printf '  %-48s %s\n' "$cmd" "$(command_description "$cmd")"
+      cat="$(command_category "$cmd")"
+      rank="$(category_rank "$cat")"
+      printf '%s\t%s\t%s\t%s\n' "$rank" "$cat" "$cmd" "$(command_description "$cmd")" >> "$tmp"
       shown=1
     fi
   done
@@ -375,41 +423,72 @@ show_commands() {
   if [[ "$shown" -eq 0 && -n "$normalized" ]]; then
     for cmd in "${COMMANDS[@]}"; do
       if [[ "${cmd#/}" == *"$normalized"* ]]; then
-        printf '  %-48s %s\n' "$cmd" "$(command_description "$cmd")"
+        cat="$(command_category "$cmd")"
+        rank="$(category_rank "$cat")"
+        printf '%s\t%s\t%s\t%s\n' "$rank" "$cat" "$cmd" "$(command_description "$cmd")" >> "$tmp"
         shown=1
       fi
     done
   fi
 
   if [[ "$shown" -eq 0 ]]; then
+    rm -f "$tmp"
     echo "No slash commands match: $prefix"
     echo "Tip: type / to list commands."
+    return
   fi
+
+  sort -t $'\t' -k1,1n -k3,3 "$tmp" | awk -F '\t' '
+    BEGIN { prev="" }
+    {
+      if ($2 != prev) {
+        if (prev != "") print ""
+        printf("[%s]\n", $2)
+        prev=$2
+      }
+      printf("  %-48s %s\n", $3, $4)
+    }
+  '
+  rm -f "$tmp"
 }
 
 pick_command_interactive() {
   local selection=""
-  local line
+  local cat rank
+  local tmp
+  tmp="$(mktemp)"
+  for cmd in "${COMMANDS[@]}"; do
+    cat="$(command_category "$cmd")"
+    rank="$(category_rank "$cat")"
+    printf '%s\t%s\t%s\t%s\n' "$rank" "$cat" "$cmd" "$(command_description "$cmd")" >> "$tmp"
+  done
+
   if command -v fzf >/dev/null 2>&1; then
     selection="$(
-      for cmd in "${COMMANDS[@]}"; do
-        printf '%s\t%s\n' "$cmd" "$(command_description "$cmd")"
-      done | fzf --prompt='slash> ' --height=50% --layout=reverse --border --with-nth=1,2 --delimiter=$'\t' --preview 'echo {2}' --preview-window=down:3:wrap || true
+      sort -t $'\t' -k1,1n -k3,3 "$tmp" | awk -F '\t' '{ printf("[%s]\t%s\t%s\n", $2, $3, $4) }' \
+      | fzf --prompt='slash> ' --height=55% --layout=reverse --border --with-nth=1,2,3 --delimiter=$'\t' --preview 'echo {3}' --preview-window=down:3:wrap || true
     )"
-    selection="${selection%%$'\t'*}"
+    selection="$(printf '%s' "$selection" | cut -f2)"
   else
     echo "Interactive menu (fzf not installed, using numbered picker):" >&2
     local i=1
-    local cmd
-    for cmd in "${COMMANDS[@]}"; do
-      printf '%2d) %-48s %s\n' "$i" "$cmd" "$(command_description "$cmd")" >&2
+    local prev_cat=""
+    while IFS=$'\t' read -r rank cat cmd desc; do
+      if [[ "$cat" != "$prev_cat" ]]; then
+        echo >&2
+        printf '[%s]\n' "$cat" >&2
+        prev_cat="$cat"
+      fi
+      printf '%2d) %-48s %s\n' "$i" "$cmd" "$desc" >&2
+      OT_TAB_MATCHES[$((i-1))]="$cmd"
       i=$((i + 1))
-    done
+    done < <(sort -t $'\t' -k1,1n -k3,3 "$tmp")
     read -r -p "Choice [1-$((i-1))]: " choice >&2
     if [[ "${choice:-}" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice < i )); then
-      selection="${COMMANDS[$((choice-1))]}"
+      selection="${OT_TAB_MATCHES[$((choice-1))]}"
     fi
   fi
+  rm -f "$tmp"
   printf '%s' "$selection"
 }
 
