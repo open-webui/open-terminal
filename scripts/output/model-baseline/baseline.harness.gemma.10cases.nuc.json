@@ -1,0 +1,91 @@
+{
+  "report_type": "open-terminal-model-baseline",
+  "generated_at": "2026-05-11T15:44:28Z",
+  "cases_path": "scripts/model_baseline_cases.json",
+  "mode": "harness",
+  "models": {
+    "gemma": {
+      "status": "ok",
+      "endpoint": "via-codex-gemma",
+      "model_id": "codex-gemma-policy-path",
+      "summary": {
+        "passed": 10,
+        "total": 10,
+        "compliance_percent": 100.0,
+        "avg_latency_ms": 5011
+      },
+      "results": [
+        {
+          "case_id": "codeblock_only",
+          "ok": true,
+          "latency_ms": 1889,
+          "detail": "ok",
+          "output_preview": "```python\\ndef add(a: int, b: int) -> int:\\n    return a + b\\n\\nassert add(2, 3) == 5\\n```"
+        },
+        {
+          "case_id": "codeblock_factorial",
+          "ok": true,
+          "latency_ms": 4875,
+          "detail": "ok",
+          "output_preview": "```python\\ndef factorial(n: int) -> int:\\n    if not isinstance(n, int):\\n        raise TypeError(\"Input must be an integer.\")\\n    if n < 0:\\n        raise ValueError(\"Input must be a "
+        },
+        {
+          "case_id": "group_anagrams_contract",
+          "ok": true,
+          "latency_ms": 16056,
+          "detail": "ok",
+          "output_preview": "```python\\nfrom collections import OrderedDict\\n\\ndef group_anagrams(words: list[str]) -> list[list[str]]:\\n    \"\"\"\\n    Groups anagrams together while preserving original word order wi"
+        },
+        {
+          "case_id": "group_anagrams_contract_repeat",
+          "ok": true,
+          "latency_ms": 16562,
+          "detail": "ok",
+          "output_preview": "```python\\nfrom collections import OrderedDict\\n\\ndef group_anagrams(words: list[str]) -> list[list[str]]:\\n    \"\"\"\\n    Groups anagrams together from a list of words.\\n    \\n    Groups a"
+        },
+        {
+          "case_id": "exact_literal",
+          "ok": true,
+          "latency_ms": 887,
+          "detail": "ok",
+          "output_preview": "OK_7F3C"
+        },
+        {
+          "case_id": "exact_literal_alt",
+          "ok": true,
+          "latency_ms": 736,
+          "detail": "ok",
+          "output_preview": "PASS_TOKEN_91A"
+        },
+        {
+          "case_id": "exact_literal_short",
+          "ok": true,
+          "latency_ms": 503,
+          "detail": "ok",
+          "output_preview": "A1"
+        },
+        {
+          "case_id": "codeblock_sum_list",
+          "ok": true,
+          "latency_ms": 2768,
+          "detail": "ok",
+          "output_preview": "```python\\ndef sum_positive(nums: list[int]) -> int:\\n    return sum(x for x in nums if x > 0)\\n\\nassert sum_positive([-1, 2, -3, 4, 0, 5]) == 11\\n```"
+        },
+        {
+          "case_id": "codeblock_reverse_words",
+          "ok": true,
+          "latency_ms": 2276,
+          "detail": "ok",
+          "output_preview": "```python\\ndef reverse_words(s: str) -> str:\\n    return \" \".join(s.split()[::-1])\\n\\nassert reverse_words(\"the sky is blue\") == \"blue is sky the\"\\n```"
+        },
+        {
+          "case_id": "codeblock_palindrome",
+          "ok": true,
+          "latency_ms": 3564,
+          "detail": "ok",
+          "output_preview": "```python\\ndef is_palindrome(s: str) -> bool:\\n    \"\"\"Checks if a string is a palindrome.\"\"\"\\n    clean_s = \"\".join(char.lower() for char in s if char.isalnum())\\n    return clean_s =="
+        }
+      ]
+    }
+  }
+}
