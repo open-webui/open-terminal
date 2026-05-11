@@ -5,7 +5,8 @@ GEMMA_ENDPOINT="${GEMMA_ENDPOINT:-http://127.0.0.1:8000/v1}"
 GEMMA_UNIT="${GEMMA_UNIT:-z490-gemma-llama.service}"
 CG_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/open-terminal"
 CG_TRACE_FILE="${CG_STATE_DIR}/codex-gemma-trace.log"
-mkdir -p "$CG_STATE_DIR"
+CG_JOBS_DIR="${CG_STATE_DIR}/codex-gemma-jobs"
+mkdir -p "$CG_STATE_DIR" "$CG_JOBS_DIR"
 touch "$CG_TRACE_FILE"
 
 usage() {
@@ -17,6 +18,10 @@ Usage:
   codex-gemma models
   codex-gemma ask "your prompt"
   codex-gemma ask --file /path/to/prompt.txt
+  codex-gemma orchestrate "task" [--max-refine N] [--async]
+  codex-gemma jobs
+  codex-gemma status-job <job_id>
+  codex-gemma wait <job_id>
   codex-gemma follow
   codex-gemma watch "your prompt"
   codex-gemma watch --file /path/to/prompt.txt
@@ -27,6 +32,7 @@ Usage:
 Env overrides:
   GEMMA_ENDPOINT (default: http://127.0.0.1:8000/v1)
   GEMMA_UNIT     (default: z490-gemma-llama.service)
+  CODEX_GEMMA_NOTIFY_CMD (optional completion hook; receives "<job_id> <status>")
 EOF
 }
 
@@ -51,22 +57,27 @@ models_cmd() {
   echo
 }
 
-ask_cmd() {
+read_prompt_arg() {
   local prompt=""
   if [[ "${1:-}" == "--file" ]]; then
     if [[ -z "${2:-}" || ! -f "$2" ]]; then
-      echo "Missing prompt file."
-      exit 1
+      echo "Missing prompt file." >&2
+      return 1
     fi
     prompt="$(cat "$2")"
   else
     prompt="${1:-}"
   fi
-
   if [[ -z "$prompt" ]]; then
-    echo "Prompt is empty."
-    exit 1
+    echo "Prompt is empty." >&2
+    return 1
   fi
+  printf '%s\n' "$prompt"
+}
+
+ask_cmd() {
+  local prompt
+  prompt="$(read_prompt_arg "${1:-}" "${2:-}")" || exit 1
 
   local model
   model="$(curl -fsS "${GEMMA_ENDPOINT%/}/models" | python3 -c '
@@ -122,22 +133,259 @@ append_trace() {
   } >> "$CG_TRACE_FILE"
 }
 
-watch_cmd() {
-  local prompt=""
-  if [[ "${1:-}" == "--file" ]]; then
-    if [[ -z "${2:-}" || ! -f "$2" ]]; then
-      echo "Missing prompt file."
-      exit 1
-    fi
-    prompt="$(cat "$2")"
-  else
-    prompt="${1:-}"
-  fi
+job_meta_file() { printf '%s/%s.meta\n' "$CG_JOBS_DIR" "$1"; }
+job_log_file() { printf '%s/%s.log\n' "$CG_JOBS_DIR" "$1"; }
+job_result_file() { printf '%s/%s.result.md\n' "$CG_JOBS_DIR" "$1"; }
 
-  if [[ -z "$prompt" ]]; then
-    echo "Prompt is empty."
+job_set_status() {
+  local job_id="$1"
+  local status="$2"
+  local meta
+  meta="$(job_meta_file "$job_id")"
+  if [[ -f "$meta" ]]; then
+    awk -v s="$status" '
+      BEGIN{done=0}
+      /^status=/{print "status=" s; done=1; next}
+      {print}
+      END{if(!done) print "status=" s}
+    ' "$meta" > "${meta}.tmp"
+    mv "${meta}.tmp" "$meta"
+  fi
+}
+
+notify_completion() {
+  local job_id="$1"
+  local status="$2"
+  if [[ -n "${CODEX_GEMMA_NOTIFY_CMD:-}" ]]; then
+    bash -lc "$CODEX_GEMMA_NOTIFY_CMD \"$job_id\" \"$status\"" >/dev/null 2>&1 || true
+  fi
+  if command -v notify-send >/dev/null 2>&1; then
+    notify-send "codex-gemma job $status" "$job_id" >/dev/null 2>&1 || true
+  fi
+}
+
+orchestrate_run() {
+  local job_id="$1"
+  local task="$2"
+  local max_refine="$3"
+  local result_file
+  result_file="$(job_result_file "$job_id")"
+
+  append_trace "ORCH[$job_id] STEP" "PLAN"
+  local plan_prompt
+  plan_prompt=$'You are a worker model. Create a concise implementation plan for this task.\n\nTask:\n'"$task"$'\n\nOutput: 3-7 bullet points.'
+  local plan
+  plan="$(ask_cmd "$plan_prompt")"
+
+  append_trace "ORCH[$job_id] STEP" "IMPLEMENT"
+  local impl_prompt
+  impl_prompt=$'Implement the task below.\n\nTask:\n'"$task"$'\n\nOutput the implementation directly.'
+  local output
+  output="$(ask_cmd "$impl_prompt")"
+
+  local refine=0
+  while (( refine < max_refine )); do
+    append_trace "ORCH[$job_id] STEP" "SELF-CHECK $((refine+1))"
+    local check_prompt
+    check_prompt=$'Evaluate whether this output satisfies the task. Respond ONLY PASS or FAIL.\n\nTask:\n'"$task"$'\n\nOutput:\n'"$output"
+    local verdict
+    verdict="$(ask_cmd "$check_prompt" | tr -d '\r' | head -n 1)"
+    if [[ "$verdict" == "PASS" ]]; then
+      break
+    fi
+    append_trace "ORCH[$job_id] STEP" "REFINE $((refine+1))"
+    local refine_prompt
+    refine_prompt=$'Revise the output to fully satisfy the task.\n\nTask:\n'"$task"$'\n\nCurrent output:\n'"$output"$'\n\nReturn improved output only.'
+    output="$(ask_cmd "$refine_prompt")"
+    refine=$((refine + 1))
+  done
+
+  printf '%s\n' "$output" > "$result_file"
+}
+
+orchestrate_background() {
+  local job_id="$1"
+  local task="$2"
+  local max_refine="$3"
+  local log_file
+  log_file="$(job_log_file "$job_id")"
+  local rc=0
+  set +e
+  {
+    echo "job_id=$job_id"
+    echo "started_at=$(date -Is)"
+    orchestrate_run "$job_id" "$task" "$max_refine"
+    echo "finished_at=$(date -Is)"
+  } >"$log_file" 2>&1
+  rc=$?
+  set -e
+  if [[ "$rc" -eq 0 ]]; then
+    job_set_status "$job_id" "done"
+    append_trace "ORCH[$job_id] DONE" "result_file=$(job_result_file "$job_id")"
+    notify_completion "$job_id" "done"
+    return 0
+  fi
+  job_set_status "$job_id" "failed"
+  append_trace "ORCH[$job_id] FAILED" "log_file=$log_file rc=$rc"
+  notify_completion "$job_id" "failed"
+  return 1
+}
+
+orchestrate_cmd() {
+  local task=""
+  local max_refine=1
+  local async=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --max-refine)
+        shift
+        max_refine="${1:-1}"
+        ;;
+      --async)
+        async=1
+        ;;
+      *)
+        if [[ -z "$task" ]]; then
+          task="$1"
+        else
+          task="$task $1"
+        fi
+        ;;
+    esac
+    shift || true
+  done
+  if [[ -z "$task" ]]; then
+    echo "Usage: codex-gemma orchestrate \"task\" [--max-refine N] [--async]"
     exit 1
   fi
+  if ! [[ "$max_refine" =~ ^[0-9]+$ ]]; then
+    echo "max-refine must be a non-negative integer."
+    exit 1
+  fi
+
+  local job_id meta
+  job_id="job-$(date +%Y%m%d-%H%M%S)-$RANDOM"
+  meta="$(job_meta_file "$job_id")"
+  {
+    echo "job_id=$job_id"
+    echo "status=running"
+    echo "created_at=$(date -Is)"
+    echo "max_refine=$max_refine"
+    echo "task=$(printf '%q' "$task")"
+  } > "$meta"
+
+  append_trace "ORCH[$job_id] START" "$task"
+
+  if [[ "$async" -eq 1 ]]; then
+    local task_b64 unit
+    task_b64="$(python3 - "$task" <<'PY'
+import base64,sys
+print(base64.b64encode(sys.argv[1].encode("utf-8")).decode("ascii"))
+PY
+)"
+    unit="codex-gemma-job-${job_id}.service"
+    if ! systemd-run --user --unit "$unit" --collect \
+      "$0" _run-job "$job_id" "$max_refine" "$task_b64" >/dev/null; then
+      echo "Failed to start async job via systemd-run."
+      exit 1
+    fi
+    echo "unit=$unit" >> "$meta"
+    echo "job_id=$job_id"
+    echo "unit=$unit"
+    echo "status=running"
+    echo "log=$(job_log_file "$job_id")"
+    echo "follow: codex-gemma follow"
+    echo "status-check: codex-gemma status-job $job_id"
+    return 0
+  fi
+
+  if orchestrate_background "$job_id" "$task" "$max_refine"; then
+    echo "job_id=$job_id"
+    echo "status=done"
+    echo "result=$(job_result_file "$job_id")"
+  else
+    echo "job_id=$job_id"
+    echo "status=failed"
+    echo "log=$(job_log_file "$job_id")"
+    return 1
+  fi
+}
+
+jobs_cmd() {
+  local meta id status created
+  shopt -s nullglob
+  for meta in "$CG_JOBS_DIR"/*.meta; do
+    id="$(basename "$meta" .meta)"
+    status="$(sed -n 's/^status=//p' "$meta" | tail -n1)"
+    created="$(sed -n 's/^created_at=//p' "$meta" | tail -n1)"
+    echo "$id status=${status:-unknown} created_at=${created:-unknown}"
+  done
+  shopt -u nullglob
+}
+
+status_job_cmd() {
+  local job_id="${1:-}"
+  if [[ -z "$job_id" ]]; then
+    echo "Usage: codex-gemma status-job <job_id>"
+    exit 1
+  fi
+  local meta
+  meta="$(job_meta_file "$job_id")"
+  if [[ ! -f "$meta" ]]; then
+    echo "Job not found: $job_id"
+    exit 1
+  fi
+  cat "$meta"
+  local result log
+  result="$(job_result_file "$job_id")"
+  log="$(job_log_file "$job_id")"
+  [[ -f "$result" ]] && echo "result_file=$result"
+  [[ -f "$log" ]] && echo "log_file=$log"
+}
+
+wait_cmd() {
+  local job_id="${1:-}"
+  if [[ -z "$job_id" ]]; then
+    echo "Usage: codex-gemma wait <job_id>"
+    exit 1
+  fi
+  local meta status
+  meta="$(job_meta_file "$job_id")"
+  if [[ ! -f "$meta" ]]; then
+    echo "Job not found: $job_id"
+    exit 1
+  fi
+  while true; do
+    status="$(sed -n 's/^status=//p' "$meta" | tail -n1)"
+    if [[ "$status" == "done" || "$status" == "failed" ]]; then
+      echo "job_id=$job_id status=$status"
+      status_job_cmd "$job_id"
+      [[ "$status" == "done" ]] && return 0 || return 1
+    fi
+    sleep 2
+  done
+}
+
+run_job_cmd() {
+  local job_id="${1:-}"
+  local max_refine="${2:-1}"
+  local task_b64="${3:-}"
+  if [[ -z "$job_id" || -z "$task_b64" ]]; then
+    echo "Usage: codex-gemma _run-job <job_id> <max_refine> <task_b64>"
+    exit 1
+  fi
+  local task
+  task="$(python3 - "$task_b64" <<'PY'
+import base64,sys
+print(base64.b64decode(sys.argv[1]).decode("utf-8"))
+PY
+)"
+  orchestrate_background "$job_id" "$task" "$max_refine"
+}
+
+watch_cmd() {
+  local prompt
+  prompt="$(read_prompt_arg "${1:-}" "${2:-}")" || exit 1
 
   local tmp_log
   tmp_log="$(mktemp)"
@@ -184,6 +432,23 @@ main() {
     ask)
       shift || true
       ask_cmd "$@"
+      ;;
+    orchestrate)
+      shift || true
+      orchestrate_cmd "$@"
+      ;;
+    jobs) jobs_cmd ;;
+    status-job)
+      shift || true
+      status_job_cmd "${1:-}"
+      ;;
+    _run-job)
+      shift || true
+      run_job_cmd "${1:-}" "${2:-}" "${3:-}"
+      ;;
+    wait)
+      shift || true
+      wait_cmd "${1:-}"
       ;;
     follow) follow_cmd ;;
     watch)
