@@ -2,6 +2,7 @@
 import argparse
 import json
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -111,6 +112,12 @@ def cmd_run(args, targets, default):
     command = " ".join(parts).strip()
     if not command:
         raise SystemExit("Missing command.")
+    if args.node_bin:
+        command = f"export PATH={shlex.quote(args.node_bin)}:$PATH; {command}"
+    if args.source_env:
+        command = f"set -a; source {shlex.quote(args.source_env)}; set +a; {command}"
+    if args.login_shell or args.source_env:
+        command = f"bash -lc {shlex.quote(command)}"
     body = {"command": command}
     if args.cwd:
         body["cwd"] = args.cwd
@@ -184,6 +191,9 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--wait", type=float, default=120.0)
     run.add_argument("--tail", type=int, default=300)
     run.add_argument("--cwd", help="Override cwd for this run")
+    run.add_argument("--login-shell", action="store_true", help="Wrap command with bash -lc")
+    run.add_argument("--source-env", help="Remote env file path to source before command")
+    run.add_argument("--node-bin", help="Remote node bin path prepended to PATH (for nvm installs)")
     run.add_argument("command", nargs=argparse.REMAINDER)
 
     read = sub.add_parser("read", help="Read remote file")

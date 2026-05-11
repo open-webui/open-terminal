@@ -98,6 +98,24 @@ Run command:
 scripts/otx --target nuc run -- "git status"
 ```
 
+Run command in login shell (recommended when target relies on shell profile setup):
+
+```bash
+scripts/otx --target nuc run --login-shell -- "node -v"
+```
+
+Run Node/NPM command on NVM-based target without editing system PATH:
+
+```bash
+scripts/otx --target nuc run --login-shell --node-bin /home/trotsky/.nvm/versions/node/v22.22.0/bin -- "npm -v"
+```
+
+Source a remote env file before execution (keeps secrets on the target host):
+
+```bash
+scripts/otx --target nuc run --source-env /home/trotsky/.local/share/ba-midnight/probe-wallet-seed.env --node-bin /home/trotsky/.nvm/versions/node/v22.22.0/bin -- "cd /home/trotsky/Projects/ba-midnight/midnight-gateway && npm run -s probe:wallet-sdk-dust-sync-diagnostics"
+```
+
 Read file:
 
 ```bash
