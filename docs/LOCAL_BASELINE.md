@@ -59,6 +59,10 @@ This document defines the local, standalone baseline for OpenTerminal as an agen
   - single-model lock default `on` (prevents cross-model fallback by default)
   - optional fallback routing to Qwen endpoint on strict failure only when explicitly enabled
   - deterministic trace logging in `~/.local/state/open-terminal/codex-gemma-trace.log`
+- Explicit benchmark profile (via `codex-gemma benchmark`):
+  - discoverable benchmark-only command surface
+  - can target `gemma` or `qwen2`
+  - disables single-model lock for controlled benchmark sessions only
 
 ## Known Limitations
 

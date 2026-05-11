@@ -22,6 +22,8 @@ Usage:
   codex-gemma models
   codex-gemma ask [--policy strict|off] [--retries N] [--fallback none|qwen2] [--single-model-lock on|off] "your prompt"
   codex-gemma ask --file /path/to/prompt.txt
+  codex-gemma benchmark [--retries N] [--target gemma|qwen2] "your prompt"
+  codex-gemma benchmark --file /path/to/prompt.txt
   codex-gemma orchestrate "task" [--max-refine N] [--async]
   codex-gemma jobs
   codex-gemma status-job <job_id>
@@ -294,6 +296,36 @@ ask_cmd() {
     echo "Last validation error: $validation_msg"
   fi
   return 1
+}
+
+benchmark_cmd() {
+  local retries="$CODEX_GEMMA_MAX_RETRIES"
+  local target="qwen2"
+  local args=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --retries) shift; retries="${1:-2}" ;;
+      --target) shift; target="${1:-qwen2}" ;;
+      *) args+=("$1") ;;
+    esac
+    shift || true
+  done
+  if ! [[ "$retries" =~ ^[0-9]+$ ]]; then
+    echo "Invalid --retries value: $retries" >&2
+    return 1
+  fi
+  if [[ "$target" != "gemma" && "$target" != "qwen2" ]]; then
+    echo "Invalid --target value: $target (expected gemma|qwen2)" >&2
+    return 1
+  fi
+
+  append_trace "BENCHMARK_MODE" "target=$target retries=$retries single_model_lock=off fallback=$([[ "$target" == "qwen2" ]] && echo qwen2 || echo none)"
+
+  if [[ "$target" == "qwen2" ]]; then
+    ask_cmd --policy strict --retries "$retries" --fallback qwen2 --single-model-lock off "${args[@]}"
+  else
+    ask_cmd --policy strict --retries "$retries" --fallback none --single-model-lock off "${args[@]}"
+  fi
 }
 
 start_cmd() { systemctl --user start "$GEMMA_UNIT"; }
@@ -610,6 +642,10 @@ main() {
     ask)
       shift || true
       ask_cmd "$@"
+      ;;
+    benchmark)
+      shift || true
+      benchmark_cmd "$@"
       ;;
     orchestrate)
       shift || true
