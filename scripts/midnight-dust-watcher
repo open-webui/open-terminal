@@ -1,0 +1,168 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+midnight-dust-watcher
+
+Polls dust readiness and triggers fee-bearing deploy when spendable DUST appears.
+
+Usage:
+  scripts/midnight-dust-watcher --repo PATH [options]
+
+Options:
+  --repo PATH               Midnight gateway repo path (required)
+  --interval-sec N          Poll interval seconds (default: 120)
+  --max-minutes N           Total watch window minutes (default: 240)
+  --timeout-ms N            Sync probe timeout ms (default: 120000)
+  --deploy-timeout-ms N     Deploy probe timeout ms (default: 180000)
+  --state-dir PATH          Output dir (default: ~/.local/state/open-terminal/midnight-dust-watch)
+  --env-file PATH           Optional env file to source
+  -h, --help                Show help
+EOF
+}
+
+REPO=""
+INTERVAL_SEC=120
+MAX_MINUTES=240
+SYNC_TIMEOUT_MS=120000
+DEPLOY_TIMEOUT_MS=180000
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/open-terminal/midnight-dust-watch"
+ENV_FILE=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --repo) REPO="${2:-}"; shift 2 ;;
+    --interval-sec) INTERVAL_SEC="${2:-}"; shift 2 ;;
+    --max-minutes) MAX_MINUTES="${2:-}"; shift 2 ;;
+    --timeout-ms) SYNC_TIMEOUT_MS="${2:-}"; shift 2 ;;
+    --deploy-timeout-ms) DEPLOY_TIMEOUT_MS="${2:-}"; shift 2 ;;
+    --state-dir) STATE_DIR="${2:-}"; shift 2 ;;
+    --env-file) ENV_FILE="${2:-}"; shift 2 ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "Unknown argument: $1" >&2; usage; exit 2 ;;
+  esac
+done
+
+if [[ -z "$REPO" ]]; then
+  echo "--repo is required" >&2
+  usage
+  exit 2
+fi
+if [[ ! -d "$REPO" ]]; then
+  echo "repo not found: $REPO" >&2
+  exit 2
+fi
+if [[ ! -f "$REPO/package.json" ]]; then
+  echo "package.json not found in repo: $REPO" >&2
+  exit 2
+fi
+if [[ -n "$ENV_FILE" ]]; then
+  if [[ ! -f "$ENV_FILE" ]]; then
+    echo "env file not found: $ENV_FILE" >&2
+    exit 2
+  fi
+  # shellcheck disable=SC1090
+  set -a; source "$ENV_FILE"; set +a
+fi
+
+mkdir -p "$STATE_DIR"
+RUN_ID="$(date +%Y%m%d-%H%M%S)"
+LOG_JSONL="$STATE_DIR/watch-$RUN_ID.jsonl"
+RAW_DIR="$STATE_DIR/raw-$RUN_ID"
+mkdir -p "$RAW_DIR"
+
+export MIDNIGHT_WALLET_SDK_FEE_BLOCKS_MARGIN="${MIDNIGHT_WALLET_SDK_FEE_BLOCKS_MARGIN:-2}"
+export MIDNIGHT_WALLET_SDK_COMPONENT_SYNC_TIMEOUT_MS="$SYNC_TIMEOUT_MS"
+
+START_EPOCH="$(date +%s)"
+END_EPOCH="$((START_EPOCH + MAX_MINUTES * 60))"
+LOOP=0
+
+json_quote() {
+  python3 - <<'PY' "$1"
+import json,sys
+print(json.dumps(sys.argv[1]))
+PY
+}
+
+parse_sync_probe() {
+  python3 - <<'PY' "$1"
+import json,re,sys
+text=open(sys.argv[1],encoding='utf-8',errors='ignore').read()
+m=re.search(r'\{[\s\S]*\}\s*$', text)
+if not m:
+    print("0\t0\t\tparse_error")
+    sys.exit(0)
+blob=m.group(0)
+try:
+    d=json.loads(blob)
+except Exception:
+    print("0\t0\t\tparse_error")
+    sys.exit(0)
+available=d.get("availableCoinCount",0)
+pending=d.get("pendingCoinCount",0)
+balance=d.get("dustBalanceNow","")
+blocker=d.get("topBlocker","")
+print(f"{available}\t{pending}\t{balance}\t{blocker}")
+PY
+}
+
+parse_deploy_probe() {
+  python3 - <<'PY' "$1"
+import json,re,sys
+text=open(sys.argv[1],encoding='utf-8',errors='ignore').read()
+m=re.search(r'\{[\s\S]*\}\s*$', text)
+if not m:
+    print("unknown\tparse_error\t")
+    sys.exit(0)
+blob=m.group(0)
+try:
+    d=json.loads(blob)
+except Exception:
+    print("unknown\tparse_error\t")
+    sys.exit(0)
+state=d.get("deployState","unknown")
+blocker=d.get("topBlocker","")
+addr=(d.get("result") or {}).get("contractAddress","")
+print(f"{state}\t{blocker}\t{addr}")
+PY
+}
+
+cd "$REPO"
+
+while [[ "$(date +%s)" -lt "$END_EPOCH" ]]; do
+  LOOP=$((LOOP + 1))
+  TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  RAW_SYNC="$RAW_DIR/sync-$LOOP.log"
+
+  npm run -s probe:wallet-sdk-dust-sync-diagnostics >"$RAW_SYNC" 2>&1 || true
+  IFS=$'\t' read -r AVAILABLE PENDING BALANCE BLOCKER < <(parse_sync_probe "$RAW_SYNC")
+
+  printf '{"ts":"%s","loop":%s,"available":%s,"pending":%s,"balance":%s,"blocker":%s}\n' \
+    "$TS" "$LOOP" "${AVAILABLE:-0}" "${PENDING:-0}" "$(json_quote "${BALANCE:-}")" "$(json_quote "${BLOCKER:-}")" \
+    >> "$LOG_JSONL"
+
+  if [[ "${AVAILABLE:-0}" =~ ^[0-9]+$ ]] && [[ "${AVAILABLE:-0}" -gt 0 ]]; then
+    RAW_DEPLOY="$RAW_DIR/deploy-$LOOP.log"
+    npm run -s probe:wallet-sdk-fee-bearing-deploy -- --timeout-ms "$DEPLOY_TIMEOUT_MS" >"$RAW_DEPLOY" 2>&1 || true
+    IFS=$'\t' read -r DEPLOY_STATE DEPLOY_BLOCKER CONTRACT_ADDR < <(parse_deploy_probe "$RAW_DEPLOY")
+    TS2="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf '{"ts":"%s","loop":%s,"event":"deploy_attempt","deployState":%s,"topBlocker":%s,"contractAddress":%s,"rawPath":%s}\n' \
+      "$TS2" "$LOOP" "$(json_quote "$DEPLOY_STATE")" "$(json_quote "$DEPLOY_BLOCKER")" "$(json_quote "$CONTRACT_ADDR")" "$(json_quote "$RAW_DEPLOY")" \
+      >> "$LOG_JSONL"
+    if [[ "$DEPLOY_STATE" == "wallet-sdk-fee-bearing-deploy-succeeded" ]]; then
+      echo "SUCCESS log=$LOG_JSONL"
+      exit 0
+    fi
+    echo "DEPLOY_REVIEW_REQUIRED log=$LOG_JSONL"
+    exit 1
+  fi
+
+  sleep "$INTERVAL_SEC"
+done
+
+TS3="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+printf '{"ts":"%s","event":"timeout","maxMinutes":%s,"lastLoop":%s}\n' "$TS3" "$MAX_MINUTES" "$LOOP" >> "$LOG_JSONL"
+echo "TIMEOUT log=$LOG_JSONL"
+exit 2
