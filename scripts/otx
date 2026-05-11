@@ -1,0 +1,242 @@
+#!/usr/bin/env python3
+import argparse
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.parse
+import urllib.request
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+
+DEFAULT_CONFIG = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "open-terminal" / "targets.json"
+
+
+@dataclass
+class Target:
+    name: str
+    base_url: str
+    api_key: str
+    cwd: str | None = None
+    session_id: str | None = None
+
+
+def _load_json(path: Path) -> dict[str, Any]:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def load_targets(path: Path) -> tuple[dict[str, Target], str]:
+    if not path.exists():
+        raise FileNotFoundError(f"Missing config: {path}")
+    raw = _load_json(path)
+    default = str(raw.get("default") or "")
+    targets_raw = raw.get("targets") or {}
+    out: dict[str, Target] = {}
+    for name, cfg in targets_raw.items():
+        out[name] = Target(
+            name=name,
+            base_url=str(cfg["base_url"]).rstrip("/"),
+            api_key=str(cfg["api_key"]),
+            cwd=cfg.get("cwd"),
+            session_id=cfg.get("session_id"),
+        )
+    return out, default
+
+
+def req(target: Target, method: str, path: str, query: dict[str, Any] | None = None, body: dict[str, Any] | None = None):
+    url = target.base_url + path
+    if query:
+        q = urllib.parse.urlencode({k: v for k, v in query.items() if v is not None})
+        url = f"{url}?{q}"
+    headers = {"Authorization": f"Bearer {target.api_key}"}
+    if target.session_id:
+        headers["X-Session-Id"] = target.session_id
+    data = None
+    if body is not None:
+        headers["Content-Type"] = "application/json"
+        data = json.dumps(body).encode("utf-8")
+    request = urllib.request.Request(url=url, method=method, headers=headers, data=data)
+    with urllib.request.urlopen(request, timeout=300) as resp:
+        raw = resp.read()
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except Exception:
+        return raw.decode("utf-8", errors="replace")
+
+
+def print_execute_output(obj: dict[str, Any]) -> None:
+    for item in obj.get("output") or []:
+        typ = item.get("type", "output")
+        data = item.get("data", "")
+        prefix = "" if typ == "stdout" else f"[{typ}] "
+        sys.stdout.write(prefix + data)
+    if obj.get("status") in {"done", "killed"}:
+        code = obj.get("exit_code")
+        print(f"\n[exit_code={code}]")
+
+
+def cmd_targets(args, targets, default):
+    for name, t in targets.items():
+        marker = "*" if name == default else " "
+        print(f"{marker} {name:8} {t.base_url} cwd={t.cwd or '-'} session={t.session_id or '-'}")
+
+
+def resolve_target(args, targets, default) -> Target:
+    name = args.target or default
+    if not name:
+        raise SystemExit("No target selected. Set default in targets.json or pass --target.")
+    if name not in targets:
+        raise SystemExit(f"Unknown target: {name}")
+    return targets[name]
+
+
+def cmd_health(args, targets, default):
+    t = resolve_target(args, targets, default)
+    url = t.base_url + "/health"
+    with urllib.request.urlopen(url, timeout=10) as resp:
+        print(resp.read().decode("utf-8", errors="replace"))
+
+
+def cmd_run(args, targets, default):
+    t = resolve_target(args, targets, default)
+    parts = list(args.command)
+    if parts and parts[0] == "--":
+      parts = parts[1:]
+    command = " ".join(parts).strip()
+    if not command:
+        raise SystemExit("Missing command.")
+    body = {"command": command}
+    if args.cwd:
+        body["cwd"] = args.cwd
+    elif t.cwd:
+        body["cwd"] = t.cwd
+    obj = req(t, "POST", "/execute", query={"wait": args.wait, "tail": args.tail}, body=body)
+    print_execute_output(obj)
+    return 0 if obj.get("exit_code") in (None, 0) else int(obj.get("exit_code") or 1)
+
+
+def cmd_read(args, targets, default):
+    t = resolve_target(args, targets, default)
+    obj = req(t, "GET", "/files/read", query={"path": args.path, "start_line": args.start_line, "end_line": args.end_line})
+    print(obj.get("content", ""))
+
+
+def cmd_write(args, targets, default):
+    t = resolve_target(args, targets, default)
+    content = Path(args.file).read_text(encoding="utf-8") if args.file else args.text
+    if content is None:
+        raise SystemExit("Use --text or --file.")
+    req(t, "POST", "/files/write", body={"path": args.path, "content": content})
+    print("ok")
+
+
+def cmd_edit(args, targets, default):
+    t = resolve_target(args, targets, default)
+    before = req(t, "GET", "/files/read", query={"path": args.path}).get("content", "")
+    editor = os.environ.get("EDITOR", "nano")
+    with tempfile.TemporaryDirectory(prefix="otx-edit-") as td:
+        local = Path(td) / Path(args.path).name
+        local.write_text(before, encoding="utf-8")
+        subprocess.run([editor, str(local)], check=False)
+        after = local.read_text(encoding="utf-8")
+    if after == before:
+        print("No changes.")
+        return
+    if args.diff:
+        import difflib
+        diff = difflib.unified_diff(before.splitlines(True), after.splitlines(True), fromfile=f"{args.path}:before", tofile=f"{args.path}:after")
+        sys.stdout.writelines(diff)
+        if not args.yes:
+            ans = input("Apply changes? [y/N] ").strip().lower()
+            if ans not in {"y", "yes"}:
+                print("Aborted.")
+                return
+    req(t, "POST", "/files/write", body={"path": args.path, "content": after})
+    print("Applied.")
+
+
+def cmd_logs(args, targets, default):
+    t = resolve_target(args, targets, default)
+    command = f"journalctl --user -u {args.unit} -n {args.lines} --no-pager"
+    body = {"command": command}
+    if t.cwd:
+        body["cwd"] = t.cwd
+    obj = req(t, "POST", "/execute", query={"wait": args.wait, "tail": args.tail}, body=body)
+    print_execute_output(obj)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(description="otx - OpenTerminal cross-host target router")
+    p.add_argument("--config", default=str(DEFAULT_CONFIG), help="Path to targets.json")
+    p.add_argument("--target", help="Target name override")
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    sub.add_parser("targets", help="List configured targets")
+    sub.add_parser("health", help="Health check selected target")
+
+    run = sub.add_parser("run", help="Run command on target via /execute")
+    run.add_argument("--wait", type=float, default=120.0)
+    run.add_argument("--tail", type=int, default=300)
+    run.add_argument("--cwd", help="Override cwd for this run")
+    run.add_argument("command", nargs=argparse.REMAINDER)
+
+    read = sub.add_parser("read", help="Read remote file")
+    read.add_argument("path")
+    read.add_argument("--start-line", type=int)
+    read.add_argument("--end-line", type=int)
+
+    write = sub.add_parser("write", help="Write remote file")
+    write.add_argument("path")
+    g = write.add_mutually_exclusive_group(required=True)
+    g.add_argument("--text")
+    g.add_argument("--file")
+
+    edit = sub.add_parser("edit", help="Edit remote file via local $EDITOR")
+    edit.add_argument("path")
+    edit.add_argument("--diff", action="store_true", default=True)
+    edit.add_argument("--yes", action="store_true", help="Apply without confirmation when --diff is shown")
+
+    logs = sub.add_parser("logs", help="Read user service logs on target")
+    logs.add_argument("--unit", default="open-terminal")
+    logs.add_argument("--lines", type=int, default=120)
+    logs.add_argument("--wait", type=float, default=30.0)
+    logs.add_argument("--tail", type=int, default=300)
+
+    return p
+
+
+def main() -> int:
+    parser = build_parser()
+    args = parser.parse_args()
+    targets, default = load_targets(Path(args.config))
+    if args.cmd == "targets":
+        cmd_targets(args, targets, default)
+        return 0
+    if args.cmd == "health":
+        cmd_health(args, targets, default)
+        return 0
+    if args.cmd == "run":
+        return cmd_run(args, targets, default)
+    if args.cmd == "read":
+        cmd_read(args, targets, default)
+        return 0
+    if args.cmd == "write":
+        cmd_write(args, targets, default)
+        return 0
+    if args.cmd == "edit":
+        cmd_edit(args, targets, default)
+        return 0
+    if args.cmd == "logs":
+        cmd_logs(args, targets, default)
+        return 0
+    return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

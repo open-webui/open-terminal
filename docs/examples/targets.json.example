@@ -1,0 +1,17 @@
+{
+  "default": "z490",
+  "targets": {
+    "z490": {
+      "base_url": "http://127.0.0.1:8010",
+      "api_key": "REPLACE_LOCAL_OPEN_TERMINAL_API_KEY",
+      "cwd": "/home/trotsky/Projects",
+      "session_id": "otx-z490"
+    },
+    "nuc": {
+      "base_url": "http://NUC_IP_OR_HOSTNAME:8010",
+      "api_key": "REPLACE_NUC_OPEN_TERMINAL_API_KEY",
+      "cwd": "/home/USER/Projects",
+      "session_id": "otx-nuc"
+    }
+  }
+}

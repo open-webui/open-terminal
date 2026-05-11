@@ -62,6 +62,7 @@ See local docs:
 
 - `docs/LOCAL_BASELINE.md`
 - `docs/SAFETY_BOUNDARIES.md`
+- `docs/OTX_ROUTER_SETUP.md` (cross-host target router from one CLI session)
 
 ### Docker (recommended)
 
