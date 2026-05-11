@@ -1,0 +1,18 @@
+[
+  {
+    "id": "codeblock_only",
+    "check": "exact_one_code_block",
+    "prompt": "Return exactly one runnable Python code block and nothing else. Write a function add(a: int, b: int) -> int and one assert test."
+  },
+  {
+    "id": "group_anagrams_contract",
+    "check": "group_anagrams_contract",
+    "prompt": "Return exactly one runnable Python code block and nothing else.\n\nImplement:\n\ndef group_anagrams(words: list[str]) -> list[list[str]]\n\nRequirements:\n- Group anagrams together.\n- Preserve original word order within each group.\n- Preserve group order by first appearance.\n- Case-insensitive grouping; preserve original casing in output.\n- Skip tokens that are empty or contain non-alphabetic characters.\n- Include docstring and type hints.\n- Include exactly 5 assert tests:\n  1) basic anagrams\n  2) mixed casing\n  3) duplicates\n  4) invalid tokens\n  5) empty input"
+  },
+  {
+    "id": "exact_literal",
+    "check": "exact_literal",
+    "literal": "OK_7F3C",
+    "prompt": "Print exactly this string and nothing else:\nOK_7F3C"
+  }
+]

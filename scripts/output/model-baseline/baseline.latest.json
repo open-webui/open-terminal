@@ -1,0 +1,46 @@
+{
+  "report_type": "open-terminal-model-baseline",
+  "generated_at": "2026-05-11T13:00:00Z",
+  "cases_path": "scripts/model_baseline_cases.json",
+  "models": {
+    "gemma": {
+      "status": "unreachable",
+      "endpoint": "http://127.0.0.1:8000/v1",
+      "error": "<urlopen error [Errno 111] Connection refused>"
+    },
+    "qwen2": {
+      "status": "ok",
+      "endpoint": "http://127.0.0.1:8091/v1",
+      "model_id": "Qwen3.6-27B-Q4_K_M.gguf",
+      "summary": {
+        "passed": 3,
+        "total": 3,
+        "compliance_percent": 100.0,
+        "avg_latency_ms": 10948
+      },
+      "results": [
+        {
+          "case_id": "codeblock_only",
+          "ok": true,
+          "latency_ms": 2458,
+          "detail": "ok",
+          "output_preview": "```python\\ndef add(a: int, b: int) -> int:\\n    return a + b\\n\\nassert add(2, 3) == 5\\n```"
+        },
+        {
+          "case_id": "group_anagrams_contract",
+          "ok": true,
+          "latency_ms": 29444,
+          "detail": "ok",
+          "output_preview": "```python\\ndef group_anagrams(words: list[str]) -> list[list[str]]:\\n    \"\"\"\\n    Group anagrams together from a list of words.\\n    \\n    - Anagrams are grouped case-insensitively.\\n   "
+        },
+        {
+          "case_id": "exact_literal",
+          "ok": true,
+          "latency_ms": 943,
+          "detail": "ok",
+          "output_preview": "OK_7F3C"
+        }
+      ]
+    }
+  }
+}
