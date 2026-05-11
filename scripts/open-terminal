@@ -104,6 +104,7 @@ Slash commands inside REPL:
   /menu                # interactive command picker
   /<prefix>           # filter commands, e.g. /m
   TAB                 # cycle matching slash commands
+  Ctrl+C              # exit REPL
   /start
   /stop
   /restart
@@ -136,6 +137,53 @@ Slash commands inside REPL:
   /help
   /quit
 EOF
+}
+
+command_description() {
+  local cmd="$1"
+  case "$cmd" in
+    "/help") echo "Show CLI and slash-command help." ;;
+    "/menu") echo "Open interactive slash-command picker." ;;
+    "/q"|"/quit"|"/exit") echo "Exit REPL." ;;
+    "/start") echo "Start open-terminal systemd user service." ;;
+    "/stop") echo "Stop open-terminal systemd user service." ;;
+    "/restart") echo "Restart open-terminal systemd user service." ;;
+    "/status") echo "Show systemd service status." ;;
+    "/logs") echo "Show recent service logs." ;;
+    "/health") echo "Run local health check." ;;
+    "/verify") echo "Run decoupled stack verification script." ;;
+    "/model"|"/models") echo "Show/select model profile." ;;
+    "/model text"|"/model gemma") echo "Switch to Gemma text profile." ;;
+    "/model vision"|"/model openvino") echo "Switch to OpenVINO/vision profile." ;;
+    "/model qwen (on-demand warm-up)"|"/model qwen") echo "Switch to Qwen with on-demand warm-up." ;;
+    "/model qwen-temp (one reply, then auto-return to gemma)"|"/model qwen-temp") echo "One-reply Qwen session, then auto-return to Gemma." ;;
+    "/model custom <url>") echo "Set custom endpoint URL profile." ;;
+    "/endpoint") echo "Show current active endpoint URL." ;;
+    "/endpoint-check") echo "Check endpoint reachability." ;;
+    "/mode") echo "Show current chat mode." ;;
+    "/mode chat") echo "Use history-aware chat mode." ;;
+    "/mode raw") echo "Use stateless raw mode." ;;
+    "/raw <prompt>") echo "Send one stateless prompt." ;;
+    "/diag prompt") echo "Show outgoing payload preview." ;;
+    "/history") echo "Show session history lines." ;;
+    "/resume --all") echo "List all saved sessions." ;;
+    "/session list") echo "List sessions." ;;
+    "/session new [name]") echo "Create a new session." ;;
+    "/session use <id>") echo "Switch to an existing session." ;;
+    "/clear") echo "Clear active session history file." ;;
+    "/run <task>") echo "Start async codex-gemma worker job." ;;
+    "/jobs") echo "List async jobs." ;;
+    "/job status <job_id>") echo "Show job metadata and state." ;;
+    "/job wait <job_id>") echo "Wait for job completion." ;;
+    "/job result <job_id>") echo "Print job result output." ;;
+    "/job logs <job_id>") echo "Tail/read job log output." ;;
+    "/job cancel <job_id>") echo "Cancel async job via systemd unit." ;;
+    "/contract") echo "Show strict contract mode status." ;;
+    "/contract strict|off") echo "Enable/disable strict output validation." ;;
+    "/statusline") echo "Show status-line setting." ;;
+    "/statusline on|off") echo "Enable/disable prompt status line." ;;
+    *) echo "Slash command." ;;
+  esac
 }
 
 do_start() { systemctl --user start open-terminal; }
@@ -318,7 +366,7 @@ show_commands() {
   # First pass: strict prefix matching
   for cmd in "${COMMANDS[@]}"; do
     if [[ "$cmd" == "$prefix"* ]]; then
-      echo "  $cmd"
+      printf '  %-48s %s\n' "$cmd" "$(command_description "$cmd")"
       shown=1
     fi
   done
@@ -327,7 +375,7 @@ show_commands() {
   if [[ "$shown" -eq 0 && -n "$normalized" ]]; then
     for cmd in "${COMMANDS[@]}"; do
       if [[ "${cmd#/}" == *"$normalized"* ]]; then
-        echo "  $cmd"
+        printf '  %-48s %s\n' "$cmd" "$(command_description "$cmd")"
         shown=1
       fi
     done
@@ -341,14 +389,20 @@ show_commands() {
 
 pick_command_interactive() {
   local selection=""
+  local line
   if command -v fzf >/dev/null 2>&1; then
-    selection="$(printf '%s\n' "${COMMANDS[@]}" | fzf --prompt='slash> ' --height=40% --layout=reverse --border || true)"
+    selection="$(
+      for cmd in "${COMMANDS[@]}"; do
+        printf '%s\t%s\n' "$cmd" "$(command_description "$cmd")"
+      done | fzf --prompt='slash> ' --height=50% --layout=reverse --border --with-nth=1,2 --delimiter=$'\t' --preview 'echo {2}' --preview-window=down:3:wrap || true
+    )"
+    selection="${selection%%$'\t'*}"
   else
     echo "Interactive menu (fzf not installed, using numbered picker):" >&2
     local i=1
     local cmd
     for cmd in "${COMMANDS[@]}"; do
-      printf '%2d) %s\n' "$i" "$cmd" >&2
+      printf '%2d) %-48s %s\n' "$i" "$cmd" "$(command_description "$cmd")" >&2
       i=$((i + 1))
     done
     read -r -p "Choice [1-$((i-1))]: " choice >&2
@@ -834,7 +888,8 @@ check_endpoint() {
 }
 
 run_repl() {
-  echo "open-terminal chat REPL. Type text to chat. Type / for commands. Press Ctrl+C to exit."
+  echo "open-terminal chat REPL."
+  echo "Hints: type '/' for interactive menu, '/<prefix>' to filter, TAB to complete, Ctrl+C to exit."
   trap 'echo; echo "Exiting open-terminal REPL."; exit 0' INT
   setup_readline_bindings
 
