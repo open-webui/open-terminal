@@ -7,6 +7,7 @@ QWEN_ENDPOINT="${QWEN_ENDPOINT:-http://127.0.0.1:8091/v1}"
 CODEX_GEMMA_POLICY_MODE="${CODEX_GEMMA_POLICY_MODE:-strict}"
 CODEX_GEMMA_MAX_RETRIES="${CODEX_GEMMA_MAX_RETRIES:-2}"
 CODEX_GEMMA_FALLBACK_ON_FAIL="${CODEX_GEMMA_FALLBACK_ON_FAIL:-0}"
+CODEX_GEMMA_MIDNIGHT_GUARD="${CODEX_GEMMA_MIDNIGHT_GUARD:-1}"
 CG_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/open-terminal"
 CG_TRACE_FILE="${CG_STATE_DIR}/codex-gemma-trace.log"
 CG_JOBS_DIR="${CG_STATE_DIR}/codex-gemma-jobs"
@@ -43,6 +44,7 @@ Env overrides:
   CODEX_GEMMA_POLICY_MODE (strict|off, default: strict)
   CODEX_GEMMA_MAX_RETRIES (default: 2)
   CODEX_GEMMA_FALLBACK_ON_FAIL (0|1, default: 0)
+  CODEX_GEMMA_MIDNIGHT_GUARD (0|1, default: 1)
 EOF
 }
 
@@ -124,6 +126,8 @@ elif "def group_anagrams(words: list[str]) -> list[list[str]]" in p:
     print("group_anagrams_contract")
 elif "exactly one runnable python code block" in p:
     print("exact_one_code_block")
+elif "midnight" in p and ("command" in p or "experiment" in p or "probe:" in p):
+    print("midnight_experiment_plan")
 else:
     print("general")
 PY
@@ -184,6 +188,49 @@ elif task == "bullet_list_only":
     for ln in lines:
         if ln not in bullet_lines:
             fail("expected bullet list only")
+elif task == "midnight_experiment_plan":
+    allowed_scripts = {
+        "probe:wallet-sdk-fee-bearing-deploy",
+        "probe:wallet-sdk-dustless-deploy",
+        "probe:wallet-sdk-proof-server-replay",
+        "probe:wallet-sdk-facade-component-sync",
+        "probe:wallet-sdk-dust-sync-diagnostics",
+        "probe:wallet-sdk-shielded-sync-diagnostics",
+        "probe:wallet-sdk-unshielded-sync-diagnostics",
+        "probe:wallet-sdk-post-registration-dust-state",
+        "probe:wallet-sdk-dust-warm-state",
+        "probe:wallet-sdk-dust-registration",
+    }
+    candidate = cand.strip()
+    fenced = re.match(r"^```(?:json)?\s*([\s\S]*?)\s*```$", candidate, flags=re.IGNORECASE)
+    if fenced:
+        candidate = fenced.group(1).strip()
+    if not candidate.startswith("{"):
+        mobj = re.search(r"(\{[\s\S]*\})", candidate)
+        if mobj:
+            candidate = mobj.group(1).strip()
+    try:
+        obj = json.loads(candidate)
+    except Exception as exc:
+        fail(f"expected valid JSON object: {exc}")
+    if not isinstance(obj, dict):
+        fail("expected JSON object")
+    for key in ("objective", "command", "expected_signal", "stop_condition"):
+        if key not in obj or not isinstance(obj[key], str) or not obj[key].strip():
+            fail(f"missing or invalid key: {key}")
+    cmd = obj["command"].strip()
+    if "\n" in cmd:
+        fail("command must be single-line")
+    if "npm run -s " not in cmd:
+        fail("command must use npm run -s")
+    m = re.search(r"npm run -s (probe:wallet-sdk-[a-z0-9\\-]+)", cmd)
+    if not m:
+        fail("command must target probe:wallet-sdk-* script")
+    script = m.group(1)
+    if script not in allowed_scripts:
+        fail(f"script not allowlisted: {script}")
+    if "solana " in cmd.lower():
+        fail("non-midnight tooling disallowed")
 print("ok")
 PY
 }
@@ -214,6 +261,14 @@ elif "expected at least two bullet lines" in msg:
     print("format.missing_bullets")
 elif "expected bullet list only" in msg:
     print("format.non_bullet_lines")
+elif "script not allowlisted" in msg:
+    print("midnight.command_not_allowlisted")
+elif "command must target probe:wallet-sdk-* script" in msg:
+    print("midnight.command_not_probe_script")
+elif "command must use npm run -s" in msg:
+    print("midnight.command_missing_npm_probe")
+elif "expected valid json object" in msg:
+    print("midnight.invalid_json_schema")
 else:
     print(f"validation.{task}.failed")
 PY
@@ -228,6 +283,7 @@ retry_cap_for_task_class() {
     bullet_list_only) echo 2 ;;
     exact_one_code_block) echo 2 ;;
     group_anagrams_contract) echo 2 ;;
+    midnight_experiment_plan) echo 1 ;;
     *) echo "$CODEX_GEMMA_MAX_RETRIES" ;;
   esac
 }
@@ -245,6 +301,45 @@ Invalid prior response:
 $invalid_output
 
 Return corrected output only. No commentary.
+EOF
+}
+
+build_midnight_guard_prompt() {
+  local original_prompt="$1"
+  cat <<EOF
+You are operating in BA-Midnight guarded mode.
+Return EXACTLY one JSON object with keys:
+- objective
+- command
+- expected_signal
+- stop_condition
+
+Hard rules:
+- command must be a single line
+- command must use: npm run -s probe:wallet-sdk-*
+- do not use non-Midnight tools (no Solana, no generic sweep scripts)
+- one bounded experiment only
+
+User request:
+$original_prompt
+EOF
+}
+
+build_midnight_repair_prompt() {
+  local original_prompt="$1"
+  local invalid_output="$2"
+  cat <<EOF
+Your prior answer violated BA-Midnight guarded mode.
+
+Return EXACTLY one JSON object with keys objective, command, expected_signal, stop_condition.
+Use exactly one allowlisted command with npm run -s probe:wallet-sdk-*.
+No commentary.
+
+Original request:
+$original_prompt
+
+Invalid output:
+$invalid_output
 EOF
 }
 
@@ -310,9 +405,17 @@ ask_cmd() {
   fi
   local attempt=0
   local current_prompt="$prompt"
+  local base_prompt="$prompt"
   local assistant=""
   local validation_msg=""
   local validation_code=""
+  local midnight_guard_primed=0
+
+  if [[ "$task_class" == "midnight_experiment_plan" && "$CODEX_GEMMA_MIDNIGHT_GUARD" == "1" ]]; then
+    current_prompt="$(build_midnight_guard_prompt "$prompt")"
+    base_prompt="$current_prompt"
+    midnight_guard_primed=1
+  fi
 
   append_trace "POLICY" "mode=$policy retries=$retries task_class=$task_class class_retry_cap=$class_retry_cap endpoint=$endpoint fallback=$fallback single_model_lock=$single_model_lock"
   while (( attempt <= retries )); do
@@ -334,7 +437,11 @@ ask_cmd() {
     fi
     validation_code="$(error_code_for_validation_msg "$task_class" "$validation_msg")"
     append_trace "VALIDATION_FAIL" "attempt=$attempt task_class=$task_class code=$validation_code detail=$validation_msg"
-    current_prompt="$(build_repair_prompt "$prompt" "$assistant")"
+    if [[ "$task_class" == "midnight_experiment_plan" && "$midnight_guard_primed" == "1" ]]; then
+      current_prompt="$(build_midnight_repair_prompt "$base_prompt" "$assistant")"
+    else
+      current_prompt="$(build_repair_prompt "$prompt" "$assistant")"
+    fi
     attempt=$((attempt + 1))
   done
 
