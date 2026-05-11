@@ -116,6 +116,20 @@ Tail logs from target:
 scripts/otx --target nuc logs --unit open-terminal --lines 200
 ```
 
+## One-Command Cross-Host Benchmark
+
+Run the policy-path benchmark on both targets and refresh local comparison artifacts:
+
+```bash
+scripts/otx-benchmark-crosshost
+```
+
+Optional flags:
+
+```bash
+scripts/otx-benchmark-crosshost --retries 3 --wait 300 --local z490 --remote nuc
+```
+
 ## Safety Notes
 
 - `otx edit` shows a diff by default and asks before applying.

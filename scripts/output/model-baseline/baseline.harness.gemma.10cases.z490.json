@@ -1,6 +1,6 @@
 {
   "report_type": "open-terminal-model-baseline",
-  "generated_at": "2026-05-11T15:44:28Z",
+  "generated_at": "2026-05-11T15:52:12Z",
   "cases_path": "scripts/model_baseline_cases.json",
   "mode": "harness",
   "models": {
@@ -12,76 +12,76 @@
         "passed": 10,
         "total": 10,
         "compliance_percent": 100.0,
-        "avg_latency_ms": 4840
+        "avg_latency_ms": 2632
       },
       "results": [
         {
           "case_id": "codeblock_only",
           "ok": true,
-          "latency_ms": 1045,
+          "latency_ms": 1083,
           "detail": "ok",
           "output_preview": "```python\\ndef add(a: int, b: int) -> int:\\n    return a + b\\n\\nassert add(2, 3) == 5\\n```"
         },
         {
           "case_id": "codeblock_factorial",
           "ok": true,
-          "latency_ms": 3320,
+          "latency_ms": 2751,
           "detail": "ok",
           "output_preview": "```python\\ndef factorial(n: int) -> int:\\n    if not isinstance(n, int):\\n        raise TypeError(\"Input must be an integer.\")\\n    if n < 0:\\n        raise ValueError(\"Input must be a "
         },
         {
           "case_id": "group_anagrams_contract",
           "ok": true,
-          "latency_ms": 10732,
+          "latency_ms": 8109,
           "detail": "ok",
-          "output_preview": "```python\\nfrom collections import OrderedDict\\n\\ndef group_anagrams(words: list[str]) -> list[list[str]]:\\n    \"\"\"\\n    Groups anagrams together while preserving original word order wi"
+          "output_preview": "```python\\nfrom collections import OrderedDict\\n\\ndef group_anagrams(words: list[str]) -> list[list[str]]:\\n    \"\"\"\\n    Groups anagrams together while preserving original order of grou"
         },
         {
           "case_id": "group_anagrams_contract_repeat",
           "ok": true,
-          "latency_ms": 15986,
+          "latency_ms": 8116,
           "detail": "ok",
           "output_preview": "```python\\nfrom collections import OrderedDict\\n\\ndef group_anagrams(words: list[str]) -> list[list[str]]:\\n    \"\"\"\\n    Groups anagrams together while preserving original word order wi"
         },
         {
           "case_id": "exact_literal",
           "ok": true,
-          "latency_ms": 8909,
+          "latency_ms": 420,
           "detail": "ok",
           "output_preview": "OK_7F3C"
         },
         {
           "case_id": "exact_literal_alt",
           "ok": true,
-          "latency_ms": 705,
+          "latency_ms": 450,
           "detail": "ok",
           "output_preview": "PASS_TOKEN_91A"
         },
         {
           "case_id": "exact_literal_short",
           "ok": true,
-          "latency_ms": 619,
+          "latency_ms": 359,
           "detail": "ok",
           "output_preview": "A1"
         },
         {
           "case_id": "codeblock_sum_list",
           "ok": true,
-          "latency_ms": 1626,
+          "latency_ms": 1407,
           "detail": "ok",
           "output_preview": "```python\\ndef sum_positive(nums: list[int]) -> int:\\n    return sum(x for x in nums if x > 0)\\n\\nassert sum_positive([-1, 2, -3, 4, 0, 5]) == 11\\n```"
         },
         {
           "case_id": "codeblock_reverse_words",
           "ok": true,
-          "latency_ms": 2537,
+          "latency_ms": 1869,
           "detail": "ok",
-          "output_preview": "```python\\ndef reverse_words(s: str) -> str:\\n    return \" \".join(s.split()[::-1])\\n\\nassert reverse_words(\"the sky is blue\") == \"blue is sky the\"\\n```"
+          "output_preview": "```python\\ndef reverse_words(s: str) -> str:\\n    \"\"\"\\n    Reverses the order of words in a string. \\n    Words are defined as sequences of non-space characters.\\n    \"\"\"\\n    return \" \""
         },
         {
           "case_id": "codeblock_palindrome",
           "ok": true,
-          "latency_ms": 2925,
+          "latency_ms": 1765,
           "detail": "ok",
           "output_preview": "```python\\ndef is_palindrome(s: str) -> bool:\\n    \"\"\"Checks if a string is a palindrome.\"\"\"\\n    clean_s = \"\".join(char.lower() for char in s if char.isalnum())\\n    return clean_s =="
         }

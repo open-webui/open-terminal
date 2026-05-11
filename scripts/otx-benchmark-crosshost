@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+OTX_BIN="$ROOT_DIR/scripts/otx"
+CASES_PATH="scripts/model_baseline_cases.json"
+OUT_DIR="scripts/output/model-baseline"
+RETRIES="${RETRIES:-3}"
+WAIT_SECONDS="${WAIT_SECONDS:-300}"
+TARGET_LOCAL="${TARGET_LOCAL:-z490}"
+TARGET_REMOTE="${TARGET_REMOTE:-nuc}"
+
+usage() {
+  cat <<'EOF'
+otx-benchmark-crosshost - run harness benchmark on two otx targets and refresh cross-host summary
+
+Usage:
+  scripts/otx-benchmark-crosshost
+  scripts/otx-benchmark-crosshost --retries 3 --wait 300 --local z490 --remote nuc
+
+Options:
+  --retries N     codex-gemma strict retries (default: 3)
+  --wait SEC      otx run wait timeout in seconds (default: 300)
+  --local NAME    local target alias (default: z490)
+  --remote NAME   remote target alias (default: nuc)
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --retries) shift; RETRIES="${1:-3}" ;;
+    --wait) shift; WAIT_SECONDS="${1:-300}" ;;
+    --local) shift; TARGET_LOCAL="${1:-z490}" ;;
+    --remote) shift; TARGET_REMOTE="${1:-nuc}" ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "Unknown arg: $1"; usage; exit 1 ;;
+  esac
+  shift || true
+done
+
+if ! [[ "$RETRIES" =~ ^[0-9]+$ ]]; then
+  echo "Invalid retries: $RETRIES"
+  exit 1
+fi
+if ! [[ "$WAIT_SECONDS" =~ ^[0-9]+$ ]]; then
+  echo "Invalid wait: $WAIT_SECONDS"
+  exit 1
+fi
+
+run_suite_for_target() {
+  local target="$1"
+  local suffix="$2"
+  local out_json="$OUT_DIR/baseline.harness.gemma.10cases.${suffix}.json"
+  local out_md="$OUT_DIR/baseline.harness.gemma.10cases.${suffix}.md"
+  local cmd="cd $ROOT_DIR && python3 scripts/model_baseline_suite.py --mode harness --models gemma --retries $RETRIES --cases $CASES_PATH --out-json $out_json --out-md $out_md"
+  "$OTX_BIN" --target "$target" run --wait "$WAIT_SECONDS" -- "$cmd"
+}
+
+fetch_artifact() {
+  local target="$1"
+  local remote_path="$2"
+  local local_path="$3"
+  mkdir -p "$(dirname "$local_path")"
+  local tmp
+  tmp="$(mktemp)"
+  "$OTX_BIN" --target "$target" run --wait 120 -- "cat '$remote_path'" \
+    | sed '/^\[exit_code=/d' \
+    | sed 's/^\[output\] //' > "$tmp"
+  mv "$tmp" "$local_path"
+}
+
+parse_summary() {
+  local path="$1"
+  python3 - "$path" <<'PY'
+import json,sys
+p=sys.argv[1]
+d=json.load(open(p,encoding="utf-8"))
+m=d.get("models",{}).get("gemma",{})
+s=m.get("summary",{})
+print(s.get("passed",0), s.get("total",0), s.get("compliance_percent",0.0), s.get("avg_latency_ms",0))
+PY
+}
+
+echo "== Running suite on $TARGET_LOCAL =="
+run_suite_for_target "$TARGET_LOCAL" "z490"
+
+echo "== Running suite on $TARGET_REMOTE =="
+run_suite_for_target "$TARGET_REMOTE" "nuc"
+
+LOCAL_JSON="$ROOT_DIR/$OUT_DIR/baseline.harness.gemma.10cases.z490.json"
+LOCAL_MD="$ROOT_DIR/$OUT_DIR/baseline.harness.gemma.10cases.z490.md"
+REMOTE_JSON="$ROOT_DIR/$OUT_DIR/baseline.harness.gemma.10cases.nuc.json"
+REMOTE_MD="$ROOT_DIR/$OUT_DIR/baseline.harness.gemma.10cases.nuc.md"
+
+echo "== Syncing artifacts back via otx =="
+fetch_artifact "$TARGET_LOCAL" "$ROOT_DIR/$OUT_DIR/baseline.harness.gemma.10cases.z490.json" "$LOCAL_JSON"
+fetch_artifact "$TARGET_LOCAL" "$ROOT_DIR/$OUT_DIR/baseline.harness.gemma.10cases.z490.md" "$LOCAL_MD"
+fetch_artifact "$TARGET_REMOTE" "$ROOT_DIR/$OUT_DIR/baseline.harness.gemma.10cases.nuc.json" "$REMOTE_JSON"
+fetch_artifact "$TARGET_REMOTE" "$ROOT_DIR/$OUT_DIR/baseline.harness.gemma.10cases.nuc.md" "$REMOTE_MD"
+
+read -r z_pass z_total z_pct z_lat <<<"$(parse_summary "$LOCAL_JSON")"
+read -r n_pass n_total n_pct n_lat <<<"$(parse_summary "$REMOTE_JSON")"
+delta=$((n_lat - z_lat))
+
+CROSS_MD="$ROOT_DIR/$OUT_DIR/baseline.harness.gemma.10cases.cross-host.md"
+cat > "$CROSS_MD" <<EOF
+# Cross-Host Harness Benchmark (Gemma, 10 Cases)
+
+- generated_at: \`$(date -u +%Y-%m-%dT%H:%M:%SZ)\`
+- suite: \`$CASES_PATH\`
+- mode: \`harness\` (\`codex-gemma ask\` strict policy path)
+
+## Summary
+
+- z490 compliance: \`${z_pass}/${z_total}\` (${z_pct}%)
+- nuc compliance: \`${n_pass}/${n_total}\` (${n_pct}%)
+- z490 avg latency: \`${z_lat} ms\`
+- nuc avg latency: \`${n_lat} ms\`
+- delta (nuc - z490): \`${delta} ms\`
+
+## Artifacts
+
+- \`baseline.harness.gemma.10cases.z490.json\`
+- \`baseline.harness.gemma.10cases.z490.md\`
+- \`baseline.harness.gemma.10cases.nuc.json\`
+- \`baseline.harness.gemma.10cases.nuc.md\`
+EOF
+
+echo "== Done =="
+echo "$LOCAL_JSON"
+echo "$REMOTE_JSON"
+echo "$CROSS_MD"
