@@ -164,7 +164,7 @@ Slash commands inside REPL:
   /menu                # interactive command picker
   /menu <category>     # picker filtered by category
   /<prefix>           # filter commands, e.g. /m
-  TAB                 # cycle matching slash commands
+  TAB                 # open filtered picker for /<prefix> (or cycle fallback)
   Ctrl+C              # exit REPL
   /start
   /stop
@@ -567,6 +567,41 @@ pick_command_interactive() {
   printf '%s' "$selection"
 }
 
+pick_command_by_prefix() {
+  local prefix="${1:-/}"
+  local selection=""
+  local tmp cmd cat rank
+  local normalized="${prefix#/}"
+  tmp="$(mktemp)"
+
+  for cmd in "${COMMANDS[@]}"; do
+    if [[ "$cmd" == "$prefix"* ]] || { [[ -n "$normalized" ]] && [[ "${cmd#/}" == *"$normalized"* ]]; }; then
+      cat="$(command_category "$cmd")"
+      rank="$(category_rank "$cat")"
+      printf '%s\t%s\t%s\t%s\n' "$rank" "$cat" "$cmd" "$(command_description "$cmd")" >> "$tmp"
+    fi
+  done
+
+  if [[ ! -s "$tmp" ]]; then
+    rm -f "$tmp"
+    printf '%s' ""
+    return
+  fi
+
+  if command -v fzf >/dev/null 2>&1; then
+    selection="$(
+      sort -t $'\t' -k1,1n -k3,3 "$tmp" | awk -F '\t' '{ printf("[%s]\t%s\t%s\n", $2, $3, $4) }' \
+      | fzf --prompt="slash(${prefix})> " --height=55% --layout=reverse --border --with-nth=1,2,3 --delimiter=$'\t' --preview 'echo {3}' --preview-window=down:3:wrap --query "$normalized" || true
+    )"
+    selection="$(printf '%s' "$selection" | cut -f2)"
+  else
+    show_commands "$prefix" >&2
+  fi
+
+  rm -f "$tmp"
+  printf '%s' "$selection"
+}
+
 is_valid_category() {
   local cat="${1:-}"
   case "$cat" in
@@ -608,6 +643,7 @@ build_command_matches() {
 slash_tab_complete() {
   # readline callback; uses READLINE_LINE / READLINE_POINT
   local prefix
+  local picked=""
   prefix="${READLINE_LINE:-}"
   if [[ "$prefix" != /* ]]; then
     return
@@ -617,16 +653,29 @@ slash_tab_complete() {
     build_command_matches "$prefix"
     OT_TAB_INDEX=0
     OT_TAB_LAST_PREFIX="$prefix"
-  else
-    if [[ "${#OT_TAB_MATCHES[@]}" -gt 0 ]]; then
-      OT_TAB_INDEX=$(( (OT_TAB_INDEX + 1) % ${#OT_TAB_MATCHES[@]} ))
-    fi
   fi
 
-  if [[ "${#OT_TAB_MATCHES[@]}" -gt 0 ]]; then
+  if [[ "${#OT_TAB_MATCHES[@]}" -eq 1 ]]; then
+    READLINE_LINE="${OT_TAB_MATCHES[0]}"
+    READLINE_POINT=${#READLINE_LINE}
+    return
+  fi
+
+  if [[ "${#OT_TAB_MATCHES[@]}" -gt 1 ]]; then
+    picked="$(pick_command_by_prefix "$prefix")"
+    if [[ -n "$picked" ]]; then
+      READLINE_LINE="$(canonicalize_menu_choice "$picked")"
+      READLINE_POINT=${#READLINE_LINE}
+      return
+    fi
+    # fallback cycle when no picker selection made
+    OT_TAB_INDEX=$(( (OT_TAB_INDEX + 1) % ${#OT_TAB_MATCHES[@]} ))
     READLINE_LINE="${OT_TAB_MATCHES[$OT_TAB_INDEX]}"
     READLINE_POINT=${#READLINE_LINE}
+    return
   fi
+
+  show_commands "$prefix"
 }
 
 setup_readline_bindings() {
