@@ -62,16 +62,15 @@ ask_cmd() {
   fi
 
   local model
-  model="$(curl -fsS "${GEMMA_ENDPOINT%/}/models" | python3 - <<'PY'
+  model="$(curl -fsS "${GEMMA_ENDPOINT%/}/models" | python3 -c '
 import json,sys
 try:
-  d=json.load(sys.stdin)
-  arr=d.get("data") or []
-  print(arr[0].get("id","default") if arr else "default")
+    d=json.load(sys.stdin)
+    arr=d.get("data") or []
+    print(arr[0].get("id","default") if arr else "default")
 except Exception:
-  print("default")
-PY
-)"
+    print("default")
+')"
 
   python3 - "$GEMMA_ENDPOINT" "$model" "$prompt" <<'PY'
 import json,sys,urllib.request
