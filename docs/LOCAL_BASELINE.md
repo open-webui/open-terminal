@@ -64,6 +64,10 @@ This document defines the local, standalone baseline for OpenTerminal as an agen
   - discoverable benchmark-only command surface
   - can target `gemma` or `qwen2`
   - disables single-model lock for controlled benchmark sessions only
+- BA-Midnight bounded readiness loop:
+  - `scripts/midnight-probe-loop --repo <midnight-gateway-path> --cycles 3 --sleep-sec 20`
+  - optional execute mode: append `--execute` to run fee-bearing deploy probe only after readiness gate opens (`availableCoinCountEnd > 0`)
+  - writes run log + summary under `~/.local/state/open-terminal/midnight-probe-loop/`
 
 ## Known Limitations
 

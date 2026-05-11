@@ -1,0 +1,131 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+midnight-probe-loop - bounded BA-Midnight readiness loop
+
+Usage:
+  scripts/midnight-probe-loop --repo /path/to/midnight-gateway [options]
+
+Options:
+  --repo PATH           Midnight gateway repo path (required)
+  --cycles N            Number of probe cycles (default: 3)
+  --sleep-sec N         Sleep seconds between cycles (default: 15)
+  --timeout-ms N        Warm-state timeout ms (default: 90000)
+  --fee-timeout-ms N    Deploy probe timeout ms (default: 180000)
+  --env-file PATH       Optional env file to source before runs
+  --execute             Run deploy probe when ready (default: inspect only)
+  -h, --help            Show this help
+EOF
+}
+
+REPO=""
+CYCLES=3
+SLEEP_SEC=15
+TIMEOUT_MS=90000
+FEE_TIMEOUT_MS=180000
+ENV_FILE=""
+EXECUTE=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --repo) REPO="${2:-}"; shift 2 ;;
+    --cycles) CYCLES="${2:-}"; shift 2 ;;
+    --sleep-sec) SLEEP_SEC="${2:-}"; shift 2 ;;
+    --timeout-ms) TIMEOUT_MS="${2:-}"; shift 2 ;;
+    --fee-timeout-ms) FEE_TIMEOUT_MS="${2:-}"; shift 2 ;;
+    --env-file) ENV_FILE="${2:-}"; shift 2 ;;
+    --execute) EXECUTE=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "Unknown argument: $1" >&2; usage; exit 2 ;;
+  esac
+done
+
+if [[ -z "$REPO" ]]; then
+  echo "--repo is required" >&2
+  usage
+  exit 2
+fi
+if [[ ! -d "$REPO" ]]; then
+  echo "Repo path not found: $REPO" >&2
+  exit 2
+fi
+if [[ ! -f "$REPO/package.json" ]]; then
+  echo "package.json not found in: $REPO" >&2
+  exit 2
+fi
+
+if [[ -n "$ENV_FILE" ]]; then
+  if [[ ! -f "$ENV_FILE" ]]; then
+    echo "env file not found: $ENV_FILE" >&2
+    exit 2
+  fi
+  # shellcheck disable=SC1090
+  set -a; source "$ENV_FILE"; set +a
+fi
+
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/open-terminal/midnight-probe-loop"
+mkdir -p "$STATE_DIR"
+RUN_ID="$(date +%Y%m%d-%H%M%S)"
+LOG="$STATE_DIR/run-$RUN_ID.log"
+SUMMARY="$STATE_DIR/run-$RUN_ID.summary"
+
+echo "run_id=$RUN_ID" | tee -a "$LOG"
+echo "repo=$REPO" | tee -a "$LOG"
+echo "cycles=$CYCLES sleep_sec=$SLEEP_SEC timeout_ms=$TIMEOUT_MS fee_timeout_ms=$FEE_TIMEOUT_MS execute=$EXECUTE" | tee -a "$LOG"
+
+cd "$REPO"
+
+ready=0
+for ((i=1; i<=CYCLES; i++)); do
+  echo "" | tee -a "$LOG"
+  echo "=== cycle $i/$CYCLES ===" | tee -a "$LOG"
+
+  diag_out="$(npm run -s probe:wallet-sdk-dust-sync-diagnostics 2>&1 || true)"
+  echo "$diag_out" | tee -a "$LOG" >/dev/null
+  available_now="$(printf '%s\n' "$diag_out" | sed -n 's/.*availableCoinCount=\([0-9][0-9]*\).*/\1/p' | tail -n1)"
+  [[ -n "$available_now" ]] || available_now=0
+
+  reg_out="$(npm run -s probe:wallet-sdk-dust-registration 2>&1 || true)"
+  echo "$reg_out" | tee -a "$LOG" >/dev/null
+  already_registered="$(printf '%s\n' "$reg_out" | sed -n 's/.*alreadyRegisteredCount=\([0-9][0-9]*\).*/\1/p' | tail -n1)"
+  [[ -n "$already_registered" ]] || already_registered=0
+
+  warm_out="$(npm run -s probe:wallet-sdk-dust-warm-state -- --timeout-ms "$TIMEOUT_MS" 2>&1 || true)"
+  echo "$warm_out" | tee -a "$LOG" >/dev/null
+  available_end="$(printf '%s\n' "$warm_out" | sed -n 's/.*availableCoinCountEnd=\([0-9][0-9]*\).*/\1/p' | tail -n1)"
+  [[ -n "$available_end" ]] || available_end=0
+
+  printf 'cycle=%s available_now=%s available_end=%s already_registered=%s\n' "$i" "$available_now" "$available_end" "$already_registered" | tee -a "$SUMMARY"
+
+  if [[ "$available_end" -gt 0 ]]; then
+    ready=1
+    echo "readiness gate opened at cycle $i (availableCoinCountEnd=$available_end)" | tee -a "$LOG"
+    break
+  fi
+
+  if [[ "$i" -lt "$CYCLES" ]]; then
+    sleep "$SLEEP_SEC"
+  fi
+done
+
+if [[ "$ready" -eq 1 && "$EXECUTE" -eq 1 ]]; then
+  echo "" | tee -a "$LOG"
+  echo "=== deploy probe (execute mode) ===" | tee -a "$LOG"
+  deploy_out="$(npm run -s probe:wallet-sdk-fee-bearing-deploy -- --timeout-ms "$FEE_TIMEOUT_MS" 2>&1 || true)"
+  echo "$deploy_out" | tee -a "$LOG" >/dev/null
+  if printf '%s\n' "$deploy_out" | rg -q "TaggedTransactionQueue|runtime error"; then
+    echo "deploy_signal=runtime_error_branch" | tee -a "$SUMMARY"
+  elif printf '%s\n' "$deploy_out" | rg -q "Wallet.InsufficientFunds|could not balance dust"; then
+    echo "deploy_signal=insufficient_dust" | tee -a "$SUMMARY"
+  else
+    echo "deploy_signal=other" | tee -a "$SUMMARY"
+  fi
+else
+  echo "deploy_signal=skipped" | tee -a "$SUMMARY"
+fi
+
+echo ""
+echo "Summary: $SUMMARY"
+echo "Log: $LOG"
