@@ -34,6 +34,24 @@ This document defines the local, standalone baseline for OpenTerminal as an agen
 - Run as user service (no root service files by default)
 - Do not mount `/` into the runtime (container-only behavior removed in this mode)
 
+## OpenTerminal CLI Baseline (Operator UX)
+
+- Chat-first REPL: text input sends chat messages by default.
+- Slash-command command mode: enter commands with `/...`.
+- Slash discoverability:
+  - `/` lists all commands
+  - `/<prefix>` filters command list
+  - `TAB` cycles slash command completions
+- Persistent status prompt (default enabled):
+  - `open-terminal[<mode>|<model>|<cwd>]>`
+- Contract mode (default `strict`):
+  - validates strict output-format prompts
+  - auto-retries with repair prompt on format failure
+- Async orchestration jobs (via `codex-gemma`):
+  - `/run <task>`
+  - `/jobs`
+  - `/job status|wait|result|logs|cancel <job_id>`
+
 ## Known Limitations
 
 - OpenTerminal itself does not enforce approval prompts for destructive shell commands; that policy must come from the calling agent/workflow.

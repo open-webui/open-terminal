@@ -31,6 +31,23 @@ Check service status/logs:
 ./scripts/logs.sh
 ```
 
+OpenTerminal control CLI (global command after install script):
+
+```bash
+open-terminal -h
+open-terminal
+```
+
+Inside REPL:
+
+- `/` shows command palette
+- `/<prefix>` filters commands
+- `TAB` cycles command completion
+- `/run "<task>"` starts an async codex-gemma worker job
+- `/jobs` and `/job status|wait|result|logs|cancel <job_id>` manage async jobs
+- `/contract strict|off` toggles response-contract enforcement (default: strict)
+- `/statusline on|off` toggles prompt status line (`mode|model|cwd`)
+
 Default local baseline:
 
 - bind: `127.0.0.1`

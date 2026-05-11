@@ -19,6 +19,10 @@ OT_AUTO_RETURN_TO_GEMMA=0
 OT_CHAT_MODE="${OT_CHAT_MODE:-chat}"
 OT_LAST_PAYLOAD=""
 OT_CURRENT_SESSION_ID=""
+OT_STATUS_PROMPT="${OT_STATUS_PROMPT:-1}"
+OT_CONTRACT_MODE="${OT_CONTRACT_MODE:-strict}"
+OT_CHAT_RETRY_MAX="${OT_CHAT_RETRY_MAX:-2}"
+CODEX_GEMMA_BIN="${CODEX_GEMMA_BIN:-$ROOT_DIR/scripts/codex-gemma}"
 mkdir -p "$OT_STATE_DIR" "$OT_CONFIG_DIR" "$OT_SESSIONS_DIR"
 
 COMMANDS=(
@@ -53,6 +57,17 @@ COMMANDS=(
   "/session new [name]"
   "/session use <id>"
   "/clear"
+  "/run <task>"
+  "/jobs"
+  "/job status <job_id>"
+  "/job wait <job_id>"
+  "/job result <job_id>"
+  "/job logs <job_id>"
+  "/job cancel <job_id>"
+  "/contract"
+  "/contract strict|off"
+  "/statusline"
+  "/statusline on|off"
   "/quit"
 )
 
@@ -70,6 +85,11 @@ Usage:
   open-terminal start|stop|restart|status|logs|health|verify
   open-terminal model [profile]
   open-terminal mode [chat|raw]
+  open-terminal run "<task>"
+  open-terminal jobs
+  open-terminal job status|wait|result|logs|cancel <job_id>
+  open-terminal contract [strict|off]
+  open-terminal statusline [on|off]
   open-terminal raw "<prompt>"
   open-terminal diag-prompt [text]
   open-terminal history [N]
@@ -100,6 +120,15 @@ Slash commands inside REPL:
   /session list
   /session new [name]
   /session use <id>
+  /run <task>          # async orchestration job via codex-gemma
+  /jobs
+  /job status <job_id>
+  /job wait <job_id>
+  /job result <job_id>
+  /job logs <job_id>
+  /job cancel <job_id>
+  /contract [strict|off]
+  /statusline [on|off]
   /clear              # clear local chat history
   /help
   /quit
@@ -198,11 +227,21 @@ load_mode_state() {
     if [[ "${OT_SAVED_MODE:-}" == "chat" || "${OT_SAVED_MODE:-}" == "raw" ]]; then
       OT_CHAT_MODE="$OT_SAVED_MODE"
     fi
+    if [[ "${OT_SAVED_STATUS_PROMPT:-}" == "0" || "${OT_SAVED_STATUS_PROMPT:-}" == "1" ]]; then
+      OT_STATUS_PROMPT="$OT_SAVED_STATUS_PROMPT"
+    fi
+    if [[ "${OT_SAVED_CONTRACT_MODE:-}" == "strict" || "${OT_SAVED_CONTRACT_MODE:-}" == "off" ]]; then
+      OT_CONTRACT_MODE="$OT_SAVED_CONTRACT_MODE"
+    fi
   fi
 }
 
 save_mode_state() {
-  printf 'OT_SAVED_MODE=%s\n' "$OT_CHAT_MODE" > "$OT_MODE_STATE_FILE"
+  {
+    printf 'OT_SAVED_MODE=%s\n' "$OT_CHAT_MODE"
+    printf 'OT_SAVED_STATUS_PROMPT=%s\n' "$OT_STATUS_PROMPT"
+    printf 'OT_SAVED_CONTRACT_MODE=%s\n' "$OT_CONTRACT_MODE"
+  } > "$OT_MODE_STATE_FILE"
 }
 
 init_state() {
@@ -252,6 +291,19 @@ current_endpoint() {
 
 show_endpoint() {
   echo "Current model endpoint: $(current_endpoint)"
+}
+
+prompt_status() {
+  if [[ "$OT_STATUS_PROMPT" -ne 1 ]]; then
+    printf 'open-terminal> '
+    return
+  fi
+  local endpoint model cwd short_cwd
+  endpoint="$(current_endpoint)"
+  model="$(current_model_id)"
+  cwd="$(pwd)"
+  short_cwd="${cwd/#$HOME/~}"
+  printf 'open-terminal[%s|%s|%s]> ' "$OT_CHAT_MODE" "$model" "$short_cwd"
 }
 
 show_commands() {
@@ -340,7 +392,7 @@ current_model_id() {
   local endpoint models_url id
   endpoint="$(current_endpoint)"
   models_url="${endpoint%/}/models"
-  id="$(curl -fsS "$models_url" 2>/dev/null | python3 - <<'PY'
+  id="$(curl --max-time 1 -fsS "$models_url" 2>/dev/null | python3 - <<'PY'
 import json,sys
 try:
     data=json.load(sys.stdin)
@@ -417,35 +469,111 @@ print(msg if isinstance(msg,str) else str(msg))
 PY
 }
 
+validate_contract() {
+  local prompt="$1"
+  local candidate="$2"
+  python3 - "$prompt" "$candidate" <<'PY'
+import re, sys
+prompt = sys.argv[1].lower()
+candidate = sys.argv[2]
+
+def fail(msg: str):
+    print(msg)
+    raise SystemExit(1)
+
+if "exactly one runnable python code block" in prompt:
+    blocks = re.findall(r"```(?:python)?\n[\s\S]*?\n```", candidate)
+    if len(blocks) != 1:
+        fail("expected exactly one fenced code block")
+    cleaned = re.sub(r"```(?:python)?\n[\s\S]*?\n```", "", candidate).strip()
+    if cleaned:
+        fail("expected no text outside code block")
+
+if "nothing else" in prompt:
+    if "```" in candidate:
+        pass
+    else:
+        lines = [ln for ln in candidate.splitlines() if ln.strip()]
+        if len(lines) != 1:
+            fail("expected exactly one non-empty line")
+
+if "print exactly this string and nothing else:" in prompt:
+    m = re.search(r"print exactly this string and nothing else:\s*([A-Za-z0-9_\-]+)", prompt)
+    if m:
+        target = m.group(1).strip()
+        if candidate.strip() != target:
+            fail(f"expected exact literal '{target}'")
+
+print("ok")
+PY
+}
+
+repair_prompt_for_contract() {
+  local original_prompt="$1"
+  local bad_output="$2"
+  cat <<EOF
+You must repair a prior response that violated formatting constraints.
+
+Original user prompt:
+$original_prompt
+
+Invalid prior response:
+$bad_output
+
+Return a corrected answer that strictly follows every formatting instruction in the original prompt.
+Do not explain. Output only the corrected final answer.
+EOF
+}
+
 chat_send() {
   local user_text="$1"
   local force_mode="${2:-}"
-  local endpoint chat_url model payload resp assistant mode
+  local endpoint chat_url model payload resp assistant mode attempt validation_msg retry_prompt
   endpoint="$(current_endpoint)"
   chat_url="${endpoint%/}/chat/completions"
   model="$(current_model_id)"
   mode="${force_mode:-$OT_CHAT_MODE}"
 
-  payload="$(build_payload "$mode" "$user_text" "$model")"
-  OT_LAST_PAYLOAD="$payload"
+  retry_prompt="$user_text"
+  for (( attempt=1; attempt<=OT_CHAT_RETRY_MAX+1; attempt++ )); do
+    payload="$(build_payload "$mode" "$retry_prompt" "$model")"
+    OT_LAST_PAYLOAD="$payload"
 
-  resp="$(curl -fsS \
-    -H 'Content-Type: application/json' \
-    -H 'Authorization: Bearer dummy' \
-    -d "$payload" \
-    "$chat_url" 2>&1)" || {
-      echo "Chat request failed against $chat_url"
-      echo "$resp"
-      echo "Tip: run /model and select a profile with a live endpoint."
+    resp="$(curl -fsS \
+      -H 'Content-Type: application/json' \
+      -H 'Authorization: Bearer dummy' \
+      -d "$payload" \
+      "$chat_url" 2>&1)" || {
+        echo "Chat request failed against $chat_url"
+        echo "$resp"
+        echo "Remediation: run /endpoint-check, then /model gemma (or another live profile), then retry."
+        return 1
+      }
+
+    assistant="$(extract_assistant_text "$resp")"
+    if [[ -z "$assistant" ]]; then
+      if (( attempt <= OT_CHAT_RETRY_MAX )); then
+        retry_prompt="Return a direct answer only. No meta text. Original request: $user_text"
+        continue
+      fi
+      echo "No assistant content returned."
+      echo "Remediation: run /diag prompt to inspect payload, then retry with /raw <prompt>."
       return 1
-    }
+    fi
 
-  assistant="$(extract_assistant_text "$resp")"
-
-  if [[ -z "$assistant" ]]; then
-    echo "No assistant content returned."
-    return 1
-  fi
+    if [[ "$OT_CONTRACT_MODE" == "strict" ]]; then
+      if ! validation_msg="$(validate_contract "$user_text" "$assistant" 2>&1)"; then
+        if (( attempt <= OT_CHAT_RETRY_MAX )); then
+          retry_prompt="$(repair_prompt_for_contract "$user_text" "$assistant")"
+          continue
+        fi
+        echo "Response contract check failed: $validation_msg"
+        echo "Remediation: use /raw with stricter constraints or switch model via /model."
+        return 1
+      fi
+    fi
+    break
+  done
 
   if [[ "$mode" == "chat" ]]; then
     printf '{"role":"user","content":%s}\n' "$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$user_text")" >> "$CHAT_HISTORY_FILE"
@@ -458,6 +586,111 @@ chat_send() {
     echo "Auto-returning to Gemma primary..."
     do_model gemma || true
   fi
+}
+
+do_contract() {
+  local target="${1:-}"
+  if [[ -z "$target" ]]; then
+    echo "Contract mode: $OT_CONTRACT_MODE"
+    return 0
+  fi
+  case "$target" in
+    strict|off)
+      OT_CONTRACT_MODE="$target"
+      save_mode_state
+      echo "Contract mode set to: $OT_CONTRACT_MODE"
+      ;;
+    *) echo "Usage: /contract [strict|off]"; return 1 ;;
+  esac
+}
+
+do_statusline() {
+  local target="${1:-}"
+  if [[ -z "$target" ]]; then
+    if [[ "$OT_STATUS_PROMPT" -eq 1 ]]; then
+      echo "Status line: on"
+    else
+      echo "Status line: off"
+    fi
+    return 0
+  fi
+  case "$target" in
+    on) OT_STATUS_PROMPT=1; save_mode_state; echo "Status line enabled." ;;
+    off) OT_STATUS_PROMPT=0; save_mode_state; echo "Status line disabled." ;;
+    *) echo "Usage: /statusline [on|off]"; return 1 ;;
+  esac
+}
+
+job_read_meta_value() {
+  local job_id="$1"
+  local key="$2"
+  local meta="$CG_STATE_DIR/codex-gemma-jobs/${job_id}.meta"
+  [[ -f "$meta" ]] || return 1
+  sed -n "s/^${key}=//p" "$meta" | tail -n1
+}
+
+do_run() {
+  local task="${1:-}"
+  if [[ -z "$task" ]]; then
+    echo "Usage: /run <task>"
+    return 1
+  fi
+  if [[ ! -x "$CODEX_GEMMA_BIN" ]]; then
+    echo "codex-gemma helper not found at $CODEX_GEMMA_BIN"
+    return 1
+  fi
+  "$CODEX_GEMMA_BIN" orchestrate "$task" --max-refine 1 --async
+}
+
+do_jobs() {
+  if [[ ! -x "$CODEX_GEMMA_BIN" ]]; then
+    echo "codex-gemma helper not found at $CODEX_GEMMA_BIN"
+    return 1
+  fi
+  "$CODEX_GEMMA_BIN" jobs
+}
+
+do_job() {
+  local sub="${1:-}"
+  local job_id="${2:-}"
+  local meta unit log result
+  case "$sub" in
+    status)
+      [[ -n "$job_id" ]] || { echo "Usage: /job status <job_id>"; return 1; }
+      "$CODEX_GEMMA_BIN" status-job "$job_id"
+      ;;
+    wait)
+      [[ -n "$job_id" ]] || { echo "Usage: /job wait <job_id>"; return 1; }
+      "$CODEX_GEMMA_BIN" wait "$job_id"
+      ;;
+    logs)
+      [[ -n "$job_id" ]] || { echo "Usage: /job logs <job_id>"; return 1; }
+      log="$CG_STATE_DIR/codex-gemma-jobs/${job_id}.log"
+      [[ -f "$log" ]] || { echo "No log file yet: $log"; return 1; }
+      tail -n 120 "$log"
+      ;;
+    result)
+      [[ -n "$job_id" ]] || { echo "Usage: /job result <job_id>"; return 1; }
+      result="$CG_STATE_DIR/codex-gemma-jobs/${job_id}.result.md"
+      [[ -f "$result" ]] || { echo "No result file yet: $result"; return 1; }
+      cat "$result"
+      ;;
+    cancel)
+      [[ -n "$job_id" ]] || { echo "Usage: /job cancel <job_id>"; return 1; }
+      unit="$(job_read_meta_value "$job_id" unit || true)"
+      if [[ -z "$unit" ]]; then
+        echo "No systemd unit recorded for $job_id."
+        echo "Remediation: check /job status $job_id and stop manually if needed."
+        return 1
+      fi
+      systemctl --user stop "$unit"
+      echo "Requested cancel for $job_id ($unit)"
+      ;;
+    *)
+      echo "Usage: /job status|wait|result|logs|cancel <job_id>"
+      return 1
+      ;;
+  esac
 }
 
 do_mode() {
@@ -550,7 +783,7 @@ run_repl() {
   setup_readline_bindings
 
   while true; do
-    read -e -rp "open-terminal> " line || break
+    read -e -rp "$(prompt_status)" line || break
     case "$line" in
       "" ) continue ;;
       "/help" ) usage ;;
@@ -565,6 +798,12 @@ run_repl() {
       "/endpoint-check" ) check_endpoint ;;
       "/verify" ) do_verify || true ;;
       "/clear" ) do_clear ;;
+      "/contract" ) do_contract ;;
+      /contract\ strict ) do_contract strict ;;
+      /contract\ off ) do_contract off ;;
+      "/statusline" ) do_statusline ;;
+      /statusline\ on ) do_statusline on ;;
+      /statusline\ off ) do_statusline off ;;
       "/history" ) history_show ;;
       /history\ * ) history_show "${line#"/history "}" ;;
       "/resume --all" ) resume_all ;;
@@ -572,6 +811,13 @@ run_repl() {
       "/session new" ) session_new ;;
       /session\ new\ * ) session_new "${line#"/session new "}" ;;
       /session\ use\ * ) session_use "${line#"/session use "}" ;;
+      /run\ * ) do_run "${line#"/run "}" ;;
+      "/jobs" ) do_jobs ;;
+      /job\ status\ * ) do_job status "${line#"/job status "}" ;;
+      /job\ wait\ * ) do_job wait "${line#"/job wait "}" ;;
+      /job\ result\ * ) do_job result "${line#"/job result "}" ;;
+      /job\ logs\ * ) do_job logs "${line#"/job logs "}" ;;
+      /job\ cancel\ * ) do_job cancel "${line#"/job cancel "}" ;;
       "/mode" ) do_mode ;;
       /mode\ chat ) do_mode chat ;;
       /mode\ raw ) do_mode raw ;;
@@ -610,6 +856,21 @@ run_repl() {
       /mode* )
         echo "Usage: /mode [chat|raw]"
         ;;
+      /contract* )
+        echo "Usage: /contract [strict|off]"
+        ;;
+      /statusline* )
+        echo "Usage: /statusline [on|off]"
+        ;;
+      /run )
+        echo "Usage: /run <task>"
+        ;;
+      /jobs* )
+        echo "Usage: /jobs"
+        ;;
+      /job* )
+        echo "Usage: /job status|wait|result|logs|cancel <job_id>"
+        ;;
       /session* )
         echo "Usage: /session list | /session new [name] | /session use <id>"
         ;;
@@ -638,6 +899,27 @@ main() {
     health) do_health ;;
     endpoint) show_endpoint ;;
     endpoint-check) check_endpoint ;;
+    run)
+      shift || true
+      if [[ -z "${*:-}" ]]; then
+        echo "Usage: open-terminal run <task>"
+        exit 1
+      fi
+      do_run "${*}"
+      ;;
+    jobs) do_jobs ;;
+    job)
+      shift || true
+      do_job "${1:-}" "${2:-}"
+      ;;
+    contract)
+      shift || true
+      do_contract "${1:-}"
+      ;;
+    statusline)
+      shift || true
+      do_statusline "${1:-}"
+      ;;
     mode)
       shift || true
       do_mode "${1:-}"
