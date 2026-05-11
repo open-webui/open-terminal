@@ -11,6 +11,8 @@ CHAT_HISTORY_FILE="${XDG_STATE_HOME:-$HOME/.local/state}/open-terminal/chat_hist
 MODEL_ACTIVATE_SCRIPT="${MODEL_ACTIVATE_SCRIPT:-/home/trotsky/Projects/b70-linux-ai-lab/scripts/z490_local_model_activate.sh}"
 WAIT_TIMEOUT_SECONDS="${WAIT_TIMEOUT_SECONDS:-120}"
 OT_AUTO_RETURN_TO_GEMMA=0
+OT_CHAT_MODE="${OT_CHAT_MODE:-chat}"
+OT_LAST_PAYLOAD=""
 mkdir -p "$(dirname "$CHAT_HISTORY_FILE")"
 
 COMMANDS=(
@@ -34,6 +36,11 @@ COMMANDS=(
   "/model custom <url>"
   "/endpoint"
   "/endpoint-check"
+  "/mode"
+  "/mode chat"
+  "/mode raw"
+  "/raw <prompt>"
+  "/diag prompt"
   "/clear"
   "/quit"
 )
@@ -68,6 +75,9 @@ Slash commands inside REPL:
   /model text|vision|gemma|qwen|qwen-temp|openvino|custom <url>
   /endpoint
   /endpoint-check
+  /mode [chat|raw]
+  /raw <prompt>        # send one prompt in raw mode (no history, temp=0)
+  /diag prompt [text]  # print exact outgoing payload (uses text if provided)
   /clear              # clear local chat history
   /help
   /quit
@@ -228,14 +238,20 @@ PY
   fi
 }
 
-chat_send() {
-  local user_text="$1"
-  local endpoint chat_url model payload resp assistant
-  endpoint="$(current_endpoint)"
-  chat_url="${endpoint%/}/chat/completions"
-  model="$(current_model_id)"
-
-  payload="$(python3 - "$CHAT_HISTORY_FILE" "$model" "$user_text" <<'PY'
+build_payload() {
+  local mode="$1"
+  local user_text="$2"
+  local model="$3"
+  local payload=""
+  if [[ "$mode" == "raw" ]]; then
+    payload="$(python3 - "$model" "$user_text" <<'PY'
+import json,sys
+model,user_text=sys.argv[1],sys.argv[2]
+print(json.dumps({"model":model,"messages":[{"role":"user","content":user_text}],"temperature":0}, ensure_ascii=False))
+PY
+)"
+  else
+    payload="$(python3 - "$CHAT_HISTORY_FILE" "$model" "$user_text" <<'PY'
 import json,sys
 hist_path,model,user_text=sys.argv[1],sys.argv[2],sys.argv[3]
 msgs=[]
@@ -254,19 +270,13 @@ msgs.append({"role":"user","content":user_text})
 print(json.dumps({"model":model,"messages":msgs,"temperature":0.2}, ensure_ascii=False))
 PY
 )"
+  fi
+  echo "$payload"
+}
 
-  resp="$(curl -fsS \
-    -H 'Content-Type: application/json' \
-    -H 'Authorization: Bearer dummy' \
-    -d "$payload" \
-    "$chat_url" 2>&1)" || {
-      echo "Chat request failed against $chat_url"
-      echo "$resp"
-      echo "Tip: run /model and select a profile with a live endpoint."
-      return 1
-    }
-
-  assistant="$(python3 - <<'PY' "$resp"
+extract_assistant_text() {
+  local raw="$1"
+  python3 - <<'PY' "$raw"
 import json,sys
 raw=sys.argv[1]
 try:
@@ -283,15 +293,42 @@ if isinstance(msg,list):
     msg="\n".join([p for p in parts if p])
 print(msg if isinstance(msg,str) else str(msg))
 PY
-)"
+}
+
+chat_send() {
+  local user_text="$1"
+  local force_mode="${2:-}"
+  local endpoint chat_url model payload resp assistant mode
+  endpoint="$(current_endpoint)"
+  chat_url="${endpoint%/}/chat/completions"
+  model="$(current_model_id)"
+  mode="${force_mode:-$OT_CHAT_MODE}"
+
+  payload="$(build_payload "$mode" "$user_text" "$model")"
+  OT_LAST_PAYLOAD="$payload"
+
+  resp="$(curl -fsS \
+    -H 'Content-Type: application/json' \
+    -H 'Authorization: Bearer dummy' \
+    -d "$payload" \
+    "$chat_url" 2>&1)" || {
+      echo "Chat request failed against $chat_url"
+      echo "$resp"
+      echo "Tip: run /model and select a profile with a live endpoint."
+      return 1
+    }
+
+  assistant="$(extract_assistant_text "$resp")"
 
   if [[ -z "$assistant" ]]; then
     echo "No assistant content returned."
     return 1
   fi
 
-  printf '{"role":"user","content":%s}\n' "$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$user_text")" >> "$CHAT_HISTORY_FILE"
-  printf '{"role":"assistant","content":%s}\n' "$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$assistant")" >> "$CHAT_HISTORY_FILE"
+  if [[ "$mode" == "chat" ]]; then
+    printf '{"role":"user","content":%s}\n' "$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$user_text")" >> "$CHAT_HISTORY_FILE"
+    printf '{"role":"assistant","content":%s}\n' "$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$assistant")" >> "$CHAT_HISTORY_FILE"
+  fi
   echo "$assistant"
   if [[ "$OT_AUTO_RETURN_TO_GEMMA" -eq 1 ]]; then
     OT_AUTO_RETURN_TO_GEMMA=0
@@ -299,6 +336,28 @@ PY
     echo "Auto-returning to Gemma primary..."
     do_model gemma || true
   fi
+}
+
+do_mode() {
+  local target="${1:-}"
+  if [[ -z "$target" ]]; then
+    echo "Current mode: $OT_CHAT_MODE"
+    return 0
+  fi
+  case "$target" in
+    chat|raw) OT_CHAT_MODE="$target"; echo "Mode set to: $OT_CHAT_MODE" ;;
+    *) echo "Usage: /mode [chat|raw]"; return 1 ;;
+  esac
+}
+
+do_diag_prompt() {
+  local text="${1:-diagnostic-ping}"
+  local mode="${2:-$OT_CHAT_MODE}"
+  local model payload
+  model="$(current_model_id)"
+  payload="$(build_payload "$mode" "$text" "$model")"
+  OT_LAST_PAYLOAD="$payload"
+  echo "$payload"
 }
 
 do_model() {
@@ -380,6 +439,10 @@ run_repl() {
       "/endpoint-check" ) check_endpoint ;;
       "/verify" ) do_verify || true ;;
       "/clear" ) do_clear ;;
+      "/mode" ) do_mode ;;
+      /mode\ chat ) do_mode chat ;;
+      /mode\ raw ) do_mode raw ;;
+      "/diag prompt" ) do_diag_prompt ;;
       "/model" ) do_model || true ;;
       "/models" ) do_model || true ;;
       /model\ text ) do_model text ;;
@@ -398,6 +461,21 @@ run_repl() {
         ;;
       /model* )
         echo "Usage: /model | /model text|vision|gemma|qwen|qwen-temp|openvino|custom <url>"
+        ;;
+      /raw\ * )
+        raw_text="${line#"/raw "}"
+        if [[ -z "$raw_text" || "$raw_text" == "/raw " ]]; then
+          echo "Usage: /raw <prompt>"
+        else
+          chat_send "$raw_text" raw || true
+        fi
+        ;;
+      /diag\ prompt\ * )
+        diag_text="${line#"/diag prompt "}"
+        do_diag_prompt "$diag_text"
+        ;;
+      /mode* )
+        echo "Usage: /mode [chat|raw]"
         ;;
       "/" ) show_commands "/" ;;
       /[a-zA-Z]* )
@@ -423,6 +501,22 @@ main() {
     health) do_health ;;
     endpoint) show_endpoint ;;
     endpoint-check) check_endpoint ;;
+    mode)
+      shift || true
+      do_mode "${1:-}"
+      ;;
+    raw)
+      shift || true
+      if [[ -z "${*:-}" ]]; then
+        echo "Usage: open-terminal raw <prompt>"
+        exit 1
+      fi
+      chat_send "${*}" raw
+      ;;
+    diag-prompt)
+      shift || true
+      do_diag_prompt "${1:-}"
+      ;;
     verify) do_verify ;;
     model)
       shift || true
