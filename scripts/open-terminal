@@ -632,7 +632,7 @@ slash_tab_complete() {
 setup_readline_bindings() {
   # Bind TAB (Ctrl+I) to slash command completion cycling.
   if [[ -t 0 && -t 1 ]]; then
-    bind -x '"\C-i":slash_tab_complete'
+    bind -x '"\C-i":slash_tab_complete' 2>/dev/null || true
   fi
 }
 
