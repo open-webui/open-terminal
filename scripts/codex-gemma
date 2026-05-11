@@ -3,6 +3,10 @@ set -euo pipefail
 
 GEMMA_ENDPOINT="${GEMMA_ENDPOINT:-http://127.0.0.1:8000/v1}"
 GEMMA_UNIT="${GEMMA_UNIT:-z490-gemma-llama.service}"
+CG_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/open-terminal"
+CG_TRACE_FILE="${CG_STATE_DIR}/codex-gemma-trace.log"
+mkdir -p "$CG_STATE_DIR"
+touch "$CG_TRACE_FILE"
 
 usage() {
   cat <<'EOF'
@@ -13,6 +17,7 @@ Usage:
   codex-gemma models
   codex-gemma ask "your prompt"
   codex-gemma ask --file /path/to/prompt.txt
+  codex-gemma follow
   codex-gemma watch "your prompt"
   codex-gemma watch --file /path/to/prompt.txt
   codex-gemma start|stop|restart
@@ -74,7 +79,8 @@ except Exception:
     print("default")
 ')"
 
-  python3 - "$GEMMA_ENDPOINT" "$model" "$prompt" <<'PY'
+  local assistant
+  assistant="$(python3 - "$GEMMA_ENDPOINT" "$model" "$prompt" <<'PY'
 import json,sys,urllib.request
 endpoint,model,prompt=sys.argv[1],sys.argv[2],sys.argv[3]
 url=endpoint.rstrip('/') + '/chat/completions'
@@ -95,12 +101,26 @@ if isinstance(msg,list):
   msg="\n".join([p for p in parts if p])
 print(msg if isinstance(msg,str) else str(msg))
 PY
+)"
+  append_trace "CODEX->GEMMA prompt" "$prompt"
+  append_trace "GEMMA->CODEX response" "$assistant"
+  printf '%s\n' "$assistant"
 }
 
 start_cmd() { systemctl --user start "$GEMMA_UNIT"; }
 stop_cmd() { systemctl --user stop "$GEMMA_UNIT"; }
 restart_cmd() { systemctl --user restart "$GEMMA_UNIT"; }
 logs_cmd() { journalctl --user -u "$GEMMA_UNIT" -n "${1:-120}" --no-pager; }
+
+append_trace() {
+  local role="$1"
+  local text="$2"
+  {
+    printf '[%s] %s\n' "$(date -Is)" "$role"
+    printf '%s\n' "$text"
+    printf '\n'
+  } >> "$CG_TRACE_FILE"
+}
 
 watch_cmd() {
   local prompt=""
@@ -151,6 +171,12 @@ watch_cmd() {
   rm -f "$tmp_log"
 }
 
+follow_cmd() {
+  echo "Following Codex<->Gemma transcript: $CG_TRACE_FILE"
+  echo "Press Ctrl+C to stop."
+  tail -n 80 -f "$CG_TRACE_FILE"
+}
+
 main() {
   case "${1:-help}" in
     status) status_cmd ;;
@@ -159,6 +185,7 @@ main() {
       shift || true
       ask_cmd "$@"
       ;;
+    follow) follow_cmd ;;
     watch)
       shift || true
       watch_cmd "$@"
