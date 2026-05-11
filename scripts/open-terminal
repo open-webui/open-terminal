@@ -7,13 +7,19 @@ VERIFY_SCRIPT="$ROOT_DIR/scripts/verify-decoupled-stack.sh"
 OWUI_BIN="${OWUI_BIN:-$HOME/.local/bin/owui}"
 OWUI_STATE_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/open-webui-custom/model_profile.env"
 DEFAULT_ENDPOINT="http://127.0.0.1:8000/v1"
-CHAT_HISTORY_FILE="${XDG_STATE_HOME:-$HOME/.local/state}/open-terminal/chat_history.jsonl"
+OT_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/open-terminal"
+OT_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/open-terminal"
+OT_SESSIONS_DIR="$OT_STATE_DIR/sessions"
+OT_ACTIVE_SESSION_FILE="$OT_STATE_DIR/active_session"
+OT_MODE_STATE_FILE="$OT_CONFIG_DIR/mode.env"
+CHAT_HISTORY_FILE="$OT_STATE_DIR/chat_history.jsonl"
 MODEL_ACTIVATE_SCRIPT="${MODEL_ACTIVATE_SCRIPT:-/home/trotsky/Projects/b70-linux-ai-lab/scripts/z490_local_model_activate.sh}"
 WAIT_TIMEOUT_SECONDS="${WAIT_TIMEOUT_SECONDS:-120}"
 OT_AUTO_RETURN_TO_GEMMA=0
 OT_CHAT_MODE="${OT_CHAT_MODE:-chat}"
 OT_LAST_PAYLOAD=""
-mkdir -p "$(dirname "$CHAT_HISTORY_FILE")"
+OT_CURRENT_SESSION_ID=""
+mkdir -p "$OT_STATE_DIR" "$OT_CONFIG_DIR" "$OT_SESSIONS_DIR"
 
 COMMANDS=(
   "/help"
@@ -41,6 +47,11 @@ COMMANDS=(
   "/mode raw"
   "/raw <prompt>"
   "/diag prompt"
+  "/history"
+  "/resume --all"
+  "/session list"
+  "/session new [name]"
+  "/session use <id>"
   "/clear"
   "/quit"
 )
@@ -58,6 +69,12 @@ Usage:
   open-terminal repl
   open-terminal start|stop|restart|status|logs|health|verify
   open-terminal model [profile]
+  open-terminal mode [chat|raw]
+  open-terminal raw "<prompt>"
+  open-terminal diag-prompt [text]
+  open-terminal history [N]
+  open-terminal resume --all
+  open-terminal session list|new [name]|use <id>
   open-terminal help
 
 Slash commands inside REPL:
@@ -78,6 +95,11 @@ Slash commands inside REPL:
   /mode [chat|raw]
   /raw <prompt>        # send one prompt in raw mode (no history, temp=0)
   /diag prompt [text]  # print exact outgoing payload (uses text if provided)
+  /history [N]         # show recent lines in current session history
+  /resume --all        # list all sessions
+  /session list
+  /session new [name]
+  /session use <id>
   /clear              # clear local chat history
   /help
   /quit
@@ -94,6 +116,106 @@ do_verify() { "$VERIFY_SCRIPT"; }
 do_clear() {
   : > "$CHAT_HISTORY_FILE"
   echo "Chat history cleared."
+}
+
+slugify_name() {
+  local raw="${1:-}"
+  raw="$(printf '%s' "$raw" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-')"
+  raw="${raw#-}"
+  raw="${raw%-}"
+  echo "${raw:-session}"
+}
+
+session_set_active() {
+  local id="$1"
+  OT_CURRENT_SESSION_ID="$id"
+  CHAT_HISTORY_FILE="$OT_SESSIONS_DIR/${id}.jsonl"
+  printf '%s\n' "$id" > "$OT_ACTIVE_SESSION_FILE"
+  touch "$CHAT_HISTORY_FILE"
+}
+
+session_new() {
+  local name="${1:-}"
+  local stamp id
+  stamp="$(date +%Y%m%d-%H%M%S)"
+  if [[ -n "$name" ]]; then
+    id="${stamp}-$(slugify_name "$name")"
+  else
+    id="$stamp"
+  fi
+  session_set_active "$id"
+  echo "Started session: $OT_CURRENT_SESSION_ID"
+}
+
+session_list() {
+  local file id lines
+  shopt -s nullglob
+  for file in "$OT_SESSIONS_DIR"/*.jsonl; do
+    id="$(basename "$file" .jsonl)"
+    lines="$(wc -l < "$file" | tr -d ' ')"
+    if [[ "$id" == "$OT_CURRENT_SESSION_ID" ]]; then
+      echo "* $id (lines=$lines)"
+    else
+      echo "  $id (lines=$lines)"
+    fi
+  done
+  shopt -u nullglob
+}
+
+session_use() {
+  local id="${1:-}"
+  if [[ -z "$id" ]]; then
+    echo "Usage: /session use <id>"
+    return 1
+  fi
+  if [[ ! -f "$OT_SESSIONS_DIR/${id}.jsonl" ]]; then
+    echo "Session not found: $id"
+    return 1
+  fi
+  session_set_active "$id"
+  echo "Switched to session: $OT_CURRENT_SESSION_ID"
+}
+
+history_show() {
+  local n="${1:-40}"
+  if [[ ! "$n" =~ ^[0-9]+$ ]]; then
+    echo "Usage: /history [N]"
+    return 1
+  fi
+  echo "Session: $OT_CURRENT_SESSION_ID"
+  tail -n "$n" "$CHAT_HISTORY_FILE" 2>/dev/null || true
+}
+
+resume_all() {
+  echo "All sessions:"
+  session_list
+}
+
+load_mode_state() {
+  if [[ -f "$OT_MODE_STATE_FILE" ]]; then
+    # shellcheck disable=SC1090
+    source "$OT_MODE_STATE_FILE"
+    if [[ "${OT_SAVED_MODE:-}" == "chat" || "${OT_SAVED_MODE:-}" == "raw" ]]; then
+      OT_CHAT_MODE="$OT_SAVED_MODE"
+    fi
+  fi
+}
+
+save_mode_state() {
+  printf 'OT_SAVED_MODE=%s\n' "$OT_CHAT_MODE" > "$OT_MODE_STATE_FILE"
+}
+
+init_state() {
+  load_mode_state
+  if [[ -f "$OT_ACTIVE_SESSION_FILE" ]]; then
+    local last
+    last="$(cat "$OT_ACTIVE_SESSION_FILE" 2>/dev/null || true)"
+    if [[ -n "$last" && -f "$OT_SESSIONS_DIR/${last}.jsonl" ]]; then
+      session_set_active "$last"
+      return
+    fi
+  fi
+  session_new "default" >/dev/null
 }
 
 wait_for_models_endpoint() {
@@ -345,7 +467,11 @@ do_mode() {
     return 0
   fi
   case "$target" in
-    chat|raw) OT_CHAT_MODE="$target"; echo "Mode set to: $OT_CHAT_MODE" ;;
+    chat|raw)
+      OT_CHAT_MODE="$target"
+      save_mode_state
+      echo "Mode set to: $OT_CHAT_MODE"
+      ;;
     *) echo "Usage: /mode [chat|raw]"; return 1 ;;
   esac
 }
@@ -439,6 +565,13 @@ run_repl() {
       "/endpoint-check" ) check_endpoint ;;
       "/verify" ) do_verify || true ;;
       "/clear" ) do_clear ;;
+      "/history" ) history_show ;;
+      /history\ * ) history_show "${line#"/history "}" ;;
+      "/resume --all" ) resume_all ;;
+      "/session list" ) session_list ;;
+      "/session new" ) session_new ;;
+      /session\ new\ * ) session_new "${line#"/session new "}" ;;
+      /session\ use\ * ) session_use "${line#"/session use "}" ;;
       "/mode" ) do_mode ;;
       /mode\ chat ) do_mode chat ;;
       /mode\ raw ) do_mode raw ;;
@@ -477,6 +610,9 @@ run_repl() {
       /mode* )
         echo "Usage: /mode [chat|raw]"
         ;;
+      /session* )
+        echo "Usage: /session list | /session new [name] | /session use <id>"
+        ;;
       "/" ) show_commands "/" ;;
       /[a-zA-Z]* )
         # If not an exact command above, show prefix matches (e.g. /m, /mo).
@@ -490,6 +626,7 @@ run_repl() {
 }
 
 main() {
+  init_state
   cmd="${1:-repl}"
   case "$cmd" in
     repl) run_repl ;;
@@ -516,6 +653,28 @@ main() {
     diag-prompt)
       shift || true
       do_diag_prompt "${1:-}"
+      ;;
+    history)
+      shift || true
+      history_show "${1:-40}"
+      ;;
+    resume)
+      shift || true
+      if [[ "${1:-}" == "--all" ]]; then
+        resume_all
+      else
+        echo "Usage: open-terminal resume --all"
+        exit 1
+      fi
+      ;;
+    session)
+      shift || true
+      case "${1:-list}" in
+        list) session_list ;;
+        new) shift || true; session_new "${*:-}" ;;
+        use) shift || true; session_use "${1:-}" ;;
+        *) echo "Usage: open-terminal session list|new [name]|use <id>"; exit 1 ;;
+      esac
       ;;
     verify) do_verify ;;
     model)
