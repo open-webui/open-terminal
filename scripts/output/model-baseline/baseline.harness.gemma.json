@@ -1,0 +1,42 @@
+{
+  "report_type": "open-terminal-model-baseline",
+  "generated_at": "2026-05-11T13:21:59Z",
+  "cases_path": "scripts/model_baseline_cases.json",
+  "mode": "harness",
+  "models": {
+    "gemma": {
+      "status": "ok",
+      "endpoint": "via-codex-gemma",
+      "model_id": "codex-gemma-policy-path",
+      "summary": {
+        "passed": 3,
+        "total": 3,
+        "compliance_percent": 100.0,
+        "avg_latency_ms": 3693
+      },
+      "results": [
+        {
+          "case_id": "codeblock_only",
+          "ok": true,
+          "latency_ms": 1062,
+          "detail": "ok",
+          "output_preview": "```python\\ndef add(a: int, b: int) -> int:\\n    return a + b\\n\\nassert add(2, 3) == 5\\n```"
+        },
+        {
+          "case_id": "group_anagrams_contract",
+          "ok": true,
+          "latency_ms": 9561,
+          "detail": "ok",
+          "output_preview": "```python\\nfrom collections import OrderedDict\\n\\ndef group_anagrams(words: list[str]) -> list[list[str]]:\\n    \"\"\"\\n    Groups anagrams together from a list of words.\\n    \\n    Groups a"
+        },
+        {
+          "case_id": "exact_literal",
+          "ok": true,
+          "latency_ms": 457,
+          "detail": "ok",
+          "output_preview": "OK_7F3C"
+        }
+      ]
+    }
+  }
+}

@@ -2,6 +2,7 @@
 import argparse
 import json
 import re
+import subprocess
 import sys
 import time
 from dataclasses import dataclass
@@ -110,6 +111,40 @@ def run_case(endpoint: str, model: str, case: dict[str, Any]) -> CaseResult:
     return CaseResult(case_id=case["id"], ok=ok, latency_ms=latency_ms, detail=detail, output_preview=preview)
 
 
+def run_case_via_harness(case: dict[str, Any], retries: int) -> CaseResult:
+    cmd = [
+        "scripts/codex-gemma",
+        "ask",
+        "--policy",
+        "strict",
+        "--retries",
+        str(retries),
+        "--fallback",
+        "none",
+        "--single-model-lock",
+        "on",
+        case["prompt"],
+    ]
+    t0 = time.time()
+    p = subprocess.run(cmd, capture_output=True, text=True)
+    latency_ms = int((time.time() - t0) * 1000)
+    if p.returncode != 0:
+        detail = f"harness-failed: {p.stderr.strip() or p.stdout.strip()}"
+        return CaseResult(case_id=case["id"], ok=False, latency_ms=latency_ms, detail=detail, output_preview="")
+    text = p.stdout.strip()
+    check = case["check"]
+    if check == "exact_one_code_block":
+        ok, detail = check_exact_one_code_block(text)
+    elif check == "group_anagrams_contract":
+        ok, detail = check_group_anagrams_contract(text)
+    elif check == "exact_literal":
+        ok, detail = check_exact_literal(text, str(case["literal"]))
+    else:
+        ok, detail = False, f"unknown check: {check}"
+    preview = text[:180].replace("\n", "\\n")
+    return CaseResult(case_id=case["id"], ok=ok, latency_ms=latency_ms, detail=detail, output_preview=preview)
+
+
 def load_cases(path: Path) -> list[dict[str, Any]]:
     data = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(data, list):
@@ -127,6 +162,13 @@ def main() -> int:
         default="gemma,qwen2",
         help="Comma-separated model keys from built-in endpoint map: gemma,qwen2",
     )
+    parser.add_argument(
+        "--mode",
+        default="direct",
+        choices=["direct", "harness"],
+        help="direct = call model endpoints directly, harness = call scripts/codex-gemma ask policy path",
+    )
+    parser.add_argument("--retries", type=int, default=1, help="Harness mode retries passed to codex-gemma ask.")
     args = parser.parse_args()
 
     cases = load_cases(Path(args.cases))
@@ -136,6 +178,7 @@ def main() -> int:
         "report_type": "open-terminal-model-baseline",
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "cases_path": str(Path(args.cases)),
+        "mode": args.mode,
         "models": {},
     }
 
@@ -144,27 +187,38 @@ def main() -> int:
         "",
         f"- generated_at: `{report['generated_at']}`",
         f"- cases: `{args.cases}`",
+        f"- mode: `{args.mode}`",
         "",
     ]
 
     for key in selected:
         endpoint = DEFAULT_ENDPOINTS.get(key)
-        if not endpoint:
-            report["models"][key] = {"status": "unknown-model-key"}
-            md_lines.extend([f"## {key}", "", "- status: unknown model key", ""])
-            continue
-        try:
-            model_id = resolve_model_id(endpoint)
-        except (URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
-            report["models"][key] = {"status": "unreachable", "endpoint": endpoint, "error": str(exc)}
-            md_lines.extend([f"## {key}", "", f"- endpoint: `{endpoint}`", "- status: unreachable", f"- error: `{exc}`", ""])
-            continue
+        if args.mode == "direct":
+            if not endpoint:
+                report["models"][key] = {"status": "unknown-model-key"}
+                md_lines.extend([f"## {key}", "", "- status: unknown model key", ""])
+                continue
+            try:
+                model_id = resolve_model_id(endpoint)
+            except (URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+                report["models"][key] = {"status": "unreachable", "endpoint": endpoint, "error": str(exc)}
+                md_lines.extend([f"## {key}", "", f"- endpoint: `{endpoint}`", "- status: unreachable", f"- error: `{exc}`", ""])
+                continue
+        else:
+            model_id = "codex-gemma-policy-path"
+            if key != "gemma":
+                report["models"][key] = {"status": "skipped", "reason": "harness mode currently routes through gemma entrypoint"}
+                md_lines.extend([f"## {key}", "", "- status: skipped", "- reason: harness mode routes through codex-gemma (gemma entrypoint).", ""])
+                continue
 
         results: list[dict[str, Any]] = []
         passed = 0
         for case in cases:
             try:
-                r = run_case(endpoint, model_id, case)
+                if args.mode == "direct":
+                    r = run_case(endpoint, model_id, case)
+                else:
+                    r = run_case_via_harness(case, args.retries)
             except Exception as exc:  # noqa: BLE001
                 r = CaseResult(case_id=case["id"], ok=False, latency_ms=0, detail=f"request-failed: {exc}", output_preview="")
             passed += 1 if r.ok else 0
@@ -183,7 +237,7 @@ def main() -> int:
         avg_latency = int(sum(x["latency_ms"] for x in results) / total) if total else 0
         report["models"][key] = {
             "status": "ok",
-            "endpoint": endpoint,
+            "endpoint": endpoint if args.mode == "direct" else "via-codex-gemma",
             "model_id": model_id,
             "summary": {
                 "passed": passed,
@@ -198,7 +252,7 @@ def main() -> int:
             [
                 f"## {key}",
                 "",
-                f"- endpoint: `{endpoint}`",
+                f"- endpoint: `{endpoint if args.mode == 'direct' else 'via-codex-gemma'}`",
                 f"- model_id: `{model_id}`",
                 f"- compliance: `{passed}/{total}` ({compliance}%)",
                 f"- avg_latency_ms: `{avg_latency}`",

@@ -6,7 +6,7 @@ GEMMA_UNIT="${GEMMA_UNIT:-z490-gemma-llama.service}"
 QWEN_ENDPOINT="${QWEN_ENDPOINT:-http://127.0.0.1:8091/v1}"
 CODEX_GEMMA_POLICY_MODE="${CODEX_GEMMA_POLICY_MODE:-strict}"
 CODEX_GEMMA_MAX_RETRIES="${CODEX_GEMMA_MAX_RETRIES:-2}"
-CODEX_GEMMA_FALLBACK_ON_FAIL="${CODEX_GEMMA_FALLBACK_ON_FAIL:-1}"
+CODEX_GEMMA_FALLBACK_ON_FAIL="${CODEX_GEMMA_FALLBACK_ON_FAIL:-0}"
 CG_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/open-terminal"
 CG_TRACE_FILE="${CG_STATE_DIR}/codex-gemma-trace.log"
 CG_JOBS_DIR="${CG_STATE_DIR}/codex-gemma-jobs"
@@ -20,7 +20,7 @@ codex-gemma - bridge for Codex CLI to message/control local Gemma backend
 Usage:
   codex-gemma status
   codex-gemma models
-  codex-gemma ask [--policy strict|off] [--retries N] [--fallback none|qwen2] "your prompt"
+  codex-gemma ask [--policy strict|off] [--retries N] [--fallback none|qwen2] [--single-model-lock on|off] "your prompt"
   codex-gemma ask --file /path/to/prompt.txt
   codex-gemma orchestrate "task" [--max-refine N] [--async]
   codex-gemma jobs
@@ -40,7 +40,7 @@ Env overrides:
   CODEX_GEMMA_NOTIFY_CMD (optional completion hook; receives "<job_id> <status>")
   CODEX_GEMMA_POLICY_MODE (strict|off, default: strict)
   CODEX_GEMMA_MAX_RETRIES (default: 2)
-  CODEX_GEMMA_FALLBACK_ON_FAIL (0|1, default: 1)
+  CODEX_GEMMA_FALLBACK_ON_FAIL (0|1, default: 0)
 EOF
 }
 
@@ -201,19 +201,30 @@ read_prompt_arg() {
 ask_cmd() {
   local policy="$CODEX_GEMMA_POLICY_MODE"
   local retries="$CODEX_GEMMA_MAX_RETRIES"
-  local fallback="qwen2"
+  local fallback="none"
+  local single_model_lock="on"
   local args=()
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --policy) shift; policy="${1:-strict}" ;;
       --retries) shift; retries="${1:-2}" ;;
-      --fallback) shift; fallback="${1:-qwen2}" ;;
+      --fallback) shift; fallback="${1:-none}" ;;
+      --single-model-lock) shift; single_model_lock="${1:-on}" ;;
       *) args+=("$1") ;;
     esac
     shift || true
   done
   if ! [[ "$retries" =~ ^[0-9]+$ ]]; then
     echo "Invalid --retries value: $retries" >&2
+    return 1
+  fi
+
+  if [[ "$single_model_lock" != "on" && "$single_model_lock" != "off" ]]; then
+    echo "Invalid --single-model-lock value: $single_model_lock (expected on|off)" >&2
+    return 1
+  fi
+  if [[ "$fallback" != "none" && "$fallback" != "qwen2" ]]; then
+    echo "Invalid --fallback value: $fallback (expected none|qwen2)" >&2
     return 1
   fi
 
@@ -229,7 +240,7 @@ ask_cmd() {
   local assistant=""
   local validation_msg=""
 
-  append_trace "POLICY" "mode=$policy retries=$retries task_class=$task_class endpoint=$endpoint"
+  append_trace "POLICY" "mode=$policy retries=$retries task_class=$task_class endpoint=$endpoint fallback=$fallback single_model_lock=$single_model_lock"
   while (( attempt <= retries )); do
     assistant="$(chat_once "$endpoint" "$model" "$current_prompt")" || {
       append_trace "ASK_ERROR" "attempt=$attempt endpoint=$endpoint"
@@ -252,7 +263,7 @@ ask_cmd() {
     attempt=$((attempt + 1))
   done
 
-  if [[ "$policy" == "strict" && "$CODEX_GEMMA_FALLBACK_ON_FAIL" == "1" && "$fallback" == "qwen2" ]]; then
+  if [[ "$single_model_lock" == "off" && "$policy" == "strict" && "$CODEX_GEMMA_FALLBACK_ON_FAIL" == "1" && "$fallback" == "qwen2" ]]; then
     local fb_endpoint="$QWEN_ENDPOINT"
     local fb_model=""
     fb_model="$(resolve_model_id_for_endpoint "$fb_endpoint" 2>/dev/null || true)"
@@ -276,6 +287,9 @@ ask_cmd() {
   fi
 
   echo "Request failed strict policy after retries."
+  if [[ "$single_model_lock" == "on" ]]; then
+    echo "Fallback not attempted due to single-model lock."
+  fi
   if [[ -n "$validation_msg" ]]; then
     echo "Last validation error: $validation_msg"
   fi
