@@ -13,6 +13,8 @@ Usage:
   codex-gemma models
   codex-gemma ask "your prompt"
   codex-gemma ask --file /path/to/prompt.txt
+  codex-gemma watch "your prompt"
+  codex-gemma watch --file /path/to/prompt.txt
   codex-gemma start|stop|restart
   codex-gemma logs [N]
   codex-gemma endpoint
@@ -100,6 +102,55 @@ stop_cmd() { systemctl --user stop "$GEMMA_UNIT"; }
 restart_cmd() { systemctl --user restart "$GEMMA_UNIT"; }
 logs_cmd() { journalctl --user -u "$GEMMA_UNIT" -n "${1:-120}" --no-pager; }
 
+watch_cmd() {
+  local prompt=""
+  if [[ "${1:-}" == "--file" ]]; then
+    if [[ -z "${2:-}" || ! -f "$2" ]]; then
+      echo "Missing prompt file."
+      exit 1
+    fi
+    prompt="$(cat "$2")"
+  else
+    prompt="${1:-}"
+  fi
+
+  if [[ -z "$prompt" ]]; then
+    echo "Prompt is empty."
+    exit 1
+  fi
+
+  local tmp_log
+  tmp_log="$(mktemp)"
+  echo "Starting live log tail for $GEMMA_UNIT ..."
+  journalctl --user -u "$GEMMA_UNIT" -f --no-pager > "$tmp_log" 2>&1 &
+  local tail_pid=$!
+
+  # Give tail a moment to attach before sending request.
+  sleep 0.4
+
+  echo
+  echo ">>> codex-gemma ask"
+  if ! ask_cmd "$prompt"; then
+    kill "$tail_pid" >/dev/null 2>&1 || true
+    wait "$tail_pid" 2>/dev/null || true
+    echo
+    echo "Request failed. Recent logs:"
+    tail -n 80 "$tmp_log" || true
+    rm -f "$tmp_log"
+    return 1
+  fi
+
+  # Capture a short post-request window, then stop tail and print recent lines.
+  sleep 1.2
+  kill "$tail_pid" >/dev/null 2>&1 || true
+  wait "$tail_pid" 2>/dev/null || true
+
+  echo
+  echo ">>> recent $GEMMA_UNIT logs"
+  tail -n 80 "$tmp_log" || true
+  rm -f "$tmp_log"
+}
+
 main() {
   case "${1:-help}" in
     status) status_cmd ;;
@@ -107,6 +158,10 @@ main() {
     ask)
       shift || true
       ask_cmd "$@"
+      ;;
+    watch)
+      shift || true
+      watch_cmd "$@"
       ;;
     start) start_cmd ;;
     stop) stop_cmd ;;
