@@ -1,0 +1,20 @@
+[Unit]
+Description=Midnight DUST Watcher (auto deploy on spendable DUST)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Projects/open-terminal
+Environment=WATCH_REPO=%h/Projects/ba-midnight/midnight-gateway
+Environment=WATCH_ENV_FILE=%h/.local/share/ba-midnight/probe-wallet-seed.env
+Environment=WATCH_INTERVAL_SEC=120
+Environment=WATCH_MAX_MINUTES=240
+Environment=WATCH_SYNC_TIMEOUT_MS=120000
+Environment=WATCH_DEPLOY_TIMEOUT_MS=180000
+ExecStart=%h/Projects/open-terminal/scripts/midnight-dust-watcher --repo ${WATCH_REPO} --env-file ${WATCH_ENV_FILE} --interval-sec ${WATCH_INTERVAL_SEC} --max-minutes ${WATCH_MAX_MINUTES} --timeout-ms ${WATCH_SYNC_TIMEOUT_MS} --deploy-timeout-ms ${WATCH_DEPLOY_TIMEOUT_MS}
+Restart=on-failure
+RestartSec=15
+
+[Install]
+WantedBy=default.target

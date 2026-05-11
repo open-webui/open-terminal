@@ -23,7 +23,62 @@ OT_STATUS_PROMPT="${OT_STATUS_PROMPT:-1}"
 OT_CONTRACT_MODE="${OT_CONTRACT_MODE:-strict}"
 OT_CHAT_RETRY_MAX="${OT_CHAT_RETRY_MAX:-2}"
 CODEX_GEMMA_BIN="${CODEX_GEMMA_BIN:-$ROOT_DIR/scripts/codex-gemma}"
+OT_PRETTY_OUTPUT="${OT_PRETTY_OUTPUT:-auto}"
 mkdir -p "$OT_STATE_DIR" "$OT_CONFIG_DIR" "$OT_SESSIONS_DIR"
+
+CLR_RESET=""
+CLR_GREEN=""
+CLR_RED=""
+CLR_CYAN=""
+
+init_colors() {
+  local use_color=0
+  if [[ "$OT_PRETTY_OUTPUT" == "on" ]]; then
+    use_color=1
+  elif [[ "$OT_PRETTY_OUTPUT" == "auto" ]] && [[ -t 1 ]] && command -v tput >/dev/null 2>&1; then
+    if [[ "$(tput colors 2>/dev/null || echo 0)" -ge 8 ]]; then
+      use_color=1
+    fi
+  fi
+  if [[ "$use_color" -eq 1 ]]; then
+    CLR_RESET=$'\033[0m'
+    CLR_GREEN=$'\033[32m'
+    CLR_RED=$'\033[31m'
+    CLR_CYAN=$'\033[36m'
+  fi
+}
+
+pretty_print_file() {
+  local file="$1"
+  local mode="${2:-plain}"
+  [[ -f "$file" ]] || { echo "Missing file: $file"; return 1; }
+
+  if [[ "$OT_PRETTY_OUTPUT" == "off" ]]; then
+    cat "$file"
+    return 0
+  fi
+
+  if [[ "$mode" == "diff" ]] && command -v delta >/dev/null 2>&1; then
+    delta --line-numbers --paging=never "$file" || cat "$file"
+    return 0
+  fi
+
+  if command -v bat >/dev/null 2>&1; then
+    bat --style=plain,numbers --paging=never --color=always "$file" || cat "$file"
+    return 0
+  fi
+
+  if [[ "$mode" == "diff" ]]; then
+    nl -ba "$file" | awk \
+      -v green="$CLR_GREEN" -v red="$CLR_RED" -v cyan="$CLR_CYAN" -v reset="$CLR_RESET" '
+      /^\s*[0-9]+\s+\+/ { print green $0 reset; next }
+      /^\s*[0-9]+\s+\-/ { print red $0 reset; next }
+      /^\s*[0-9]+\s+@@/ { print cyan $0 reset; next }
+      { print }'
+  else
+    nl -ba "$file"
+  fi
+}
 
 COMMANDS=(
   "/help"
@@ -98,6 +153,9 @@ Usage:
   open-terminal resume --all
   open-terminal session list|new [name]|use <id>
   open-terminal help
+
+Env:
+  OT_PRETTY_OUTPUT=auto|on|off  # numbered/colorized rendering for file outputs
 
 Slash commands inside REPL:
   /
@@ -875,13 +933,21 @@ do_job() {
       [[ -n "$job_id" ]] || { echo "Usage: /job logs <job_id>"; return 1; }
       log="$CG_STATE_DIR/codex-gemma-jobs/${job_id}.log"
       [[ -f "$log" ]] || { echo "No log file yet: $log"; return 1; }
-      tail -n 120 "$log"
+      local tmp_log
+      tmp_log="$(mktemp)"
+      tail -n 120 "$log" > "$tmp_log"
+      pretty_print_file "$tmp_log" plain
+      rm -f "$tmp_log"
       ;;
     result)
       [[ -n "$job_id" ]] || { echo "Usage: /job result <job_id>"; return 1; }
       result="$CG_STATE_DIR/codex-gemma-jobs/${job_id}.result.md"
       [[ -f "$result" ]] || { echo "No result file yet: $result"; return 1; }
-      cat "$result"
+      if rg -q '^(\+\+\+ |--- |@@ )' "$result" 2>/dev/null; then
+        pretty_print_file "$result" diff
+      else
+        pretty_print_file "$result" plain
+      fi
       ;;
     cancel)
       [[ -n "$job_id" ]] || { echo "Usage: /job cancel <job_id>"; return 1; }
@@ -986,6 +1052,7 @@ check_endpoint() {
 }
 
 run_repl() {
+  init_colors
   echo "open-terminal chat REPL."
   echo "Hints: type '/' for interactive menu, '/<prefix>' to filter, TAB to complete, Ctrl+C to exit."
   trap 'echo; echo "Exiting open-terminal REPL."; exit 0' INT
