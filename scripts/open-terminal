@@ -27,6 +27,7 @@ mkdir -p "$OT_STATE_DIR" "$OT_CONFIG_DIR" "$OT_SESSIONS_DIR"
 
 COMMANDS=(
   "/help"
+  "/menu"
   "/q"
   "/start"
   "/stop"
@@ -85,6 +86,7 @@ Usage:
   open-terminal start|stop|restart|status|logs|health|verify
   open-terminal model [profile]
   open-terminal mode [chat|raw]
+  open-terminal menu
   open-terminal run "<task>"
   open-terminal jobs
   open-terminal job status|wait|result|logs|cancel <job_id>
@@ -99,6 +101,7 @@ Usage:
 
 Slash commands inside REPL:
   /
+  /menu                # interactive command picker
   /<prefix>           # filter commands, e.g. /m
   TAB                 # cycle matching slash commands
   /start
@@ -336,6 +339,35 @@ show_commands() {
   fi
 }
 
+pick_command_interactive() {
+  local selection=""
+  if command -v fzf >/dev/null 2>&1; then
+    selection="$(printf '%s\n' "${COMMANDS[@]}" | fzf --prompt='slash> ' --height=40% --layout=reverse --border || true)"
+  else
+    echo "Interactive menu (fzf not installed, using numbered picker):" >&2
+    local i=1
+    local cmd
+    for cmd in "${COMMANDS[@]}"; do
+      printf '%2d) %s\n' "$i" "$cmd" >&2
+      i=$((i + 1))
+    done
+    read -r -p "Choice [1-$((i-1))]: " choice >&2
+    if [[ "${choice:-}" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice < i )); then
+      selection="${COMMANDS[$((choice-1))]}"
+    fi
+  fi
+  printf '%s' "$selection"
+}
+
+canonicalize_menu_choice() {
+  local selected="$1"
+  case "$selected" in
+    "/model qwen (on-demand warm-up)") echo "/model qwen" ;;
+    "/model qwen-temp (one reply, then auto-return to gemma)") echo "/model qwen-temp" ;;
+    *) echo "$selected" ;;
+  esac
+}
+
 build_command_matches() {
   local prefix="$1"
   local normalized="${prefix#/}"
@@ -503,6 +535,30 @@ if "print exactly this string and nothing else:" in prompt:
         target = m.group(1).strip()
         if candidate.strip() != target:
             fail(f"expected exact literal '{target}'")
+
+if "def group_anagrams(words: list[str]) -> list[list[str]]" in prompt:
+    if "```" not in candidate:
+        fail("expected fenced python code block for group_anagrams task")
+    blocks = re.findall(r"```(?:python)?\n([\s\S]*?)\n```", candidate)
+    if len(blocks) != 1:
+        fail("expected exactly one code block")
+    code = blocks[0]
+    if "def group_anagrams(words: list[str]) -> list[list[str]]" not in code:
+        fail("missing exact function signature")
+    if '"""' not in code and "'''" not in code:
+        fail("missing docstring")
+    assert_count = len(re.findall(r"^\s*assert\s+", code, flags=re.MULTILINE))
+    if assert_count != 5:
+        fail(f"expected exactly 5 assert tests, found {assert_count}")
+    needed = [
+        "case-insensitive",
+        "non-alphabetic",
+        "preserve",
+        "empty input",
+    ]
+    lowered = code.lower()
+    if sum(1 for item in needed if item in lowered) < 2:
+        fail("code/comments/tests appear to miss key requirements coverage")
 
 print("ok")
 PY
@@ -787,6 +843,24 @@ run_repl() {
     case "$line" in
       "" ) continue ;;
       "/help" ) usage ;;
+      "/menu" )
+        picked="$(pick_command_interactive)"
+        if [[ -z "$picked" ]]; then
+          echo "No command selected."
+        else
+          picked="$(canonicalize_menu_choice "$picked")"
+          echo "Selected: $picked"
+          case "$picked" in
+            "/start"|"/stop"|"/restart"|"/status"|"/logs"|"/health"|"/verify"|"/endpoint"|"/endpoint-check"|"/model"|"/models"|"/mode"|"/history"|"/resume --all"|"/session list"|"/session new"|"/jobs"|"/contract"|"/statusline"|"/help"|"/clear")
+              line="$picked"
+              ;;
+            *)
+              echo "This command needs extra input. Run it directly: $picked"
+              continue
+              ;;
+          esac
+        fi
+        ;;
       "/quit"|"/exit"|"/q" ) break ;;
       "/start" ) do_start ;;
       "/stop" ) do_stop ;;
@@ -874,7 +948,24 @@ run_repl() {
       /session* )
         echo "Usage: /session list | /session new [name] | /session use <id>"
         ;;
-      "/" ) show_commands "/" ;;
+      "/" )
+        picked="$(pick_command_interactive)"
+        if [[ -z "$picked" ]]; then
+          show_commands "/"
+        else
+          picked="$(canonicalize_menu_choice "$picked")"
+          echo "Selected: $picked"
+          case "$picked" in
+            "/start"|"/stop"|"/restart"|"/status"|"/logs"|"/health"|"/verify"|"/endpoint"|"/endpoint-check"|"/model"|"/models"|"/mode"|"/history"|"/resume --all"|"/session list"|"/session new"|"/jobs"|"/contract"|"/statusline"|"/help"|"/clear")
+              line="$picked"
+              ;;
+            *)
+              echo "This command needs extra input. Run it directly: $picked"
+              continue
+              ;;
+          esac
+        fi
+        ;;
       /[a-zA-Z]* )
         # If not an exact command above, show prefix matches (e.g. /m, /mo).
         show_commands "$line"
@@ -899,6 +990,14 @@ main() {
     health) do_health ;;
     endpoint) show_endpoint ;;
     endpoint-check) check_endpoint ;;
+    menu)
+      picked="$(pick_command_interactive)"
+      if [[ -z "$picked" ]]; then
+        echo "No command selected."
+        exit 1
+      fi
+      echo "Selected: $(canonicalize_menu_choice "$picked")"
+      ;;
     run)
       shift || true
       if [[ -z "${*:-}" ]]; then

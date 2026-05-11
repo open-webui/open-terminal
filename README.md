@@ -41,12 +41,15 @@ open-terminal
 Inside REPL:
 
 - `/` shows command palette
+- `/menu` opens an interactive command picker (fzf if available; numbered fallback)
 - `/<prefix>` filters commands
 - `TAB` cycles command completion
 - `/run "<task>"` starts an async codex-gemma worker job
 - `/jobs` and `/job status|wait|result|logs|cancel <job_id>` manage async jobs
 - `/contract strict|off` toggles response-contract enforcement (default: strict)
 - `/statusline on|off` toggles prompt status line (`mode|model|cwd`)
+
+Strict contract mode includes auto-repair retries and task-shape validation for constrained prompts (for example exact-output and single-code-block coding tasks).
 
 Default local baseline:
 

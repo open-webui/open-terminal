@@ -39,7 +39,8 @@ This document defines the local, standalone baseline for OpenTerminal as an agen
 - Chat-first REPL: text input sends chat messages by default.
 - Slash-command command mode: enter commands with `/...`.
 - Slash discoverability:
-  - `/` lists all commands
+  - `/` opens interactive command picker (fzf when installed; numbered fallback)
+  - `/menu` opens interactive command picker explicitly
   - `/<prefix>` filters command list
   - `TAB` cycles slash command completions
 - Persistent status prompt (default enabled):
@@ -47,6 +48,7 @@ This document defines the local, standalone baseline for OpenTerminal as an agen
 - Contract mode (default `strict`):
   - validates strict output-format prompts
   - auto-retries with repair prompt on format failure
+  - enforces stronger coding-task shape checks (single code block, required signature/tests in constrained prompts)
 - Async orchestration jobs (via `codex-gemma`):
   - `/run <task>`
   - `/jobs`
