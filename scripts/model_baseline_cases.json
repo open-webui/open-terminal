@@ -5,7 +5,17 @@
     "prompt": "Return exactly one runnable Python code block and nothing else. Write a function add(a: int, b: int) -> int and one assert test."
   },
   {
+    "id": "codeblock_factorial",
+    "check": "exact_one_code_block",
+    "prompt": "Return exactly one runnable Python code block and nothing else. Write factorial(n: int) -> int with input validation and two assert tests."
+  },
+  {
     "id": "group_anagrams_contract",
+    "check": "group_anagrams_contract",
+    "prompt": "Return exactly one runnable Python code block and nothing else.\n\nImplement:\n\ndef group_anagrams(words: list[str]) -> list[list[str]]\n\nRequirements:\n- Group anagrams together.\n- Preserve original word order within each group.\n- Preserve group order by first appearance.\n- Case-insensitive grouping; preserve original casing in output.\n- Skip tokens that are empty or contain non-alphabetic characters.\n- Include docstring and type hints.\n- Include exactly 5 assert tests:\n  1) basic anagrams\n  2) mixed casing\n  3) duplicates\n  4) invalid tokens\n  5) empty input"
+  },
+  {
+    "id": "group_anagrams_contract_repeat",
     "check": "group_anagrams_contract",
     "prompt": "Return exactly one runnable Python code block and nothing else.\n\nImplement:\n\ndef group_anagrams(words: list[str]) -> list[list[str]]\n\nRequirements:\n- Group anagrams together.\n- Preserve original word order within each group.\n- Preserve group order by first appearance.\n- Case-insensitive grouping; preserve original casing in output.\n- Skip tokens that are empty or contain non-alphabetic characters.\n- Include docstring and type hints.\n- Include exactly 5 assert tests:\n  1) basic anagrams\n  2) mixed casing\n  3) duplicates\n  4) invalid tokens\n  5) empty input"
   },
@@ -14,5 +24,32 @@
     "check": "exact_literal",
     "literal": "OK_7F3C",
     "prompt": "Print exactly this string and nothing else:\nOK_7F3C"
+  },
+  {
+    "id": "exact_literal_alt",
+    "check": "exact_literal",
+    "literal": "PASS_TOKEN_91A",
+    "prompt": "Print exactly this string and nothing else:\nPASS_TOKEN_91A"
+  },
+  {
+    "id": "exact_literal_short",
+    "check": "exact_literal",
+    "literal": "A1",
+    "prompt": "Print exactly this string and nothing else:\nA1"
+  },
+  {
+    "id": "codeblock_sum_list",
+    "check": "exact_one_code_block",
+    "prompt": "Return exactly one runnable Python code block and nothing else. Implement sum_positive(nums: list[int]) -> int that ignores negatives and include one assert."
+  },
+  {
+    "id": "codeblock_reverse_words",
+    "check": "exact_one_code_block",
+    "prompt": "Return exactly one runnable Python code block and nothing else. Implement reverse_words(s: str) -> str and include one assert."
+  },
+  {
+    "id": "codeblock_palindrome",
+    "check": "exact_one_code_block",
+    "prompt": "Return exactly one runnable Python code block and nothing else. Implement is_palindrome(s: str) -> bool and include two asserts."
   }
 ]
