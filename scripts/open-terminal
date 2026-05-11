@@ -86,6 +86,7 @@ COMMANDS=(
   "/q"
   "/start"
   "/stop"
+  "/stop <job_id|watcher|all-jobs>"
   "/restart"
   "/status"
   "/logs"
@@ -115,6 +116,7 @@ COMMANDS=(
   "/clear"
   "/run <task>"
   "/jobs"
+  "/ps"
   "/job status <job_id>"
   "/job wait <job_id>"
   "/job result <job_id>"
@@ -166,6 +168,7 @@ Slash commands inside REPL:
   Ctrl+C              # exit REPL
   /start
   /stop
+  /stop <job_id|watcher|all-jobs>
   /restart
   /status
   /logs
@@ -185,6 +188,7 @@ Slash commands inside REPL:
   /session use <id>
   /run <task>          # async orchestration job via codex-gemma
   /jobs
+  /ps                 # quick background process view
   /job status <job_id>
   /job wait <job_id>
   /job result <job_id>
@@ -206,6 +210,7 @@ command_description() {
     "/q"|"/quit"|"/exit") echo "Exit REPL." ;;
     "/start") echo "Start open-terminal systemd user service." ;;
     "/stop") echo "Stop open-terminal systemd user service." ;;
+    "/stop <job_id|watcher|all-jobs>") echo "Stop a background watcher or async job." ;;
     "/restart") echo "Restart open-terminal systemd user service." ;;
     "/status") echo "Show systemd service status." ;;
     "/logs") echo "Show recent service logs." ;;
@@ -232,6 +237,7 @@ command_description() {
     "/clear") echo "Clear active session history file." ;;
     "/run <task>") echo "Start async codex-gemma worker job." ;;
     "/jobs") echo "List async jobs." ;;
+    "/ps") echo "Show background jobs and watcher service status." ;;
     "/job status <job_id>") echo "Show job metadata and state." ;;
     "/job wait <job_id>") echo "Wait for job completion." ;;
     "/job result <job_id>") echo "Print job result output." ;;
@@ -916,6 +922,48 @@ do_jobs() {
   "$CODEX_GEMMA_BIN" jobs
 }
 
+do_ps() {
+  echo "[async-jobs]"
+  do_jobs || true
+  echo
+  echo "[watcher]"
+  if systemctl --user is-active --quiet midnight-dust-watcher.service; then
+    echo "midnight-dust-watcher.service: active"
+  else
+    echo "midnight-dust-watcher.service: inactive"
+  fi
+}
+
+do_stop_target() {
+  local target="${1:-}"
+  local meta unit
+  case "$target" in
+    watcher)
+      systemctl --user stop midnight-dust-watcher.service
+      echo "Stopped midnight-dust-watcher.service"
+      ;;
+    all-jobs)
+      if [[ ! -d "$CG_STATE_DIR/codex-gemma-jobs" ]]; then
+        echo "No async jobs directory found."
+        return 0
+      fi
+      local stopped=0
+      for meta in "$CG_STATE_DIR"/codex-gemma-jobs/*.meta; do
+        [[ -f "$meta" ]] || continue
+        unit="$(sed -n 's/^unit=//p' "$meta" | tail -n1)"
+        if [[ -n "$unit" ]]; then
+          systemctl --user stop "$unit" || true
+          stopped=$((stopped + 1))
+        fi
+      done
+      echo "Requested stop for $stopped async job unit(s)."
+      ;;
+    *)
+      do_job cancel "$target"
+      ;;
+  esac
+}
+
 do_job() {
   local sub="${1:-}"
   local job_id="${2:-}"
@@ -1108,6 +1156,14 @@ run_repl() {
       "/quit"|"/exit"|"/q" ) break ;;
       "/start" ) do_start ;;
       "/stop" ) do_stop ;;
+      /stop\ * )
+        stop_target="${line#"/stop "}"
+        if [[ -z "$stop_target" || "$stop_target" == "/stop " ]]; then
+          do_stop
+        else
+          do_stop_target "$stop_target" || true
+        fi
+        ;;
       "/restart" ) do_restart ;;
       "/status" ) do_status ;;
       "/logs" ) do_logs ;;
@@ -1131,6 +1187,7 @@ run_repl() {
       /session\ use\ * ) session_use "${line#"/session use "}" ;;
       /run\ * ) do_run "${line#"/run "}" ;;
       "/jobs" ) do_jobs ;;
+      "/ps" ) do_ps ;;
       /job\ status\ * ) do_job status "${line#"/job status "}" ;;
       /job\ wait\ * ) do_job wait "${line#"/job wait "}" ;;
       /job\ result\ * ) do_job result "${line#"/job result "}" ;;
@@ -1186,8 +1243,14 @@ run_repl() {
       /jobs* )
         echo "Usage: /jobs"
         ;;
+      /ps* )
+        echo "Usage: /ps"
+        ;;
       /job* )
         echo "Usage: /job status|wait|result|logs|cancel <job_id>"
+        ;;
+      /stop* )
+        echo "Usage: /stop | /stop <job_id|watcher|all-jobs>"
         ;;
       /session* )
         echo "Usage: /session list | /session new [name] | /session use <id>"
