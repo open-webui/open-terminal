@@ -3,6 +3,10 @@ set -euo pipefail
 
 GEMMA_ENDPOINT="${GEMMA_ENDPOINT:-http://127.0.0.1:8000/v1}"
 GEMMA_UNIT="${GEMMA_UNIT:-z490-gemma-llama.service}"
+QWEN_ENDPOINT="${QWEN_ENDPOINT:-http://127.0.0.1:8091/v1}"
+CODEX_GEMMA_POLICY_MODE="${CODEX_GEMMA_POLICY_MODE:-strict}"
+CODEX_GEMMA_MAX_RETRIES="${CODEX_GEMMA_MAX_RETRIES:-2}"
+CODEX_GEMMA_FALLBACK_ON_FAIL="${CODEX_GEMMA_FALLBACK_ON_FAIL:-1}"
 CG_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/open-terminal"
 CG_TRACE_FILE="${CG_STATE_DIR}/codex-gemma-trace.log"
 CG_JOBS_DIR="${CG_STATE_DIR}/codex-gemma-jobs"
@@ -16,7 +20,7 @@ codex-gemma - bridge for Codex CLI to message/control local Gemma backend
 Usage:
   codex-gemma status
   codex-gemma models
-  codex-gemma ask "your prompt"
+  codex-gemma ask [--policy strict|off] [--retries N] [--fallback none|qwen2] "your prompt"
   codex-gemma ask --file /path/to/prompt.txt
   codex-gemma orchestrate "task" [--max-refine N] [--async]
   codex-gemma jobs
@@ -31,8 +35,12 @@ Usage:
 
 Env overrides:
   GEMMA_ENDPOINT (default: http://127.0.0.1:8000/v1)
+  QWEN_ENDPOINT  (default: http://127.0.0.1:8091/v1)
   GEMMA_UNIT     (default: z490-gemma-llama.service)
   CODEX_GEMMA_NOTIFY_CMD (optional completion hook; receives "<job_id> <status>")
+  CODEX_GEMMA_POLICY_MODE (strict|off, default: strict)
+  CODEX_GEMMA_MAX_RETRIES (default: 2)
+  CODEX_GEMMA_FALLBACK_ON_FAIL (0|1, default: 1)
 EOF
 }
 
@@ -57,30 +65,9 @@ models_cmd() {
   echo
 }
 
-read_prompt_arg() {
-  local prompt=""
-  if [[ "${1:-}" == "--file" ]]; then
-    if [[ -z "${2:-}" || ! -f "$2" ]]; then
-      echo "Missing prompt file." >&2
-      return 1
-    fi
-    prompt="$(cat "$2")"
-  else
-    prompt="${1:-}"
-  fi
-  if [[ -z "$prompt" ]]; then
-    echo "Prompt is empty." >&2
-    return 1
-  fi
-  printf '%s\n' "$prompt"
-}
-
-ask_cmd() {
-  local prompt
-  prompt="$(read_prompt_arg "${1:-}" "${2:-}")" || exit 1
-
-  local model
-  model="$(curl -fsS "${GEMMA_ENDPOINT%/}/models" | python3 -c '
+resolve_model_id_for_endpoint() {
+  local endpoint="$1"
+  curl -fsS "${endpoint%/}/models" | python3 -c '
 import json,sys
 try:
     d=json.load(sys.stdin)
@@ -88,10 +75,14 @@ try:
     print(arr[0].get("id","default") if arr else "default")
 except Exception:
     print("default")
-')"
+'
+}
 
-  local assistant
-  assistant="$(python3 - "$GEMMA_ENDPOINT" "$model" "$prompt" <<'PY'
+chat_once() {
+  local endpoint="$1"
+  local model="$2"
+  local prompt="$3"
+  python3 - "$endpoint" "$model" "$prompt" <<'PY'
 import json,sys,urllib.request
 endpoint,model,prompt=sys.argv[1],sys.argv[2],sys.argv[3]
 url=endpoint.rstrip('/') + '/chat/completions'
@@ -112,10 +103,183 @@ if isinstance(msg,list):
   msg="\n".join([p for p in parts if p])
 print(msg if isinstance(msg,str) else str(msg))
 PY
-)"
-  append_trace "CODEX->GEMMA prompt" "$prompt"
-  append_trace "GEMMA->CODEX response" "$assistant"
-  printf '%s\n' "$assistant"
+}
+
+detect_task_class() {
+  local prompt="$1"
+  python3 - "$prompt" <<'PY'
+import sys
+p=sys.argv[1].lower()
+if "print exactly this string and nothing else:" in p:
+    print("exact_literal")
+elif "def group_anagrams(words: list[str]) -> list[list[str]]" in p:
+    print("group_anagrams_contract")
+elif "exactly one runnable python code block" in p:
+    print("exact_one_code_block")
+else:
+    print("general")
+PY
+}
+
+validate_response() {
+  local task_class="$1"
+  local prompt="$2"
+  local candidate="$3"
+  python3 - "$task_class" "$prompt" "$candidate" <<'PY'
+import re,sys
+task=sys.argv[1]
+prompt=sys.argv[2]
+cand=sys.argv[3]
+
+def fail(msg):
+    print(msg)
+    raise SystemExit(1)
+
+if task == "exact_one_code_block":
+    blocks = re.findall(r"```(?:python)?\n[\s\S]*?\n```", cand)
+    if len(blocks) != 1:
+        fail(f"expected exactly one fenced code block, found {len(blocks)}")
+    cleaned = re.sub(r"```(?:python)?\n[\s\S]*?\n```", "", cand).strip()
+    if cleaned:
+        fail("expected no text outside code block")
+elif task == "group_anagrams_contract":
+    blocks = re.findall(r"```(?:python)?\n([\s\S]*?)\n```", cand)
+    if len(blocks) != 1:
+        fail("expected exactly one fenced code block")
+    code = blocks[0]
+    if "def group_anagrams(words: list[str]) -> list[list[str]]" not in code:
+        fail("missing exact function signature")
+    if '"""' not in code and "'''" not in code:
+        fail("missing docstring")
+    assert_count = len(re.findall(r"^\s*assert\s+", code, flags=re.MULTILINE))
+    if assert_count != 5:
+        fail(f"expected exactly 5 assert tests, found {assert_count}")
+elif task == "exact_literal":
+    m = re.search(r"Print exactly this string and nothing else:\s*([A-Za-z0-9_\-]+)", prompt, flags=re.IGNORECASE)
+    if m:
+        target = m.group(1).strip()
+        if cand.strip() != target:
+            fail(f"expected exact literal {target!r}")
+print("ok")
+PY
+}
+
+build_repair_prompt() {
+  local original_prompt="$1"
+  local invalid_output="$2"
+  cat <<EOF
+You must repair a prior response that violated strict output constraints.
+
+Original user prompt:
+$original_prompt
+
+Invalid prior response:
+$invalid_output
+
+Return corrected output only. No commentary.
+EOF
+}
+
+read_prompt_arg() {
+  local prompt=""
+  if [[ "${1:-}" == "--file" ]]; then
+    if [[ -z "${2:-}" || ! -f "$2" ]]; then
+      echo "Missing prompt file." >&2
+      return 1
+    fi
+    prompt="$(cat "$2")"
+  else
+    prompt="${1:-}"
+  fi
+  if [[ -z "$prompt" ]]; then
+    echo "Prompt is empty." >&2
+    return 1
+  fi
+  printf '%s\n' "$prompt"
+}
+
+ask_cmd() {
+  local policy="$CODEX_GEMMA_POLICY_MODE"
+  local retries="$CODEX_GEMMA_MAX_RETRIES"
+  local fallback="qwen2"
+  local args=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --policy) shift; policy="${1:-strict}" ;;
+      --retries) shift; retries="${1:-2}" ;;
+      --fallback) shift; fallback="${1:-qwen2}" ;;
+      *) args+=("$1") ;;
+    esac
+    shift || true
+  done
+  if ! [[ "$retries" =~ ^[0-9]+$ ]]; then
+    echo "Invalid --retries value: $retries" >&2
+    return 1
+  fi
+
+  local prompt
+  prompt="$(read_prompt_arg "${args[0]:-}" "${args[1]:-}")" || exit 1
+  local endpoint="$GEMMA_ENDPOINT"
+  local model
+  model="$(resolve_model_id_for_endpoint "$endpoint")"
+  local task_class
+  task_class="$(detect_task_class "$prompt")"
+  local attempt=0
+  local current_prompt="$prompt"
+  local assistant=""
+  local validation_msg=""
+
+  append_trace "POLICY" "mode=$policy retries=$retries task_class=$task_class endpoint=$endpoint"
+  while (( attempt <= retries )); do
+    assistant="$(chat_once "$endpoint" "$model" "$current_prompt")" || {
+      append_trace "ASK_ERROR" "attempt=$attempt endpoint=$endpoint"
+      break
+    }
+    if [[ "$policy" != "strict" || "$task_class" == "general" ]]; then
+      append_trace "CODEX->GEMMA prompt" "$current_prompt"
+      append_trace "GEMMA->CODEX response" "$assistant"
+      printf '%s\n' "$assistant"
+      return 0
+    fi
+    if validation_msg="$(validate_response "$task_class" "$prompt" "$assistant" 2>&1)"; then
+      append_trace "CODEX->GEMMA prompt" "$current_prompt"
+      append_trace "GEMMA->CODEX response" "$assistant"
+      printf '%s\n' "$assistant"
+      return 0
+    fi
+    append_trace "VALIDATION_FAIL" "attempt=$attempt task_class=$task_class detail=$validation_msg"
+    current_prompt="$(build_repair_prompt "$prompt" "$assistant")"
+    attempt=$((attempt + 1))
+  done
+
+  if [[ "$policy" == "strict" && "$CODEX_GEMMA_FALLBACK_ON_FAIL" == "1" && "$fallback" == "qwen2" ]]; then
+    local fb_endpoint="$QWEN_ENDPOINT"
+    local fb_model=""
+    fb_model="$(resolve_model_id_for_endpoint "$fb_endpoint" 2>/dev/null || true)"
+    if [[ -n "$fb_model" ]]; then
+      append_trace "FALLBACK" "reason=validation_or_request_failure endpoint=$fb_endpoint model=$fb_model"
+      current_prompt="$prompt"
+      attempt=0
+      while (( attempt <= retries )); do
+        assistant="$(chat_once "$fb_endpoint" "$fb_model" "$current_prompt")" || break
+        if [[ "$task_class" == "general" ]] || validation_msg="$(validate_response "$task_class" "$prompt" "$assistant" 2>&1)"; then
+          append_trace "CODEX->QWEN prompt" "$current_prompt"
+          append_trace "QWEN->CODEX response" "$assistant"
+          printf '%s\n' "$assistant"
+          return 0
+        fi
+        append_trace "FALLBACK_VALIDATION_FAIL" "attempt=$attempt task_class=$task_class detail=$validation_msg"
+        current_prompt="$(build_repair_prompt "$prompt" "$assistant")"
+        attempt=$((attempt + 1))
+      done
+    fi
+  fi
+
+  echo "Request failed strict policy after retries."
+  if [[ -n "$validation_msg" ]]; then
+    echo "Last validation error: $validation_msg"
+  fi
+  return 1
 }
 
 start_cmd() { systemctl --user start "$GEMMA_UNIT"; }

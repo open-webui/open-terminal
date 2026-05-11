@@ -53,6 +53,11 @@ This document defines the local, standalone baseline for OpenTerminal as an agen
   - `/run <task>`
   - `/jobs`
   - `/job status|wait|result|logs|cancel <job_id>`
+- Model-side mitigation policy pack (via `codex-gemma ask`):
+  - strict task-class detection (`exact_literal`, `exact_one_code_block`, `group_anagrams_contract`)
+  - bounded auto-repair retries
+  - optional fallback routing to Qwen endpoint on strict failure
+  - deterministic trace logging in `~/.local/state/open-terminal/codex-gemma-trace.log`
 
 ## Known Limitations
 
