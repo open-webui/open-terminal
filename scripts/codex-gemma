@@ -114,6 +114,12 @@ import sys
 p=sys.argv[1].lower()
 if "print exactly this string and nothing else:" in p:
     print("exact_literal")
+elif "respond only pass or fail" in p:
+    print("pass_fail_only")
+elif "return valid json" in p or "output valid json" in p:
+    print("valid_json_only")
+elif "return exactly" in p and "bullets" in p:
+    print("bullet_list_only")
 elif "def group_anagrams(words: list[str]) -> list[list[str]]" in p:
     print("group_anagrams_contract")
 elif "exactly one runnable python code block" in p:
@@ -128,7 +134,7 @@ validate_response() {
   local prompt="$2"
   local candidate="$3"
   python3 - "$task_class" "$prompt" "$candidate" <<'PY'
-import re,sys
+import json,re,sys
 task=sys.argv[1]
 prompt=sys.argv[2]
 cand=sys.argv[3]
@@ -162,8 +168,68 @@ elif task == "exact_literal":
         target = m.group(1).strip()
         if cand.strip() != target:
             fail(f"expected exact literal {target!r}")
+elif task == "pass_fail_only":
+    if cand.strip() not in {"PASS","FAIL"}:
+        fail("expected exactly PASS or FAIL")
+elif task == "valid_json_only":
+    try:
+        json.loads(cand)
+    except Exception as exc:
+        fail(f"expected valid JSON: {exc}")
+elif task == "bullet_list_only":
+    lines=[ln.strip() for ln in cand.splitlines() if ln.strip()]
+    bullet_lines=[ln for ln in lines if re.match(r"^[-*]\s+\S+", ln)]
+    if len(bullet_lines) < 2:
+        fail("expected at least two bullet lines")
+    for ln in lines:
+        if ln not in bullet_lines:
+            fail("expected bullet list only")
 print("ok")
 PY
+}
+
+error_code_for_validation_msg() {
+  local task_class="$1"
+  local msg="$2"
+  python3 - "$task_class" "$msg" <<'PY'
+import sys
+task,msg=sys.argv[1],sys.argv[2].lower()
+if "expected exactly one fenced code block" in msg:
+    print("format.multiple_or_missing_codeblock")
+elif "expected no text outside code block" in msg:
+    print("format.text_outside_codeblock")
+elif "missing exact function signature" in msg:
+    print("schema.missing_signature")
+elif "missing docstring" in msg:
+    print("schema.missing_docstring")
+elif "expected exactly 5 assert" in msg:
+    print("schema.assert_count_mismatch")
+elif "expected exact literal" in msg:
+    print("format.literal_mismatch")
+elif "expected exactly pass or fail" in msg:
+    print("format.pass_fail_only")
+elif "expected valid json" in msg:
+    print("format.invalid_json")
+elif "expected at least two bullet lines" in msg:
+    print("format.missing_bullets")
+elif "expected bullet list only" in msg:
+    print("format.non_bullet_lines")
+else:
+    print(f"validation.{task}.failed")
+PY
+}
+
+retry_cap_for_task_class() {
+  local task_class="$1"
+  case "$task_class" in
+    exact_literal) echo 1 ;;
+    pass_fail_only) echo 1 ;;
+    valid_json_only) echo 2 ;;
+    bullet_list_only) echo 2 ;;
+    exact_one_code_block) echo 2 ;;
+    group_anagrams_contract) echo 2 ;;
+    *) echo "$CODEX_GEMMA_MAX_RETRIES" ;;
+  esac
 }
 
 build_repair_prompt() {
@@ -237,15 +303,21 @@ ask_cmd() {
   model="$(resolve_model_id_for_endpoint "$endpoint")"
   local task_class
   task_class="$(detect_task_class "$prompt")"
+  local class_retry_cap
+  class_retry_cap="$(retry_cap_for_task_class "$task_class")"
+  if (( retries > class_retry_cap )); then
+    retries="$class_retry_cap"
+  fi
   local attempt=0
   local current_prompt="$prompt"
   local assistant=""
   local validation_msg=""
+  local validation_code=""
 
-  append_trace "POLICY" "mode=$policy retries=$retries task_class=$task_class endpoint=$endpoint fallback=$fallback single_model_lock=$single_model_lock"
+  append_trace "POLICY" "mode=$policy retries=$retries task_class=$task_class class_retry_cap=$class_retry_cap endpoint=$endpoint fallback=$fallback single_model_lock=$single_model_lock"
   while (( attempt <= retries )); do
     assistant="$(chat_once "$endpoint" "$model" "$current_prompt")" || {
-      append_trace "ASK_ERROR" "attempt=$attempt endpoint=$endpoint"
+      append_trace "ASK_ERROR" "attempt=$attempt endpoint=$endpoint code=request.endpoint_error"
       break
     }
     if [[ "$policy" != "strict" || "$task_class" == "general" ]]; then
@@ -260,7 +332,8 @@ ask_cmd() {
       printf '%s\n' "$assistant"
       return 0
     fi
-    append_trace "VALIDATION_FAIL" "attempt=$attempt task_class=$task_class detail=$validation_msg"
+    validation_code="$(error_code_for_validation_msg "$task_class" "$validation_msg")"
+    append_trace "VALIDATION_FAIL" "attempt=$attempt task_class=$task_class code=$validation_code detail=$validation_msg"
     current_prompt="$(build_repair_prompt "$prompt" "$assistant")"
     attempt=$((attempt + 1))
   done
@@ -274,14 +347,18 @@ ask_cmd() {
       current_prompt="$prompt"
       attempt=0
       while (( attempt <= retries )); do
-        assistant="$(chat_once "$fb_endpoint" "$fb_model" "$current_prompt")" || break
+        assistant="$(chat_once "$fb_endpoint" "$fb_model" "$current_prompt")" || {
+          append_trace "FALLBACK_ASK_ERROR" "attempt=$attempt endpoint=$fb_endpoint code=request.fallback_endpoint_error"
+          break
+        }
         if [[ "$task_class" == "general" ]] || validation_msg="$(validate_response "$task_class" "$prompt" "$assistant" 2>&1)"; then
           append_trace "CODEX->QWEN prompt" "$current_prompt"
           append_trace "QWEN->CODEX response" "$assistant"
           printf '%s\n' "$assistant"
           return 0
         fi
-        append_trace "FALLBACK_VALIDATION_FAIL" "attempt=$attempt task_class=$task_class detail=$validation_msg"
+        validation_code="$(error_code_for_validation_msg "$task_class" "$validation_msg")"
+        append_trace "FALLBACK_VALIDATION_FAIL" "attempt=$attempt task_class=$task_class code=$validation_code detail=$validation_msg"
         current_prompt="$(build_repair_prompt "$prompt" "$assistant")"
         attempt=$((attempt + 1))
       done
@@ -293,6 +370,9 @@ ask_cmd() {
     echo "Fallback not attempted due to single-model lock."
   fi
   if [[ -n "$validation_msg" ]]; then
+    if [[ -n "$validation_code" ]]; then
+      echo "Failure code: $validation_code"
+    fi
     echo "Last validation error: $validation_msg"
   fi
   return 1
