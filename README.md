@@ -44,12 +44,17 @@ Inside REPL:
 - `/menu` opens an interactive command picker (fzf if available; numbered fallback)
 - `/<prefix>` filters commands
 - `TAB` cycles command completion
-- `/run "<task>"` starts an async codex-gemma worker job
-- `/jobs` and `/job status|wait|result|logs|cancel <job_id>` manage async jobs
+- `/run "<task>"` is retired; use packet-mediated local-worker delegation instead
+- `/jobs` and `/job status|wait|result|logs|cancel <job_id>` are retired historical surfaces
 - `/contract strict|off` toggles response-contract enforcement (default: strict)
 - `/statusline on|off` toggles prompt status line (`mode|model|cwd`)
 
 Strict contract mode includes auto-repair retries and task-shape validation for constrained prompts (for example exact-output and single-code-block coding tasks).
+
+Historical note:
+
+- `codex-gemma` is no longer part of the active Open Terminal operational path.
+- The historical wrapper only remains for explicit benchmark or migration use via `CODEX_GEMMA_ALLOW_HISTORICAL=1`.
 
 Default local baseline:
 

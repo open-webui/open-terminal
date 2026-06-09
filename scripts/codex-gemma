@@ -1,6 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ "${CODEX_GEMMA_ALLOW_HISTORICAL:-0}" != "1" ]]; then
+  cat <<'EOF'
+Retired: codex-gemma is no longer part of the active Open Terminal operational path.
+Use packet-mediated local-worker delegation instead.
+
+Set CODEX_GEMMA_ALLOW_HISTORICAL=1 only if you need this historical wrapper for
+a benchmark or migration audit.
+EOF
+  exit 1
+fi
+
 GEMMA_ENDPOINT="${GEMMA_ENDPOINT:-http://127.0.0.1:8000/v1}"
 GEMMA_UNIT="${GEMMA_UNIT:-z490-gemma-llama.service}"
 QWEN_ENDPOINT="${QWEN_ENDPOINT:-http://127.0.0.1:8091/v1}"

@@ -22,7 +22,6 @@ OT_CURRENT_SESSION_ID=""
 OT_STATUS_PROMPT="${OT_STATUS_PROMPT:-1}"
 OT_CONTRACT_MODE="${OT_CONTRACT_MODE:-strict}"
 OT_CHAT_RETRY_MAX="${OT_CHAT_RETRY_MAX:-2}"
-CODEX_GEMMA_BIN="${CODEX_GEMMA_BIN:-$ROOT_DIR/scripts/codex-gemma}"
 OT_PRETTY_OUTPUT="${OT_PRETTY_OUTPUT:-auto}"
 mkdir -p "$OT_STATE_DIR" "$OT_CONFIG_DIR" "$OT_SESSIONS_DIR"
 
@@ -114,14 +113,14 @@ COMMANDS=(
   "/session new [name]"
   "/session use <id>"
   "/clear"
-  "/run <task>"
-  "/jobs"
+  "/run <task> (retired)"
+  "/jobs (retired)"
   "/ps"
-  "/job status <job_id>"
-  "/job wait <job_id>"
-  "/job result <job_id>"
-  "/job logs <job_id>"
-  "/job cancel <job_id>"
+  "/job status <job_id> (retired)"
+  "/job wait <job_id> (retired)"
+  "/job result <job_id> (retired)"
+  "/job logs <job_id> (retired)"
+  "/job cancel <job_id> (retired)"
   "/contract"
   "/contract strict|off"
   "/statusline"
@@ -144,7 +143,7 @@ Usage:
   open-terminal model [profile]
   open-terminal mode [chat|raw]
   open-terminal menu [meta|system|model|chat|session|jobs|safety]
-  open-terminal run "<task>"
+  open-terminal run "<task>"         # retired; packet-mediated delegation replaces this
   open-terminal jobs
   open-terminal job status|wait|result|logs|cancel <job_id>
   open-terminal contract [strict|off]
@@ -186,14 +185,14 @@ Slash commands inside REPL:
   /session list
   /session new [name]
   /session use <id>
-  /run <task>          # async orchestration job via codex-gemma
-  /jobs
+  /run <task>          # retired; use packet-mediated local-worker delegation instead
+  /jobs                # retired
   /ps                 # quick background process view
-  /job status <job_id>
-  /job wait <job_id>
-  /job result <job_id>
-  /job logs <job_id>
-  /job cancel <job_id>
+  /job status <job_id>  # retired
+  /job wait <job_id>    # retired
+  /job result <job_id>  # retired
+  /job logs <job_id>    # retired
+  /job cancel <job_id>  # retired
   /contract [strict|off]
   /statusline [on|off]
   /clear              # clear local chat history
@@ -235,14 +234,14 @@ command_description() {
     "/session new [name]") echo "Create a new session." ;;
     "/session use <id>") echo "Switch to an existing session." ;;
     "/clear") echo "Clear active session history file." ;;
-    "/run <task>") echo "Start async codex-gemma worker job." ;;
-    "/jobs") echo "List async jobs." ;;
+    "/run <task>") echo "Retired: use packet-mediated local-worker delegation instead." ;;
+    "/jobs") echo "Retired: no codex-gemma async job queue remains active." ;;
     "/ps") echo "Show background jobs and watcher service status." ;;
-    "/job status <job_id>") echo "Show job metadata and state." ;;
-    "/job wait <job_id>") echo "Wait for job completion." ;;
-    "/job result <job_id>") echo "Print job result output." ;;
-    "/job logs <job_id>") echo "Tail/read job log output." ;;
-    "/job cancel <job_id>") echo "Cancel async job via systemd unit." ;;
+    "/job status <job_id>") echo "Retired: async codex-gemma jobs are no longer part of active usage." ;;
+    "/job wait <job_id>") echo "Retired: async codex-gemma jobs are no longer part of active usage." ;;
+    "/job result <job_id>") echo "Retired: async codex-gemma jobs are no longer part of active usage." ;;
+    "/job logs <job_id>") echo "Retired: async codex-gemma jobs are no longer part of active usage." ;;
+    "/job cancel <job_id>") echo "Retired: async codex-gemma jobs are no longer part of active usage." ;;
     "/contract") echo "Show strict contract mode status." ;;
     "/contract strict|off") echo "Enable/disable strict output validation." ;;
     "/statusline") echo "Show status-line setting." ;;
@@ -956,19 +955,16 @@ do_run() {
     echo "Usage: /run <task>"
     return 1
   fi
-  if [[ ! -x "$CODEX_GEMMA_BIN" ]]; then
-    echo "codex-gemma helper not found at $CODEX_GEMMA_BIN"
-    return 1
-  fi
-  "$CODEX_GEMMA_BIN" orchestrate "$task" --max-refine 1 --async
+  echo "Retired: codex-gemma is no longer part of the active Open Terminal operational path."
+  echo "Use packet-mediated local-worker delegation instead."
+  echo "If you need the historical wrapper for a benchmark, invoke scripts/codex-gemma directly with CODEX_GEMMA_ALLOW_HISTORICAL=1."
+  return 1
 }
 
 do_jobs() {
-  if [[ ! -x "$CODEX_GEMMA_BIN" ]]; then
-    echo "codex-gemma helper not found at $CODEX_GEMMA_BIN"
-    return 1
-  fi
-  "$CODEX_GEMMA_BIN" jobs
+  echo "Retired: codex-gemma async jobs are no longer part of the active Open Terminal operational path."
+  echo "Historical job inspection should be done only if CODEX_GEMMA_ALLOW_HISTORICAL=1 is set for a benchmark."
+  return 1
 }
 
 do_ps() {
@@ -992,20 +988,9 @@ do_stop_target() {
       echo "Stopped midnight-dust-watcher.service"
       ;;
     all-jobs)
-      if [[ ! -d "$CG_STATE_DIR/codex-gemma-jobs" ]]; then
-        echo "No async jobs directory found."
-        return 0
-      fi
-      local stopped=0
-      for meta in "$CG_STATE_DIR"/codex-gemma-jobs/*.meta; do
-        [[ -f "$meta" ]] || continue
-        unit="$(sed -n 's/^unit=//p' "$meta" | tail -n1)"
-        if [[ -n "$unit" ]]; then
-          systemctl --user stop "$unit" || true
-          stopped=$((stopped + 1))
-        fi
-      done
-      echo "Requested stop for $stopped async job unit(s)."
+      echo "Retired: codex-gemma async job cleanup is no longer part of the active Open Terminal operational path."
+      echo "If you need to clean up historical artifacts, remove them manually from ~/.local/state/open-terminal/codex-gemma-jobs."
+      return 1
       ;;
     *)
       do_job cancel "$target"
@@ -1020,42 +1005,28 @@ do_job() {
   case "$sub" in
     status)
       [[ -n "$job_id" ]] || { echo "Usage: /job status <job_id>"; return 1; }
-      "$CODEX_GEMMA_BIN" status-job "$job_id"
+      echo "Retired: codex-gemma job status is no longer part of the active Open Terminal operational path."
+      return 1
       ;;
     wait)
       [[ -n "$job_id" ]] || { echo "Usage: /job wait <job_id>"; return 1; }
-      "$CODEX_GEMMA_BIN" wait "$job_id"
+      echo "Retired: codex-gemma job wait is no longer part of the active Open Terminal operational path."
+      return 1
       ;;
     logs)
       [[ -n "$job_id" ]] || { echo "Usage: /job logs <job_id>"; return 1; }
-      log="$CG_STATE_DIR/codex-gemma-jobs/${job_id}.log"
-      [[ -f "$log" ]] || { echo "No log file yet: $log"; return 1; }
-      local tmp_log
-      tmp_log="$(mktemp)"
-      tail -n 120 "$log" > "$tmp_log"
-      pretty_print_file "$tmp_log" plain
-      rm -f "$tmp_log"
+      echo "Retired: codex-gemma job logs are no longer part of the active Open Terminal operational path."
+      return 1
       ;;
     result)
       [[ -n "$job_id" ]] || { echo "Usage: /job result <job_id>"; return 1; }
-      result="$CG_STATE_DIR/codex-gemma-jobs/${job_id}.result.md"
-      [[ -f "$result" ]] || { echo "No result file yet: $result"; return 1; }
-      if rg -q '^(\+\+\+ |--- |@@ )' "$result" 2>/dev/null; then
-        pretty_print_file "$result" diff
-      else
-        pretty_print_file "$result" plain
-      fi
+      echo "Retired: codex-gemma job results are no longer part of the active Open Terminal operational path."
+      return 1
       ;;
     cancel)
       [[ -n "$job_id" ]] || { echo "Usage: /job cancel <job_id>"; return 1; }
-      unit="$(job_read_meta_value "$job_id" unit || true)"
-      if [[ -z "$unit" ]]; then
-        echo "No systemd unit recorded for $job_id."
-        echo "Remediation: check /job status $job_id and stop manually if needed."
-        return 1
-      fi
-      systemctl --user stop "$unit"
-      echo "Requested cancel for $job_id ($unit)"
+      echo "Retired: codex-gemma job cancellation is no longer part of the active Open Terminal operational path."
+      return 1
       ;;
     *)
       echo "Usage: /job status|wait|result|logs|cancel <job_id>"

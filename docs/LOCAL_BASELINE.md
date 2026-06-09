@@ -49,18 +49,21 @@ This document defines the local, standalone baseline for OpenTerminal as an agen
   - validates strict output-format prompts
   - auto-retries with repair prompt on format failure
   - enforces stronger coding-task shape checks (single code block, required signature/tests in constrained prompts)
-- Async orchestration jobs (via `codex-gemma`):
+
+## Historical Codex-Gemma Notes (retired from active use)
+
+- Async orchestration jobs (historical codex-gemma surface):
   - `/run <task>`
   - `/jobs`
   - `/job status|wait|result|logs|cancel <job_id>`
-- Model-side mitigation policy pack (via `codex-gemma ask`):
+- Model-side mitigation policy pack (historical `codex-gemma ask` path):
   - strict task-class detection (`exact_literal`, `exact_one_code_block`, `group_anagrams_contract`, `pass_fail_only`, `valid_json_only`, `bullet_list_only`)
   - bounded auto-repair retries with per-task retry caps
   - single-model lock default `on` (prevents cross-model fallback by default)
   - optional fallback routing to Qwen endpoint on strict failure only when explicitly enabled
   - deterministic trace logging in `~/.local/state/open-terminal/codex-gemma-trace.log`
   - failure taxonomy codes in trace output (for example: `schema.missing_signature`, `format.invalid_json`, `request.endpoint_error`)
-- Explicit benchmark profile (via `codex-gemma benchmark`):
+- Explicit benchmark profile (historical `codex-gemma benchmark` surface):
   - discoverable benchmark-only command surface
   - can target `gemma` or `qwen2`
   - disables single-model lock for controlled benchmark sessions only

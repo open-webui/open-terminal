@@ -19,7 +19,7 @@ Usage:
   scripts/otx-benchmark-crosshost --retries 3 --wait 300 --local z490 --remote nuc
 
 Options:
-  --retries N     codex-gemma strict retries (default: 3)
+  --retries N     historical codex-gemma strict retries (default: 3)
   --wait SEC      otx run wait timeout in seconds (default: 300)
   --local NAME    local target alias (default: z490)
   --remote NAME   remote target alias (default: nuc)
@@ -47,12 +47,22 @@ if ! [[ "$WAIT_SECONDS" =~ ^[0-9]+$ ]]; then
   exit 1
 fi
 
+if [[ "${CODEX_GEMMA_ALLOW_HISTORICAL:-0}" != "1" ]]; then
+  cat <<'EOF'
+Retired: codex-gemma harness benchmarking is no longer part of the active Open Terminal operational path.
+Use packet-mediated local-worker delegation instead.
+
+Set CODEX_GEMMA_ALLOW_HISTORICAL=1 only if you need the historical benchmark path for migration or archival comparison.
+EOF
+  exit 1
+fi
+
 run_suite_for_target() {
   local target="$1"
   local suffix="$2"
   local out_json="$OUT_DIR/baseline.harness.gemma.10cases.${suffix}.json"
   local out_md="$OUT_DIR/baseline.harness.gemma.10cases.${suffix}.md"
-  local cmd="cd $ROOT_DIR && python3 scripts/model_baseline_suite.py --mode harness --models gemma --retries $RETRIES --cases $CASES_PATH --out-json $out_json --out-md $out_md"
+  local cmd="cd $ROOT_DIR && CODEX_GEMMA_ALLOW_HISTORICAL=1 python3 scripts/model_baseline_suite.py --mode harness --models gemma --retries $RETRIES --cases $CASES_PATH --out-json $out_json --out-md $out_md"
   "$OTX_BIN" --target "$target" run --wait "$WAIT_SECONDS" -- "$cmd"
 }
 
@@ -108,7 +118,7 @@ cat > "$CROSS_MD" <<EOF
 
 - generated_at: \`$(date -u +%Y-%m-%dT%H:%M:%SZ)\`
 - suite: \`$CASES_PATH\`
-- mode: \`harness\` (\`codex-gemma ask\` strict policy path)
+- mode: \`harness\` (\`historical codex-gemma ask\` strict policy path)
 
 ## Summary
 

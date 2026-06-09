@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -166,13 +167,25 @@ def main() -> int:
         "--mode",
         default="direct",
         choices=["direct", "harness"],
-        help="direct = call model endpoints directly, harness = call scripts/codex-gemma ask policy path",
+        help="direct = call model endpoints directly, harness = historical codex-gemma ask policy path (requires CODEX_GEMMA_ALLOW_HISTORICAL=1)",
     )
-    parser.add_argument("--retries", type=int, default=1, help="Harness mode retries passed to codex-gemma ask.")
+    parser.add_argument("--retries", type=int, default=1, help="Historical harness mode retries passed to codex-gemma ask.")
     args = parser.parse_args()
 
     cases = load_cases(Path(args.cases))
     selected = [m.strip() for m in args.models.split(",") if m.strip()]
+    historical_allowed = os.environ.get("CODEX_GEMMA_ALLOW_HISTORICAL") == "1"
+
+    if args.mode == "harness" and not historical_allowed:
+        print(
+            "Retired: codex-gemma harness mode is no longer part of the active Open Terminal operational path.",
+            file=sys.stderr,
+        )
+        print(
+            "Use packet-mediated local-worker delegation instead, or set CODEX_GEMMA_ALLOW_HISTORICAL=1 for historical benchmark/migration use.",
+            file=sys.stderr,
+        )
+        return 1
 
     report: dict[str, Any] = {
         "report_type": "open-terminal-model-baseline",
@@ -205,10 +218,10 @@ def main() -> int:
                 md_lines.extend([f"## {key}", "", f"- endpoint: `{endpoint}`", "- status: unreachable", f"- error: `{exc}`", ""])
                 continue
         else:
-            model_id = "codex-gemma-policy-path"
+            model_id = "codex-gemma-historical-policy-path"
             if key != "gemma":
-                report["models"][key] = {"status": "skipped", "reason": "harness mode currently routes through gemma entrypoint"}
-                md_lines.extend([f"## {key}", "", "- status: skipped", "- reason: harness mode routes through codex-gemma (gemma entrypoint).", ""])
+                report["models"][key] = {"status": "skipped", "reason": "historical harness mode currently routes through gemma entrypoint"}
+                md_lines.extend([f"## {key}", "", "- status: skipped", "- reason: historical harness mode routes through the codex-gemma gemma entrypoint.", ""])
                 continue
 
         results: list[dict[str, Any]] = []
@@ -237,7 +250,7 @@ def main() -> int:
         avg_latency = int(sum(x["latency_ms"] for x in results) / total) if total else 0
         report["models"][key] = {
             "status": "ok",
-            "endpoint": endpoint if args.mode == "direct" else "via-codex-gemma",
+            "endpoint": endpoint if args.mode == "direct" else "historical-via-codex-gemma",
             "model_id": model_id,
             "summary": {
                 "passed": passed,
@@ -252,7 +265,7 @@ def main() -> int:
             [
                 f"## {key}",
                 "",
-                f"- endpoint: `{endpoint if args.mode == 'direct' else 'via-codex-gemma'}`",
+                f"- endpoint: `{endpoint if args.mode == 'direct' else 'historical-via-codex-gemma'}`",
                 f"- model_id: `{model_id}`",
                 f"- compliance: `{passed}/{total}` ({compliance}%)",
                 f"- avg_latency_ms: `{avg_latency}`",
