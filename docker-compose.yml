@@ -1,0 +1,15 @@
+services:
+  open-terminal:
+    build: .
+    image: open-terminal-ykps
+    container_name: open-terminal
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - open-terminal:/home/user
+    environment:
+      - OPEN_TERMINAL_API_KEY=${OPEN_TERMINAL_API_KEY:-changeme}
+
+volumes:
+  open-terminal:
