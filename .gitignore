@@ -1,17 +1,3 @@
-# Python
-__pycache__/
-*.pyc
-*.pyo
-*.egg-info/
-dist/
-build/
-
-# venv
-.venv/
-
-# uv
-uv.lock
-
 # IDE
 .idea/
 .vscode/
@@ -22,4 +8,5 @@ uv.lock
 .DS_Store
 Thumbs.db
 
+# Env
 .env

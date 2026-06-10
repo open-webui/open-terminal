@@ -19,19 +19,6 @@ jobs:
         platform:
           - linux/amd64
           - linux/arm64
-        variant:
-          - name: default
-            file: Dockerfile
-            suffix: ""
-            short_tag: "latest"
-          - name: slim
-            file: Dockerfile.slim
-            suffix: "-slim"
-            short_tag: "slim"
-          - name: alpine
-            file: Dockerfile.alpine
-            suffix: "-alpine"
-            short_tag: "alpine"
     permissions:
       contents: read
       packages: write
@@ -59,12 +46,11 @@ jobs:
         id: build
         with:
           context: .
-          file: ${{ matrix.variant.file }}
           platforms: ${{ matrix.platform }}
           labels: ${{ steps.meta.outputs.labels }}
           outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=${{ github.event_name != 'pull_request' }}
-          cache-from: type=gha,scope=${{ matrix.variant.name }}-${{ matrix.platform }}
-          cache-to: type=gha,scope=${{ matrix.variant.name }}-${{ matrix.platform }},mode=max
+          cache-from: type=gha,scope=${{ matrix.platform }}
+          cache-to: type=gha,scope=${{ matrix.platform }},mode=max
 
       - name: Export digest
         if: github.event_name != 'pull_request'
@@ -76,7 +62,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: github.event_name != 'pull_request'
         with:
-          name: digests-${{ matrix.variant.name }}-${{ matrix.platform == 'linux/amd64' && 'amd64' || 'arm64' }}
+          name: digests-${{ matrix.platform == 'linux/amd64' && 'amd64' || 'arm64' }}
           path: /tmp/digests/*
           if-no-files-found: error
           retention-days: 1
@@ -85,49 +71,15 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name != 'pull_request'
     needs: build
-    strategy:
-      matrix:
-        variant:
-          - name: default
-            suffix: ""
-            short_tag: "latest"
-          - name: slim
-            suffix: "-slim"
-            short_tag: "slim"
-          - name: alpine
-            suffix: "-alpine"
-            short_tag: "alpine"
     permissions:
       contents: read
       packages: write
 
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Get version from pyproject.toml
-        id: version
-        run: |
-          VERSION=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          MAJOR_MINOR=$(echo "$VERSION" | cut -d. -f1,2)
-          echo "major_minor=$MAJOR_MINOR" >> "$GITHUB_OUTPUT"
-          if git rev-parse "refs/tags/v$VERSION" >/dev/null 2>&1; then
-            TAG_SHA=$(git rev-list -n 1 "v$VERSION")
-            if [ "$TAG_SHA" = "${{ github.sha }}" ]; then
-              echo "is_new_version=true" >> "$GITHUB_OUTPUT"
-            else
-              echo "is_new_version=false" >> "$GITHUB_OUTPUT"
-            fi
-          else
-            echo "is_new_version=true" >> "$GITHUB_OUTPUT"
-          fi
-
       - uses: actions/download-artifact@v4
         with:
           path: /tmp/digests
-          pattern: digests-${{ matrix.variant.name }}-*
+          pattern: digests-*
           merge-multiple: true
 
       - uses: docker/setup-buildx-action@v3
@@ -143,11 +95,8 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=latest${{ matrix.variant.suffix }},enable={{is_default_branch}}
-            type=raw,value=${{ matrix.variant.short_tag }},enable={{is_default_branch}}
-            type=raw,value=${{ steps.version.outputs.version }}${{ matrix.variant.suffix }},enable=${{ steps.version.outputs.is_new_version }}
-            type=raw,value=${{ steps.version.outputs.major_minor }}${{ matrix.variant.suffix }},enable=${{ steps.version.outputs.is_new_version }}
-            type=sha,suffix=${{ matrix.variant.suffix }}
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha
 
       - name: Create manifest list and push
         working-directory: /tmp/digests
