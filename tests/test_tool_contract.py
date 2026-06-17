@@ -64,22 +64,47 @@ def test_model_visible_tool_descriptions_are_explicit():
     schema = client.get("/openapi.json").json()
     operations = _operations_by_id(client)
 
+    for operation in operations.values():
+        description = operation["description"]
+        assert "Use when:" in description
+        assert "Inputs:" in description
+        assert "Returns:" in description
+        assert "Errors:" in description
+
+    environment_description = operations["get_environment"]["description"].lower()
+    assert "before choosing os-specific commands" in environment_description
+    assert "cli_versions" in environment_description
+
+    read_description = operations["read_file"]["description"].lower()
+    assert "large text files" in read_description
+    assert "start_line" in read_description
+    assert "raw http binary data" in read_description
+
     run_description = operations["run_command"]["description"].lower()
     assert "poll get_process_status" in run_description
     assert "process_id" in run_description
     assert "relative paths resolve against the session cwd" in run_description
+    assert "get_environment" in run_description
+    assert "this system is running" not in run_description
 
     write_description = operations["write_file"]["description"].lower()
     assert "409" in write_description
     assert "overwrite=true" in write_description
+    assert "whole file" in write_description
     write_schema = schema["components"]["schemas"]["WriteRequest"]["properties"]
     assert "defaults to false" in write_schema["overwrite"]["description"].lower()
 
     assert "*** Begin Patch" in operations["apply_patch"]["description"]
     assert "*** Update File:" in operations["apply_patch"]["description"]
     assert "dry_run=true" in operations["apply_patch"]["description"]
+    assert "on 409" in operations["apply_patch"]["description"].lower()
+    assert "read_file" in operations["apply_patch"]["description"]
     patch_schema = schema["components"]["schemas"]["ApplyPatchRequest"]["properties"]
     assert "*** End Patch" in patch_schema["patch"]["description"]
+
+    list_description = operations["list_processes"]["description"].lower()
+    assert "tracked commands" in list_description
+    assert "running, done, or killed" in list_description
 
     assert "process_id returned by run_command" in _parameter_description(
         operations["get_process_status"], "process_id"
@@ -198,7 +223,10 @@ def test_write_file_does_not_overwrite_by_default(tmp_path: Path):
 
     assert first.status_code == 200
     assert second.status_code == 409
-    assert second.json()["detail"] == "File already exists; set overwrite=true to replace it"
+    conflict_detail = second.json()["detail"]
+    assert "overwrite=false" in conflict_detail
+    assert "overwrite=true" in conflict_detail
+    assert "apply_patch" in conflict_detail
     assert overwrite.status_code == 200
     assert target.read_text() == "second"
 
@@ -258,7 +286,9 @@ def test_apply_patch_reports_conflicts(tmp_path: Path):
 
     assert response.status_code == 409
     detail = response.json()["detail"]
-    assert detail["message"] == "Patch could not be applied"
+    assert "Patch could not be applied" in detail["message"]
+    assert "read_file" in detail["message"]
+    assert "retry" in detail["message"]
     assert detail["conflicts"][0]["path"] == str(target)
     assert detail["conflicts"][0]["reason"] == "old content not found"
     assert target.read_text() == "alpha\n"

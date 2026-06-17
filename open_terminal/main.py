@@ -151,14 +151,22 @@ def get_system_prompt() -> str:
 
 
 _EXECUTE_DESCRIPTION = (
-    "Run a shell command in the background and return a process_id. "
-    "Use this as the primary system tool for filesystem search, git, package, "
-    "build, test, and diagnostic commands. Relative paths resolve against the "
-    "session cwd, or the supplied cwd when provided. If wait is omitted or the "
-    "command is still running, poll get_process_status with the returned "
-    "process_id to read output and completion status. Use send_process_input "
-    "for interactive stdin and kill_process to terminate long-running commands.\n\n"
-    + get_system_info()
+    "Run a shell command as a tracked background process and return a process_id.\n\n"
+    "Use when: you need the primary system primitive for filesystem search, git, "
+    "package management, builds, tests, diagnostics, or CLI tools not exposed as "
+    "dedicated tools. Use get_environment first when you need OS, PATH, shell, "
+    "permission, or CLI availability details.\n"
+    "Inputs: command is the shell command string; cwd optionally sets the working "
+    "directory; env optionally adds environment variables; wait controls how long "
+    "to wait for completion; tail limits returned output entries. Relative paths "
+    "resolve against the session cwd, or the supplied cwd when provided. Omit or "
+    "set wait=null to use server default behavior; set wait=0 to return immediately.\n"
+    "Returns: JSON with id/process_id, command, status, exit_code, output entries, "
+    "truncated, next_offset, and log_path. If the command is still running, poll "
+    "get_process_status with the process_id and next_offset.\n"
+    "Errors: 401 means authentication failed; 422 means request validation failed. "
+    "Use send_process_input for interactive stdin and kill_process to terminate "
+    "long-running commands."
 )
 if EXECUTE_DESCRIPTION:
     _EXECUTE_DESCRIPTION += "\n\n" + EXECUTE_DESCRIPTION
@@ -581,10 +589,15 @@ async def get_config():
     operation_id="get_environment",
     summary="Get runtime environment",
     description=(
-        "Return stable runtime metadata: OS, hostname, user, home, cwd, shell, "
-        "PATH, key CLI versions, and permission boundaries. Returns JSON fields: "
-        "os, hostname, user, home, cwd, shell, environment, cli_versions, "
-        "permissions, and info."
+        "Inspect the runtime environment and stable CLI contract.\n\n"
+        "Use when: starting a task, before choosing OS-specific commands, when a "
+        "command depends on PATH or shell behavior, or when you need permission and "
+        "sandbox boundaries.\n"
+        "Inputs: none.\n"
+        "Returns: JSON fields os, hostname, user, home, cwd, shell, environment, "
+        "cli_versions, permissions, and info. Each cli_versions entry reports "
+        "available, path, and version.\n"
+        "Errors: 401 means authentication failed."
     ),
     response_model=EnvironmentResponse,
     dependencies=[Depends(verify_api_key)],
@@ -723,10 +736,18 @@ async def list_files(
     operation_id="read_file",
     summary="Read a file",
     description=(
-        "Read a file and return its contents. Text files and extracted documents "
-        "return JSON with path, total_lines, and content. For text files you can "
-        "request a line range. Supported images return raw HTTP binary data with "
-        "the image MIME type, not base64. Use display_file to show a file to the user."
+        "Read file content for agent analysis.\n\n"
+        "Use when: you need to inspect text, a line range, extracted document text, "
+        "or a supported image. For large text files, request start_line and end_line "
+        "or use run_command with rg/sed/head/tail to avoid excessive context.\n"
+        "Inputs: path is absolute or relative to the session cwd; start_line and "
+        "end_line are optional 1-indexed inclusive bounds for text/document content.\n"
+        "Returns: text files and extracted documents return JSON with path, "
+        "total_lines, and content. Supported images return raw HTTP binary data "
+        "with the image MIME type, not base64. Use display_file to show a file to "
+        "the user.\n"
+        "Errors: 404 means file not found; 415 means unsupported binary content; "
+        "401 means authentication failed."
     ),
     response_model=ReadFileResponse,
     dependencies=[Depends(verify_api_key)],
@@ -813,10 +834,14 @@ async def read_file(
     operation_id="display_file",
     summary="Display a file to the user",
     description=(
-        "Make a file visible to the user in the client preview/viewer. Use this "
-        "when the user wants to view or preview a file. This does not return file "
-        "content to you; use read_file if you need to read the content yourself. "
-        "Returns JSON with path and exists."
+        "Make a file visible to the user in the client preview/viewer.\n\n"
+        "Use when: the user asks to view, preview, open, or inspect a generated "
+        "artifact directly. This is a UI/preview signal, not a content-reading tool.\n"
+        "Inputs: path is the absolute path to display.\n"
+        "Returns: JSON with path and exists. This does not return file content to "
+        "you; use read_file if you need to read the content yourself.\n"
+        "Errors: 401 means authentication failed; 422 means the path parameter was "
+        "missing or invalid."
     ),
     response_model=DisplayFileResponse,
     dependencies=[Depends(verify_api_key)],
@@ -884,11 +909,16 @@ async def serve_file(path: str, fs: UserFS = Depends(get_filesystem)):
     operation_id="write_file",
     summary="Write a file",
     description=(
-        "Write complete text content to a file. Parent directories are created "
-        "automatically. By default this tool does not overwrite existing files: "
-        "an existing path returns HTTP 409. Set overwrite=true only when replacing "
-        "the whole file is intended. Prefer apply_patch for localized edits. "
-        "Returns JSON with path and size."
+        "Write complete text content to a file.\n\n"
+        "Use when: creating a new text file or intentionally replacing the whole "
+        "file. Prefer apply_patch for localized edits to existing files.\n"
+        "Inputs: path is absolute or relative to the session cwd; content is the "
+        "complete UTF-8 text to write; overwrite defaults to false. Parent "
+        "directories are created automatically.\n"
+        "Returns: JSON with path and size in UTF-8 bytes.\n"
+        "Errors: 409 means the file already exists and overwrite=false; retry with "
+        "overwrite=true only when replacing the whole file is intended. 401 means "
+        "authentication failed; 422 means request validation failed."
     ),
     response_model=WriteFileResponse,
     dependencies=[Depends(verify_api_key)],
@@ -907,7 +937,11 @@ async def write_file(http_request: Request, request: WriteRequest, fs: UserFS = 
     if not request.overwrite and await fs.exists(target):
         raise HTTPException(
             status_code=409,
-            detail="File already exists; set overwrite=true to replace it",
+            detail=(
+                "File already exists and overwrite=false. Retry with overwrite=true "
+                "only when replacing the whole file is intended; otherwise use "
+                "apply_patch for localized edits."
+            ),
         )
     try:
         await fs.write(target, request.content)
@@ -1042,12 +1076,18 @@ async def replace_file_content(http_request: Request, request: ReplaceRequest, f
     operation_id="apply_patch",
     summary="Apply a patch",
     description=(
-        "Apply an OpenAI apply_patch-format patch. The patch must use markers like "
-        "'*** Begin Patch', '*** Add File:', '*** Update File:', '*** Delete File:', "
-        "'*** Move to:', and '*** End Patch'. Supports multi-hunk updates, add, "
-        "delete, move, dry_run=true validation without writing, and structured "
-        "409 conflict reports when old content does not match. Returns JSON with "
-        "applied, dry_run, changes, and conflicts."
+        "Apply an OpenAI apply_patch-format patch to one or more files.\n\n"
+        "Use when: making localized file edits, adding files, deleting files, or "
+        "moving files while preserving conflict detection. Use dry_run=true before "
+        "risky or multi-file edits.\n"
+        "Inputs: patch must start with '*** Begin Patch', contain hunks such as "
+        "'*** Add File:', '*** Update File:', '*** Delete File:', or '*** Move to:', "
+        "and end with '*** End Patch'. dry_run defaults to false. Example: "
+        "'*** Begin Patch\\n*** Update File: path/to/file.py\\n@@\\n-old\\n+new\\n*** End Patch'.\n"
+        "Returns: JSON with applied, dry_run, changes, and conflicts.\n"
+        "Errors: 400 means patch syntax or commit failed; 409 means the patch did "
+        "not apply cleanly. On 409, read_file the affected path, rebuild the patch "
+        "from current content, and retry."
     ),
     response_model=ApplyPatchResponse,
     dependencies=[Depends(verify_api_key)],
@@ -1078,7 +1118,10 @@ async def apply_patch(
         raise HTTPException(
             status_code=409,
             detail={
-                "message": "Patch could not be applied",
+                "message": (
+                    "Patch could not be applied. Re-read the affected file with "
+                    "read_file, rebuild the patch from current content, and retry."
+                ),
                 "conflicts": conflicts,
             },
         )
@@ -1440,10 +1483,15 @@ async def archive_paths(
 @app.get(
     "/execute",
     operation_id="list_processes",
-    summary="List running commands",
+    summary="List tracked commands",
     description=(
-        "Returns a JSON list of all tracked background processes, including "
-        "id, command, status, exit_code, and log_path."
+        "List tracked commands started by run_command.\n\n"
+        "Use when: you need to find active or recently finished process_ids before "
+        "polling, sending input, or terminating a command.\n"
+        "Inputs: none.\n"
+        "Returns: JSON list of tracked commands with id, command, status, "
+        "exit_code, and log_path. Status is running, done, or killed.\n"
+        "Errors: 401 means authentication failed."
     ),
     response_model=list[ProcessSummaryResponse],
     dependencies=[Depends(verify_api_key)],
@@ -1481,7 +1529,7 @@ async def execute(
     request: ExecRequest,
     wait: Optional[float] = Query(
         None,
-        description="Seconds to wait for the command to finish before returning. If the command completes in time, output is included inline. Null to return immediately.",
+        description="Seconds to wait for completion before returning. Omit or set null to use server default behavior; set 0 to return immediately.",
         ge=0,
         le=300,
     ),
@@ -1540,9 +1588,17 @@ async def execute(
     operation_id="get_process_status",
     summary="Get command status and output",
     description=(
-        "Poll a process started by run_command. Returns output, status, exit_code, "
-        "next_offset, truncation state, and log_path. Use offset=next_offset from "
-        "the previous response to read only new output."
+        "Poll status and output for a process started by run_command.\n\n"
+        "Use when: run_command returned while the command was still running, or you "
+        "need more output from a tracked process.\n"
+        "Inputs: process_id must be the id returned by run_command; offset should "
+        "usually be the previous next_offset; wait controls how long to wait; tail "
+        "limits returned output entries.\n"
+        "Returns: JSON with id/process_id, command, status, exit_code, output, "
+        "truncated, next_offset, and log_path. Use offset=next_offset to read only "
+        "new output next time.\n"
+        "Errors: 404 means the process_id is unknown or expired; 401 means "
+        "authentication failed; 422 means request validation failed."
     ),
     response_model=ProcessStatusResponse,
     dependencies=[Depends(verify_api_key)],
@@ -1558,7 +1614,7 @@ async def get_status(
     ),
     wait: Optional[float] = Query(
         None,
-        description="Seconds to wait for the process to finish before returning. Returns early if the process exits. Null to return immediately.",
+        description="Seconds to wait for the process to finish. Omit or set null to use server default behavior; set 0 to return immediately.",
         ge=0,
         le=300,
     ),
@@ -1606,9 +1662,16 @@ async def get_status(
     operation_id="send_process_input",
     summary="Send input to a running command",
     description=(
-        "Write text to stdin for a running process started by run_command. Include "
-        "newlines when the command expects Enter. Literal escape sequences such as "
-        "\\n, \\x03, and \\x04 are converted before sending."
+        "Write text to stdin for a running process started by run_command.\n\n"
+        "Use when: an interactive command is waiting for input, confirmation, "
+        "password text, Ctrl-C, or EOF.\n"
+        "Inputs: process_id must be the id returned by run_command; input is text "
+        "to send. Include newlines when the command expects Enter. Literal escape "
+        "sequences such as \\n, \\x03, and \\x04 are converted before sending.\n"
+        "Returns: JSON with status='ok' after input is accepted.\n"
+        "Errors: 404 means the process_id is unknown or expired; 400 means the "
+        "process exited or stdin is closed; 401 means authentication failed; 422 "
+        "means request validation failed."
     ),
     response_model=StatusResponse,
     dependencies=[Depends(verify_api_key)],
@@ -1648,9 +1711,17 @@ async def send_input(
     operation_id="kill_process",
     summary="Kill a running command",
     description=(
-        "Terminate the process. Sends SIGTERM by default for graceful shutdown "
-        "on Unix-like backends; use force=true to request SIGKILL or the closest "
-        "available forceful termination behavior."
+        "Terminate a process started by run_command.\n\n"
+        "Use when: a tracked command is hung, no longer needed, or must be stopped "
+        "before continuing.\n"
+        "Inputs: process_id must be the id returned by run_command; force=false "
+        "requests graceful termination, while force=true requests forceful "
+        "termination.\n"
+        "Returns: JSON with status='killed'.\n"
+        "Errors: 404 means the process_id is unknown or expired; 401 means "
+        "authentication failed; 422 means request validation failed. On Unix-like "
+        "backends force=false sends SIGTERM and force=true sends SIGKILL; other "
+        "platforms use the closest available behavior."
     ),
     response_model=StatusResponse,
     dependencies=[Depends(verify_api_key)],
@@ -1664,7 +1735,7 @@ async def kill_process(
         ...,
         description="The process_id returned by run_command.",
     ),
-    force: bool = Query(False, description="Send SIGKILL instead of SIGTERM."),
+    force: bool = Query(False, description="Request forceful termination instead of graceful termination."),
 ):
     background_process = _get_process(process_id)
     if background_process.status == "running":
