@@ -4,7 +4,7 @@ FROM python:3.12.13
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     # Core utilities
-    coreutils findutils grep sed gawk diffutils patch \
+    coreutils findutils grep ripgrep sed gawk diffutils patch \
     less file tree bc man-db \
     # Networking
     curl wget net-tools iputils-ping dnsutils netcat-openbsd socat telnet \
