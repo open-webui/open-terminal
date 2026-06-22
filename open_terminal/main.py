@@ -146,6 +146,25 @@ def get_filesystem(request: Request) -> UserFS:
     return UserFS(username=username, home=home)
 
 
+def get_file_browser_root(fs: UserFS) -> dict[str, str] | None:
+    configured = FILE_BROWSER_ROOT.strip()
+    mode = configured.lower()
+    if mode in ("", "home"):
+        return {"path": fs.home, "label": "Home"}
+    if mode == "filesystem":
+        return None
+
+    path = configured.replace("{{home}}", fs.home)
+    if path == "~":
+        path = fs.home
+    elif path.startswith("~/"):
+        path = os.path.join(fs.home, path[2:])
+
+    root_path = fs.resolve_path(path)
+    label = "Home" if root_path == fs.home else os.path.basename(root_path) or root_path
+    return {"path": root_path, "label": label}
+
+
 app = FastAPI(
     title="Open Terminal",
     description="A remote terminal API.",
@@ -445,11 +464,9 @@ async def get_cwd(
         "cwd": _get_session_cwd(session_id, fs),
         "home": fs.home,
     }
-    if FILE_BROWSER_ROOT != "filesystem":
-        response["root"] = {
-            "path": fs.home,
-            "label": "Home",
-        }
+    root = get_file_browser_root(fs)
+    if root:
+        response["root"] = root
     return response
 
 

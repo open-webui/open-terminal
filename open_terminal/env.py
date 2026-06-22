@@ -164,7 +164,7 @@ OPEN_TERMINAL_INFO = os.environ.get(
 FILE_BROWSER_ROOT = os.environ.get(
     "OPEN_TERMINAL_FILE_BROWSER_ROOT",
     config.get("file_browser_root", "home"),
-).strip().lower()
+).strip()
 
 # How long (in seconds) to keep per-session cwd entries in memory.
 # Sliding window — refreshed on every access.
@@ -174,4 +174,3 @@ SESSION_CWD_TTL: float = float(
         config.get("session_cwd_ttl", 604_800),  # 7 days
     )
 )
-

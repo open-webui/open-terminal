@@ -133,6 +133,7 @@ cors_allowed_origins = "*"
 log_dir = "/var/log/open-terminal"
 binary_mime_prefixes = "image,audio"
 execute_timeout = 5  # seconds to wait for command output (unset by default)
+file_browser_root = "home"
 ```
 
 > [!TIP]
@@ -143,6 +144,21 @@ You can also point to a specific config file:
 ```bash
 open-terminal run --config /path/to/my-config.toml
 ```
+
+### File Browser Root
+
+Open Terminal reports file-browser root metadata from `GET /files/cwd` so clients can hide parent navigation above a friendly starting point.
+
+Set `OPEN_TERMINAL_FILE_BROWSER_ROOT` to:
+
+| Value | Behavior |
+|---|---|
+| `home` | Default. Report the current user's home directory as `Home` |
+| `/workspace` | Report an explicit path as the visual root |
+| `{{home}}/project` | Report a path under the current user's home |
+| `filesystem` | Opt out and report no visual root metadata |
+
+This is a UI hint for clients. It does not restrict terminal commands or file APIs.
 
 ## Using with Open WebUI
 
