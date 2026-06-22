@@ -441,7 +441,14 @@ async def get_cwd(
     fs: UserFS = Depends(get_filesystem),
 ):
     session_id = http_request.headers.get("x-session-id")
-    return {"cwd": _get_session_cwd(session_id, fs), "home": fs.home}
+    return {
+        "cwd": _get_session_cwd(session_id, fs),
+        "home": fs.home,
+        "root": {
+            "path": fs.home,
+            "label": "Home",
+        },
+    }
 
 
 @app.post(
