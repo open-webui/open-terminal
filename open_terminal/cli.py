@@ -156,23 +156,62 @@ def run(
     default=None,
     help="Working directory for the server process.",
 )
+@click.option(
+    "--api-key",
+    default="",
+    envvar="OPEN_TERMINAL_API_KEY",
+    help="Bearer API key (or set OPEN_TERMINAL_API_KEY env var)",
+)
 def mcp(
     transport: str,
     host: str | None,
     port: int | None,
     config_path: str | None,
     cwd: str | None,
+    api_key: str,
 ):
     """Start the MCP server (requires 'pip install open-terminal[mcp]')."""
     from open_terminal import config
 
     cfg = config.init(config_path)
 
-    host = host or cfg.get("host", "0.0.0.0")
-    port = port if port is not None else cfg.get("port", 8000)
+    # Only resolve host/port for non-stdio transport modes
+    if transport != "stdio":
+        host = host or cfg.get("host", "0.0.0.0")
+        port = port if port is not None else cfg.get("port", 8000)
 
     if cwd:
         os.chdir(cwd)
+
+    # Resolve API key: CLI flag > env var > Docker secret file > config file.
+    # Must be set in os.environ BEFORE importing mcp_server so that env.py
+    # picks it up at module-import time (it captures API_KEY at import).
+    if not api_key:
+        file_path = os.environ.get("OPEN_TERMINAL_API_KEY_FILE")
+        if file_path:
+            with open(file_path) as f:
+                api_key = f.read().strip()
+    if not api_key:
+        api_key = cfg.get("api_key", "")
+
+    # For stdio transport, auto-generate a temporary API key if not provided.
+    # stdio is local IPC, so a random key is sufficient for security.
+    # For HTTP transports, require an explicit API key.
+    if transport == "stdio":
+        if not api_key:
+            import secrets
+            api_key = secrets.token_hex(32)
+    else:
+        # streamable-http requires explicit authentication
+        if not api_key:
+            click.echo(
+                "Error: --api-key is required for HTTP transport modes.\n"
+                "Set via --api-key flag or OPEN_TERMINAL_API_KEY environment variable.",
+                err=True,
+            )
+            raise SystemExit(1)
+
+    os.environ["OPEN_TERMINAL_API_KEY"] = api_key
 
     try:
         from open_terminal.mcp_server import mcp as mcp_server
@@ -184,7 +223,10 @@ def mcp(
         )
         raise SystemExit(1)
 
-    mcp_server.run(transport=transport, host=host, port=port)
+    if transport == "stdio":
+        mcp_server.run(transport="stdio")
+    else:
+        mcp_server.run(transport=transport, host=host, port=port)
 
 
 if __name__ == "__main__":
