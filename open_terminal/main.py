@@ -552,22 +552,16 @@ async def read_file(
         mime, _ = mimetypes.guess_type(target)
         mime = mime or "application/octet-stream"
 
-        # Try document text extraction (PDF, Office, OpenDocument, etc.)
-        from open_terminal.utils.documents import EXTRACTORS
-
-        for ext_mime, ext_suffix, extractor in EXTRACTORS:
-            if (ext_mime and mime == ext_mime) or (
-                ext_suffix and target.lower().endswith(ext_suffix)
-            ):
-                text = await asyncio.to_thread(extractor, target)
-                lines = text.splitlines(keepends=True)
-                start = (start_line or 1) - 1
-                end = end_line or len(lines)
-                return {
-                    "path": target,
-                    "total_lines": len(lines),
-                    "content": "".join(lines[start:end]),
-                }
+        text = await asyncio.to_thread(_extract_text_with_supported_document_extractors, target, mime)
+        if text is not None:
+            lines = text.splitlines(keepends=True)
+            start = (start_line or 1) - 1
+            end = end_line or len(lines)
+            return {
+                "path": target,
+                "total_lines": len(lines),
+                "content": "".join(lines[start:end]),
+            }
 
         # Return raw binary for allowed mime type prefixes (e.g. image/*)
         if any(mime.startswith(prefix) for prefix in BINARY_FILE_MIME_PREFIXES):
@@ -586,6 +580,36 @@ async def read_file(
         "total_lines": len(lines),
         "content": "".join(lines[start:end]),
     }
+
+
+def _extract_text_with_supported_document_extractors(file_path: str, mime: str) -> str | None:
+    """Extract text for supported document types; return None when unsupported."""
+    from open_terminal.utils.documents import EXTRACTORS
+
+    for ext_mime, ext_suffix, extractor in EXTRACTORS:
+        if (ext_mime and mime == ext_mime) or (ext_suffix and file_path.lower().endswith(ext_suffix)):
+            return extractor(file_path)
+    return None
+
+
+def _read_file_as_text_representation_for_grep(file_path: str) -> str:
+    """Return searchable text using the same extraction behavior as read_file."""
+    try:
+        with open(file_path, "r", encoding="utf-8", errors="strict") as f:
+            return f.read()
+    except (UnicodeDecodeError, ValueError):
+        pass
+
+    import mimetypes
+
+    mime, _ = mimetypes.guess_type(file_path)
+    mime = mime or "application/octet-stream"
+
+    text = _extract_text_with_supported_document_extractors(file_path, mime)
+    if text is not None:
+        return text
+
+    raise UnicodeDecodeError("utf-8", b"", 0, 1, "Unsupported binary file")
 
 
 @app.get(
@@ -798,7 +822,7 @@ async def replace_file_content(http_request: Request, request: ReplaceRequest, f
     "/files/grep",
     operation_id="grep_search",
     summary="Search file contents",
-    description="Search for a text pattern across files in a directory. Returns structured matches with file paths, line numbers, and matching lines. Skips binary files.",
+    description="Search for a text pattern across files in a directory. Returns structured matches with file paths, line numbers, and matching lines. Searches plain-text files directly and supported document binaries (PDF, Office, OpenDocument, etc.) via text extraction, using the same text-representation behavior as read_file. Unsupported binary files are skipped.",
     dependencies=[Depends(verify_api_key)],
     responses={
         404: {"description": "Search path not found."},
@@ -856,25 +880,25 @@ async def grep_search(
             if truncated:
                 return
             try:
-                with open(file_path, "r", encoding="utf-8", errors="strict") as f:
-                    for line_number, line in enumerate(f, 1):
-                        if pattern.search(line):
-                            if match_per_line:
-                                matches.append(
-                                    {
-                                        "file": file_path,
-                                        "line": line_number,
-                                        "content": line.rstrip("\n\r"),
-                                    }
-                                )
-                                if len(matches) >= max_results:
-                                    truncated = True
-                                    return
-                            else:
-                                matches.append({"file": file_path})
-                                if len(matches) >= max_results:
-                                    truncated = True
-                                return  # one match per file is enough
+                content = _read_file_as_text_representation_for_grep(file_path)
+                for line_number, line in enumerate(content.splitlines(), 1):
+                    if pattern.search(line):
+                        if match_per_line:
+                            matches.append(
+                                {
+                                    "file": file_path,
+                                    "line": line_number,
+                                    "content": line.rstrip("\n\r"),
+                                }
+                            )
+                            if len(matches) >= max_results:
+                                truncated = True
+                                return
+                        else:
+                            matches.append({"file": file_path})
+                            if len(matches) >= max_results:
+                                truncated = True
+                            return  # one match per file is enough
             except (UnicodeDecodeError, ValueError, OSError):
                 pass  # skip binary or unreadable files
 
@@ -1453,11 +1477,6 @@ if ENABLE_TERMINAL:
     from datetime import datetime as _datetime
     from fastapi.responses import JSONResponse
 
-    try:
-        import select as _select
-    except ImportError:
-        _select = None  # Not available on all platforms in all contexts
-
     # Determine terminal backend: prefer Unix PTY, then pywinpty, else None
     if _PTY_AVAILABLE:
         _TERMINAL_BACKEND = "pty"
@@ -1727,13 +1746,35 @@ if ENABLE_TERMINAL:
             master_fd = session["master_fd"]
             process = session["process"]
 
-            def _blocking_read():
-                """Read from PTY using select() so we don't block forever."""
+            async def _read_data():
+                """Read from the non-blocking PTY fd without occupying a worker thread."""
+                loop = asyncio.get_running_loop()
+
                 while not stop_event.is_set():
                     try:
-                        rlist, _, _ = _select.select([master_fd], [], [], 0.1)
-                        if rlist:
-                            return os.read(master_fd, 4096)
+                        return os.read(master_fd, 4096)
+                    except BlockingIOError:
+                        if process.poll() is not None:
+                            return b""
+
+                        future = loop.create_future()
+
+                        def _mark_readable():
+                            if not future.done():
+                                future.set_result(None)
+
+                        try:
+                            loop.add_reader(master_fd, _mark_readable)
+                        except (AttributeError, NotImplementedError):
+                            await asyncio.sleep(0.05)
+                            continue
+
+                        try:
+                            await asyncio.wait_for(future, timeout=0.1)
+                        except asyncio.TimeoutError:
+                            pass
+                        finally:
+                            loop.remove_reader(master_fd)
                     except (OSError, ValueError):
                         return b""
                 return b""
@@ -1764,6 +1805,9 @@ if ENABLE_TERMINAL:
                 except Exception:
                     return b""
 
+            async def _read_data():
+                return await loop.run_in_executor(None, _blocking_read)
+
             def _check_alive():
                 return pty_proc.isalive()
 
@@ -1779,7 +1823,7 @@ if ENABLE_TERMINAL:
             """Forward PTY output -> WebSocket."""
             try:
                 while not stop_event.is_set():
-                    data = await loop.run_in_executor(None, _blocking_read)
+                    data = await _read_data()
                     if not data:
                         if stop_event.is_set():
                             break
