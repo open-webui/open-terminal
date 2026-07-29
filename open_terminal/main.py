@@ -842,6 +842,12 @@ async def grep_search(
     else:
         pattern = re.compile(re.escape(query), flags)
 
+    # Safety constants to prevent context overflow from binary blobs
+    # embedded in text files (e.g., base64 payloads in shell scripts)
+    # Reported: 2026-07-29 (1.14M character single response incident)
+    _MAX_LINE_LENGTH = 2000   # skip lines longer than this (likely binary/blobs)
+    _MAX_MATCH_CONTENT = 300  # truncate match content to this many chars
+
     def _search_sync():
         def _matches_include(filename: str) -> bool:
             if not include:
@@ -858,13 +864,24 @@ async def grep_search(
             try:
                 with open(file_path, "r", encoding="utf-8", errors="strict") as f:
                     for line_number, line in enumerate(f, 1):
+                        # Skip absurdly long lines — almost certainly embedded
+                        # binary blobs (base64, wheels, etc.), not real source
+                        if len(line) > _MAX_LINE_LENGTH:
+                            continue
                         if pattern.search(line):
                             if match_per_line:
+                                content = line.rstrip("\n\r")
+                                # Cap returned content to prevent context overflow
+                                if len(content) > _MAX_MATCH_CONTENT:
+                                    content = (
+                                        content[:_MAX_MATCH_CONTENT]
+                                        + f"... [truncated, full line was {len(line.rstrip())} chars]"
+                                    )
                                 matches.append(
                                     {
                                         "file": file_path,
                                         "line": line_number,
-                                        "content": line.rstrip("\n\r"),
+                                        "content": content,
                                     }
                                 )
                                 if len(matches) >= max_results:
