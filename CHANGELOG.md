@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- 🔒 **A finished process's result could vanish before a slow caller ever read it** — a finished process's in-memory record (and its result) was deleted 300s after completion regardless of whether anyone had actually retrieved it yet. A caller whose own dispatch loop stalls past that window would come back to `{"detail": "Process not found"}` -- permanent, silent loss of a command that actually succeeded, with no way to distinguish "still running" from "result is gone." Now tracks `delivered_at` separately from `finished_at`: undelivered results get a much longer grace period (`OPEN_TERMINAL_PROCESS_UNDELIVERED_EXPIRY`, default 30 minutes), delivered results keep the original short one (`OPEN_TERMINAL_PROCESS_EXPIRY`, default 5 minutes, unchanged default), since the caller already has what it needs.
+
 ## [0.11.34] - 2026-04-08
 
 ### Added

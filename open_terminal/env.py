@@ -107,6 +107,30 @@ PROCESS_LOG_RETENTION: float = float(
     )
 )
 
+# How long (in seconds) to keep a finished process's in-memory record
+# AFTER its result has been successfully delivered at least once via
+# GET /execute/{id}/status. Short is fine here -- the caller already has
+# what it needs.
+PROCESS_EXPIRY: float = float(
+    os.environ.get(
+        "OPEN_TERMINAL_PROCESS_EXPIRY",
+        config.get("process_expiry", 300),  # 5 minutes
+    )
+)
+
+# How long (in seconds) to keep a finished process's in-memory record if
+# NOBODY has successfully polled its status yet. Deliberately much longer
+# than PROCESS_EXPIRY: a caller whose own dispatch loop stalls still
+# needs the result to be there when it eventually recovers and asks.
+# Expiring on the same short window as a delivered result turns a
+# recoverable caller-side hang into a permanent, silent loss.
+PROCESS_UNDELIVERED_EXPIRY: float = float(
+    os.environ.get(
+        "OPEN_TERMINAL_PROCESS_UNDELIVERED_EXPIRY",
+        config.get("process_undelivered_expiry", 1800),  # 30 minutes
+    )
+)
+
 # Minimum interval (in seconds) between log flushes during command execution.
 # 0 (default) = flush after every chunk (current behaviour).
 # Setting this to e.g. 1.0 reduces I/O pressure on high-output commands.
