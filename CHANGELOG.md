@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- 🔌 **`Connection reset by peer` on client tool calls** — uvicorn's default keep-alive timeout (5s) can be shorter than a client's HTTP connection-pool reuse window, so a pooled-but-idle connection gets written to right after the server has already closed it, surfacing as `ConnectionResetError` even though the underlying command completed successfully. `timeout_keep_alive` is now configurable (`OPEN_TERMINAL_UVICORN_TIMEOUT_KEEP_ALIVE` or `uvicorn_timeout_keep_alive` in config.toml) and defaults to 75s.
+
 ## [0.11.34] - 2026-04-08
 
 ### Added

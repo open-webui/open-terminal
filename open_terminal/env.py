@@ -156,6 +156,19 @@ UVICORN_LOOP = os.environ.get(
     config.get("uvicorn_loop", "auto"),
 )
 
+# uvicorn's own default (5s) can be shorter than a client's HTTP
+# connection-pool reuse window, so a pooled-but-idle connection can be
+# written to right after the server has already closed it -- surfacing
+# as a ConnectionResetError on the client even though the underlying
+# command completed successfully. 75s matches gunicorn/nginx's common
+# default and comfortably exceeds most client pool idle timeouts.
+UVICORN_TIMEOUT_KEEP_ALIVE = float(
+    os.environ.get(
+        "OPEN_TERMINAL_UVICORN_TIMEOUT_KEEP_ALIVE",
+        config.get("uvicorn_timeout_keep_alive", 75),
+    )
+)
+
 OPEN_TERMINAL_INFO = os.environ.get(
     "OPEN_TERMINAL_INFO",
     config.get("info", ""),
