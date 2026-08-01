@@ -14,6 +14,60 @@ import aiofiles.os
 
 from open_terminal.env import MAX_PROCESS_LOG_SIZE, LOG_FLUSH_INTERVAL, LOG_FLUSH_BUFFER
 
+_last_disk_sweep = 0.0
+_DISK_SWEEP_INTERVAL = 300  # rate-limit: at most once per 5 minutes
+
+
+def sweep_expired_log_files(
+    processes_dir: str, retention: float, now: Optional[float] = None
+) -> list[str]:
+    """Delete ``*.jsonl`` files in *processes_dir* older than *retention* seconds.
+
+    Complements the in-memory-record-based cleanup in ``main.py``'s
+    ``_cleanup_expired()``: that path only reaches a log file while its
+    ``BackgroundProcess`` record is still in memory, but that registry
+    resets on every process restart while the log files themselves live
+    on a persistent volume. A log file older than the last restart is
+    therefore permanently unreachable by that path alone, regardless of
+    age. This reads mtimes directly off disk instead.
+
+    Returns the list of paths actually deleted (for observability/tests).
+    """
+    now = time.time() if now is None else now
+    deleted: list[str] = []
+    try:
+        entries = os.listdir(processes_dir)
+    except OSError:
+        return deleted
+    for name in entries:
+        if not name.endswith(".jsonl"):
+            continue
+        path = os.path.join(processes_dir, name)
+        try:
+            if now - os.path.getmtime(path) > retention:
+                os.remove(path)
+                deleted.append(path)
+        except OSError:
+            pass
+    return deleted
+
+
+def sweep_expired_log_files_rate_limited(processes_dir: str, retention: float) -> list[str]:
+    """Rate-limited wrapper around :func:`sweep_expired_log_files`.
+
+    ``_cleanup_expired()`` runs on every process-status-check request,
+    which can be frequent under active polling -- an unconditional
+    directory listing on every call would add avoidable I/O. This limits
+    the actual disk scan to at most once per *_DISK_SWEEP_INTERVAL*
+    regardless of call frequency.
+    """
+    global _last_disk_sweep
+    now = time.time()
+    if now - _last_disk_sweep < _DISK_SWEEP_INTERVAL:
+        return []
+    _last_disk_sweep = now
+    return sweep_expired_log_files(processes_dir, retention, now=now)
+
 
 class BoundedLogWriter:
     """Async wrapper that rotates the log file when it exceeds a size limit.

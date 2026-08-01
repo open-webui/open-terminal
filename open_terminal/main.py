@@ -345,7 +345,7 @@ def _set_session_cwd(session_id: str | None, path: str):
         _session_cwds[session_id] = (path, time.time())
 
 
-from open_terminal.utils.log import log_process, read_log
+from open_terminal.utils.log import log_process, read_log, sweep_expired_log_files_rate_limited
 
 
 
@@ -374,6 +374,17 @@ def _cleanup_expired():
                 os.remove(bp.log_path)
             except OSError:
                 pass
+
+    # The loop above only reaches a log file while its BackgroundProcess
+    # record is still in _processes -- an in-memory dict that resets on
+    # every restart. Log files live on disk (often a persistent volume)
+    # and survive restarts, so a file whose in-memory record is gone was
+    # otherwise permanently unreachable by this function regardless of
+    # age. Sweep the log directory by mtime directly as a backstop,
+    # independent of any in-memory record.
+    sweep_expired_log_files_rate_limited(
+        os.path.join(LOG_DIR, "processes"), PROCESS_LOG_RETENTION
+    )
 
 
 def _get_process(process_id: str) -> BackgroundProcess:
