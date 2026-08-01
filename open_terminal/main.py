@@ -289,6 +289,73 @@ class ReplaceRequest(BaseModel):
     )
 
 
+class InsertAfterRequest(BaseModel):
+    path: str = Field(
+        ...,
+        description="Path to the file to modify.",
+    )
+    anchor: str = Field(
+        ...,
+        description=(
+            "Substring identifying the anchor line. The first line containing this "
+            "string is the anchor; `content` is inserted on a new line immediately "
+            "after it. Use a unique-enough substring (typically a full heading "
+            "line) to avoid ambiguous matches."
+        ),
+    )
+    content: str = Field(
+        ...,
+        description=(
+            "Text to insert after the anchor line. A trailing newline is added "
+            "automatically if not present."
+        ),
+    )
+    allow_multiple: bool = Field(
+        False,
+        description=(
+            "If true, inserts after every matching anchor line. If false (default), "
+            "errors when more than one match is found."
+        ),
+    )
+
+
+class AppendToSectionRequest(BaseModel):
+    path: str = Field(
+        ...,
+        description="Path to the file to modify.",
+    )
+    heading: str = Field(
+        ...,
+        description=(
+            "Substring identifying the section heading. The first matching markdown "
+            "heading line is the section start; `content` is appended at the end of "
+            "the section, immediately before the next heading at equal or shallower "
+            "depth (or end of file). Example: '## 4. Tactical Deployment Constraints'."
+        ),
+    )
+    content: str = Field(
+        ...,
+        description=(
+            "Text to append at the end of the matched section. A trailing newline "
+            "is added automatically if not present."
+        ),
+    )
+
+
+class AppendRequest(BaseModel):
+    path: str = Field(
+        ...,
+        description="Path to the file to append to. The file must already exist.",
+    )
+    content: str = Field(
+        ...,
+        description=(
+            "Text to append at the end of the file. A newline is added before the "
+            "appended content if the existing file doesn't already end with one."
+        ),
+    )
+
+
 
 # ---------------------------------------------------------------------------
 # Background process management
@@ -759,6 +826,31 @@ async def replace_file_content(http_request: Request, request: ReplaceRequest, f
         raise HTTPException(status_code=400, detail=str(e))
 
     for chunk in request.replacements:
+        # A target identical to the first non-empty line of the replacement is
+        # the smoking-gun signature of an "insert new section" being expressed
+        # as a find-and-replace. Refuse before the generic "Target string not
+        # found" 400 fires, so the caller learns the right shape instead of
+        # concluding the file was truncated.
+        target_stripped = chunk.target.strip()
+        first_replacement_line = next(
+            (line.strip() for line in chunk.replacement.splitlines() if line.strip()),
+            "",
+        )
+        if target_stripped and target_stripped == first_replacement_line:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Target string is identical to the first line of the "
+                    "replacement. This usually means you want to ADD a new "
+                    "section but expressed it as a find-and-replace. Use "
+                    "insert_after (insert after an existing anchor line), "
+                    "append_to_section (extend the end of a section), or "
+                    "append_file_content (add to end of file) instead. If "
+                    "you're unsure where to put it, read_file first to see "
+                    "the existing anchors."
+                ),
+            )
+
         if chunk.start_line or chunk.end_line:
             lines = content.splitlines(keepends=True)
             start = (chunk.start_line or 1) - 1
@@ -792,6 +884,214 @@ async def replace_file_content(http_request: Request, request: ReplaceRequest, f
         raise HTTPException(status_code=400, detail=str(e))
 
     return {"path": target, "size": len(content.encode())}
+
+
+@app.post(
+    "/files/insert_after",
+    operation_id="insert_after_anchor",
+    summary="Insert content after an anchor line",
+    description=(
+        "Insert new content on a new line immediately after a line containing "
+        "the anchor string. Use this for ADDING content under a known heading "
+        "(e.g., 'insert after `## 4. Tactical Deployment Constraints`'). For "
+        "replacing existing content, use replace_file_content. For appending "
+        "at the end of a section or file, use append_to_section or "
+        "append_file_content."
+    ),
+    dependencies=[Depends(verify_api_key)],
+    responses={
+        404: {"description": "File not found."},
+        400: {"description": "Anchor not found or ambiguous match."},
+        401: {"description": "Invalid or missing API key."},
+    },
+)
+async def insert_after_anchor(
+    http_request: Request, request: InsertAfterRequest, fs: UserFS = Depends(get_filesystem)
+):
+    session_id = http_request.headers.get("x-session-id")
+    session_cwd = _get_session_cwd(session_id, fs) if session_id else None
+    target = fs.resolve_path(request.path, cwd=session_cwd)
+    if not await fs.isfile(target):
+        raise HTTPException(status_code=404, detail="File not found")
+
+    try:
+        content = await fs.read_text(target)
+    except OSError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    lines = content.splitlines(keepends=True)
+    matches = [i for i, line in enumerate(lines) if request.anchor in line]
+    if not matches:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Anchor not found: {request.anchor[:100]!r}",
+        )
+    if len(matches) > 1 and not request.allow_multiple:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Found {len(matches)} lines matching anchor but allow_multiple "
+                "is false"
+            ),
+        )
+
+    to_insert = request.content
+    if not to_insert.endswith("\n"):
+        to_insert += "\n"
+
+    # Iterate in reverse so earlier indices remain valid after each insert.
+    for idx in reversed(matches):
+        # If the anchor line itself doesn't end in a newline (only possible at
+        # EOF when the file has no trailing newline), force one so the inserted
+        # content lands on its own line.
+        if not lines[idx].endswith("\n"):
+            lines[idx] = lines[idx] + "\n"
+        lines.insert(idx + 1, to_insert)
+
+    new_content = "".join(lines)
+    try:
+        await fs.write(target, new_content)
+    except OSError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    return {"path": target, "size": len(new_content.encode())}
+
+
+def _markdown_heading_depth(line: str) -> Optional[int]:
+    """Return the markdown heading depth (number of leading #s) or None.
+
+    A heading is a line whose first non-whitespace token is one or more `#`
+    characters followed by whitespace or end-of-line.  ``#hashtag`` is not a
+    heading; ``## My Section`` is depth 2.
+    """
+    stripped = line.lstrip()
+    if not stripped.startswith("#"):
+        return None
+    depth = len(stripped) - len(stripped.lstrip("#"))
+    # Must be followed by whitespace (or EOL) to count as a heading, not e.g.
+    # `#hashtag`.
+    remainder = stripped[depth:]
+    if remainder and not remainder[0].isspace():
+        return None
+    return depth
+
+
+@app.post(
+    "/files/append_to_section",
+    operation_id="append_to_section",
+    summary="Append content at the end of a markdown section",
+    description=(
+        "Find the first markdown heading line containing the given substring, "
+        "then append the new content at the end of that section — immediately "
+        "before the next heading at equal or shallower depth, or at end of "
+        "file if no such heading follows. Use this for EXTENDING an existing "
+        "section without scanning the file for the right insertion line."
+    ),
+    dependencies=[Depends(verify_api_key)],
+    responses={
+        404: {"description": "File not found."},
+        400: {"description": "Heading not found."},
+        401: {"description": "Invalid or missing API key."},
+    },
+)
+async def append_to_section(
+    http_request: Request, request: AppendToSectionRequest, fs: UserFS = Depends(get_filesystem)
+):
+    session_id = http_request.headers.get("x-session-id")
+    session_cwd = _get_session_cwd(session_id, fs) if session_id else None
+    target = fs.resolve_path(request.path, cwd=session_cwd)
+    if not await fs.isfile(target):
+        raise HTTPException(status_code=404, detail="File not found")
+
+    try:
+        content = await fs.read_text(target)
+    except OSError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    lines = content.splitlines(keepends=True)
+    heading_idx = None
+    for i, line in enumerate(lines):
+        if request.heading in line and _markdown_heading_depth(line) is not None:
+            heading_idx = i
+            break
+    if heading_idx is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Markdown heading not found: {request.heading[:100]!r}",
+        )
+
+    my_depth = _markdown_heading_depth(lines[heading_idx])
+    end_idx = len(lines)
+    for j in range(heading_idx + 1, len(lines)):
+        d = _markdown_heading_depth(lines[j])
+        if d is not None and d <= my_depth:
+            end_idx = j
+            break
+
+    to_insert = request.content
+    if not to_insert.endswith("\n"):
+        to_insert += "\n"
+    # Ensure the line before the insertion ends with a newline so the appended
+    # block starts on its own line (most relevant when inserting at EOF on a
+    # file that doesn't end in a newline).
+    if end_idx > 0 and not lines[end_idx - 1].endswith("\n"):
+        lines[end_idx - 1] = lines[end_idx - 1] + "\n"
+    lines.insert(end_idx, to_insert)
+
+    new_content = "".join(lines)
+    try:
+        await fs.write(target, new_content)
+    except OSError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    return {"path": target, "size": len(new_content.encode())}
+
+
+@app.post(
+    "/files/append",
+    operation_id="append_file_content",
+    summary="Append content to the end of a file",
+    description=(
+        "Append the given content at the end of an existing file. A newline "
+        "is added before the appended content if the existing file doesn't "
+        "already end with one. Use this for ADDING new top-level sections or "
+        "trailing content with no anchor. For inserting in the middle of a "
+        "file, use insert_after or append_to_section."
+    ),
+    dependencies=[Depends(verify_api_key)],
+    responses={
+        404: {"description": "File not found."},
+        400: {"description": "Filesystem error."},
+        401: {"description": "Invalid or missing API key."},
+    },
+)
+async def append_file_content(
+    http_request: Request, request: AppendRequest, fs: UserFS = Depends(get_filesystem)
+):
+    session_id = http_request.headers.get("x-session-id")
+    session_cwd = _get_session_cwd(session_id, fs) if session_id else None
+    target = fs.resolve_path(request.path, cwd=session_cwd)
+    if not await fs.isfile(target):
+        raise HTTPException(status_code=404, detail="File not found")
+
+    try:
+        content = await fs.read_text(target)
+    except OSError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    new_content = content
+    if new_content and not new_content.endswith("\n"):
+        new_content += "\n"
+    new_content += request.content
+    if not new_content.endswith("\n"):
+        new_content += "\n"
+
+    try:
+        await fs.write(target, new_content)
+    except OSError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    return {"path": target, "size": len(new_content.encode())}
 
 
 @app.get(

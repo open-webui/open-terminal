@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- 📄 **Companion insert/append operations for `replace_file_content`**: `POST /files/insert_after` (insert content after a matching anchor line), `POST /files/append_to_section` (append at the end of a markdown section, before the next same-or-shallower heading), and `POST /files/append` (append at end of file). These are for ADDING content rather than replacing it -- a common LLM pattern was to express "add a new section" as a find-and-replace with a made-up anchor, which just fails with a generic "Target string not found" and often sends the model into an unproductive re-read loop believing the file was truncated.
+
+### Fixed
+
+- 🎯 **`replace_file_content` now catches the "insert expressed as replace" pattern directly** -- refuses with a specific, actionable error (naming the three new ops above) when `target` is identical to the first non-empty line of `replacement`, instead of letting it fall through to a generic and misleading "Target string not found."
+
 ## [0.11.34] - 2026-04-08
 
 ### Added
