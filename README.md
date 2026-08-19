@@ -207,11 +207,11 @@ Full interactive API documentation is available at [http://localhost:8000/docs](
 
 ## Star History
 
-<a href="https://star-history.com/#open-webui/open-terminal&Date">
+<a href="https://star-history.dera.page/#open-webui/open-terminal&Date">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=open-webui/open-terminal&type=Date&theme=dark" />
-    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=open-webui/open-terminal&type=Date" />
-    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=open-webui/open-terminal&type=Date" />
+    <source media="(prefers-color-scheme: dark)" srcset="https://star-history.dera.page/svg?repos=open-webui/open-terminal&type=Date&theme=dark" />
+    <source media="(prefers-color-scheme: light)" srcset="https://star-history.dera.page/svg?repos=open-webui/open-terminal&type=Date" />
+    <img alt="Star History Chart" src="https://star-history.dera.page/svg?repos=open-webui/open-terminal&type=Date" />
   </picture>
 </a>
 
