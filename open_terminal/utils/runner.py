@@ -1,4 +1,5 @@
 import asyncio
+import errno
 import json
 import os
 import shlex
@@ -86,13 +87,8 @@ class PtyRunner(ProcessRunner):
 
     async def read_output(self, log_file) -> None:
         loop = asyncio.get_event_loop()
-        while True:
-            try:
-                data = await loop.run_in_executor(None, os.read, self._master_fd, 4096)
-                if not data:
-                    break
-            except OSError:
-                break  # EIO when child exits
+
+        async def write_output(data: bytes) -> None:
             if log_file:
                 await log_file.write(
                     json.dumps(
@@ -104,6 +100,27 @@ class PtyRunner(ProcessRunner):
                     )
                     + "\n"
                 )
+
+        while True:
+            try:
+                data = await loop.run_in_executor(None, os.read, self._master_fd, 4096)
+                if not data:
+                    break
+            except OSError as exc:
+                # EIO is raised when the child exits, but the PTY may still
+                # contain output that was written just before termination.
+                if exc.errno != errno.EIO:
+                    break
+                while True:
+                    try:
+                        data = await loop.run_in_executor(None, os.read, self._master_fd, 4096)
+                    except OSError:
+                        break
+                    if not data:
+                        break
+                    await write_output(data)
+                break
+            await write_output(data)
 
     def write_input(self, data: bytes) -> None:
         os.write(self._master_fd, data)
