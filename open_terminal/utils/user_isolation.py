@@ -15,10 +15,34 @@ import re
 import shutil
 import subprocess
 
+from open_terminal.env import USER_PREFIX
+
 log = logging.getLogger(__name__)
 
 # In-memory cache: upstream user-id → (os_username, home_dir)
 _user_cache: dict[str, tuple[str, str]] = {}
+
+# useradd creates accounts at this UID or above on every mainstream distro
+# (Debian/Ubuntu/RHEL default UID_MIN is 1000). Anything below it is a
+# pre-existing system/privileged account (root, daemon, www-data, ...) that
+# must never be reachable through the per-tenant sudo -u isolation path.
+_MIN_PROVISIONED_UID = 1000
+
+
+def _is_system_account(username: str) -> bool:
+    """True if *username* already exists with a UID below the provisioned range.
+
+    A sanitized ``X-User-Id`` can legitimately collide with the name of a
+    real system account (e.g. a header value of ``root`` sanitizes to the
+    literal username ``root``). Since every OS-level operation in multi-user
+    mode is performed via ``sudo -u <username>``, resolving to such an
+    account would hand the caller that account's privileges instead of a
+    sandboxed per-tenant one.
+    """
+    try:
+        return pwd.getpwnam(username).pw_uid < _MIN_PROVISIONED_UID
+    except KeyError:
+        return False
 
 
 def _run_privileged(cmd: list[str]) -> subprocess.CompletedProcess:
@@ -64,8 +88,6 @@ def sanitize_username(user_id: str) -> str:
     with a letter or underscore).  Falls back to a short hash when the ID
     contains fewer than 4 usable characters.
     """
-    from open_terminal.env import USER_PREFIX
-
     cleaned = re.sub(r"[^a-z0-9]", "", user_id.lower())
     if len(cleaned) >= 4:
         name = cleaned[:8]
@@ -149,6 +171,16 @@ def resolve_user(user_id: str) -> tuple[str, str]:
         return cached
 
     username = sanitize_username(user_id)
+    if _is_system_account(username):
+        # The sanitized name collides with a pre-existing system/privileged
+        # account (e.g. X-User-Id: "root"). Force a distinct name derived
+        # from the full hash so we never provision or sudo -u into it.
+        username = f"{USER_PREFIX}h{hashlib.sha256(user_id.encode()).hexdigest()[:8]}"
+        if _is_system_account(username):
+            raise RuntimeError(
+                f"Resolved username {username!r} for X-User-Id collides with "
+                "an existing system account; refusing to provision"
+            )
     home_dir = ensure_os_user(username)
     _user_cache[user_id] = (username, home_dir)
     return username, home_dir
