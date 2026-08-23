@@ -30,19 +30,23 @@ _MIN_PROVISIONED_UID = 1000
 
 
 def _is_system_account(username: str) -> bool:
-    """True if *username* already exists with a UID below the provisioned range.
+    """True if *username* already exists as a system or server-owned account.
 
     A sanitized ``X-User-Id`` can legitimately collide with the name of a
     real system account (e.g. a header value of ``root`` sanitizes to the
-    literal username ``root``). Since every OS-level operation in multi-user
-    mode is performed via ``sudo -u <username>``, resolving to such an
-    account would hand the caller that account's privileges instead of a
-    sandboxed per-tenant one.
+    literal username ``root``) or with the server process's own account
+    (e.g. ``user`` in the default Docker image, which has passwordless sudo).
+    Since every OS-level operation in multi-user mode is performed via
+    ``sudo -u <username>``, resolving to either would hand the caller that
+    account's privileges instead of a sandboxed per-tenant one.
     """
     try:
-        return pwd.getpwnam(username).pw_uid < _MIN_PROVISIONED_UID
+        pw = pwd.getpwnam(username)
     except KeyError:
         return False
+    if pw.pw_uid < _MIN_PROVISIONED_UID:
+        return True
+    return pw.pw_uid == os.getuid()
 
 
 def _run_privileged(cmd: list[str]) -> subprocess.CompletedProcess:
