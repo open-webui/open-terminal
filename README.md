@@ -204,6 +204,14 @@ docker run -d --name open-terminal -p 8000:8000 \
 
 Each user automatically gets a dedicated Linux account with its own home directory. Files, commands, and terminals are isolated between users via standard Unix permissions.
 
+Each user's `~/.cache` is symlinked to a directory outside of `/home` (default
+`/cache/<username>`, override the base with `OPEN_TERMINAL_CACHE_DIR`) so
+pip/npm/etc. caches don't grow on your mounted `/home` volume — they're
+wiped whenever the container is recreated and never count against a mounted
+volume's storage quota. The default single-user mode gets the same
+treatment for `~/.cache` (`/cache/user` by default). Existing `.cache`
+directories from before this feature are left untouched, not migrated.
+
 ## API Docs
 
 Full interactive API documentation is available at [http://localhost:8000/docs](http://localhost:8000/docs) once your instance is running.

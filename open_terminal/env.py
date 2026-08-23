@@ -151,6 +151,12 @@ USER_PREFIX = os.environ.get(
     config.get("user_prefix", ""),
 )
 
+# Base directory each user's ~/.cache is symlinked into.
+CACHE_DIR = os.environ.get(
+    "OPEN_TERMINAL_CACHE_DIR",
+    config.get("cache_dir", "/cache"),
+)
+
 UVICORN_LOOP = os.environ.get(
     "OPEN_TERMINAL_UVICORN_LOOP",
     config.get("uvicorn_loop", "auto"),
