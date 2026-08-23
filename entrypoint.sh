@@ -44,6 +44,14 @@ if [ ! -f "$HOME/.profile" ]; then
 fi
 mkdir -p "$HOME/.local/bin"
 
+# Keep ~/.cache off the (likely bind-mounted) $HOME.
+CACHE_DIR="${OPEN_TERMINAL_CACHE_DIR:-/cache}/$(id -un)"
+if [ ! -e "$HOME/.cache" ] && [ ! -L "$HOME/.cache" ]; then
+    sudo mkdir -p "$CACHE_DIR"
+    sudo chown "$(id -un):$(id -gn)" "$CACHE_DIR"
+    ln -s "$CACHE_DIR" "$HOME/.cache"
+fi
+
 # Docker socket access — add user to the socket's group if mounted
 if [ -S /var/run/docker.sock ]; then
     SOCK_GID=$(stat -c '%g' /var/run/docker.sock)

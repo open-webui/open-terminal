@@ -15,6 +15,8 @@ import re
 import shutil
 import subprocess
 
+from open_terminal.env import CACHE_DIR
+
 log = logging.getLogger(__name__)
 
 # In-memory cache: upstream user-id → (os_username, home_dir)
@@ -100,6 +102,21 @@ def ensure_os_user(username: str) -> str:
     # different UID assignment) and set permissions.
     _run_privileged(["chown", "-R", f"{username}:{username}", home_dir])
     _run_privileged(["chmod", "2770", home_dir])
+
+    # Keep ~/.cache off the (likely bind-mounted) home dir.
+    user_cache_dir = f"{CACHE_DIR}/{username}"
+    user_cache_link = f"{home_dir}/.cache"
+    if not os.path.lexists(user_cache_link):
+        _run_privileged(["mkdir", "-p", user_cache_dir])
+        _run_privileged(["chown", f"{username}:{username}", user_cache_dir])
+        _run_privileged(["ln", "-s", user_cache_dir, user_cache_link])
+    else:
+        log.warning(
+            "%s already exists; leaving it as-is instead of redirecting to %s",
+            user_cache_link,
+            user_cache_dir,
+        )
+
     # Add the server process user to the new user's group so Python can
     # read files natively without subprocess.
     server_user = os.getenv("USER", "user")

@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- Each user's `~/.cache` is now symlinked to a directory outside of `/home` (default `/cache/<username>`, configurable with `OPEN_TERMINAL_CACHE_DIR`), in both `OPEN_TERMINAL_MULTI_USER` mode and the default single-user mode. Keeps package-manager and tool caches off a mounted `/home` volume — wiped on container recreation, doesn't count against the mount's storage quota.
+
 ## [0.12.1] - 2026-08-22
 
 ### Fixed
