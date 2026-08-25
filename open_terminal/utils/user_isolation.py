@@ -86,23 +86,32 @@ def check_environment() -> None:
 def sanitize_username(user_id: str) -> str:
     """Convert an arbitrary user ID into a valid Linux username.
 
-    Uses the first 8 lowercase alphanumeric characters of the user ID,
-    optionally prefixed by ``OPEN_TERMINAL_USER_PREFIX``.  Prepends ``u``
-    only when the result starts with a digit (Linux usernames must begin
-    with a letter or underscore).  Falls back to a short hash when the ID
-    contains fewer than 4 usable characters.
+    Uses lowercase alphanumeric characters from the user ID combined with a
+    short hash to prevent cross-tenant collisions, optionally prefixed by
+    ``OPEN_TERMINAL_USER_PREFIX``. Prepends ``u`` when the result starts with a
+    digit (Linux usernames must begin with a letter or underscore). Truncates
+    to 32 characters max (standard Linux username length limit).
     """
     cleaned = re.sub(r"[^a-z0-9]", "", user_id.lower())
-    if len(cleaned) >= 4:
-        name = cleaned[:8]
+    user_hash = hashlib.sha256(user_id.encode()).hexdigest()[:8]
+
+    prefix = USER_PREFIX
+    if not prefix and (not cleaned or cleaned[0].isdigit()):
+        prefix = "u"
+    elif prefix and prefix[0].isdigit():
+        prefix = f"u{prefix}"
+
+    # Target max length: 32 chars. Format: {prefix}{slug}_{user_hash}
+    available_for_slug = 32 - len(prefix) - 1 - len(user_hash)
+    if available_for_slug >= 3 and len(cleaned) >= 3:
+        slug = cleaned[:available_for_slug]
+        name = f"{prefix}{slug}_{user_hash}"
     else:
-        # Fallback: hash-based name for very short / non-alphanumeric IDs
-        name = hashlib.sha256(user_id.encode()).hexdigest()[:8]
-    name = f"{USER_PREFIX}{name}"
-    # Linux usernames must start with a letter or underscore
+        name = f"{prefix}h{user_hash}"
+
     if name[0].isdigit():
         name = f"u{name}"
-    return name
+    return name[:32]
 
 
 def ensure_os_user(username: str) -> str:
@@ -178,8 +187,8 @@ def resolve_user(user_id: str) -> tuple[str, str]:
     if _is_system_account(username):
         # The sanitized name collides with a pre-existing system/privileged
         # account (e.g. X-User-Id: "root"). Force a distinct name derived
-        # from the full hash so we never provision or sudo -u into it.
-        username = f"{USER_PREFIX}h{hashlib.sha256(user_id.encode()).hexdigest()[:8]}"
+        # from the full hash using sanitize_username to enforce all invariants.
+        username = sanitize_username(f"h_{user_id}")
         if _is_system_account(username):
             raise RuntimeError(
                 f"Resolved username {username!r} for X-User-Id collides with "
