@@ -2204,4 +2204,4 @@ if ENABLE_TERMINAL:
 if ENABLE_NOTEBOOKS:
     from open_terminal.utils.notebooks import create_notebooks_router
 
-    app.include_router(create_notebooks_router(verify_api_key))
+    app.include_router(create_notebooks_router(verify_api_key, get_filesystem))
