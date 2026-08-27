@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.12.2] - 2026-08-25
+
+### Fixed
+
+- Opening a forwarded port now only works for ports that belong to your own visible terminal session. Requests for other local ports are blocked with "Port not found" instead of being forwarded.
+
 ## [0.12.1] - 2026-08-22
 
 ### Fixed
