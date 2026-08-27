@@ -1699,6 +1699,31 @@ async def kill_process(
 
 from open_terminal.utils.port import detect_listening_ports, get_descendant_pids
 
+
+async def _visible_ports(request: Request) -> list[dict]:
+    all_ports = await asyncio.to_thread(detect_listening_ports)
+
+    try:
+        fs = get_filesystem(request)
+    except Exception:
+        # User provisioning failed (e.g. useradd rejected in restricted
+        # container runtimes).  An unprovisioned user has no ports.
+        return []
+
+    if fs.username:
+        # Filter by user UID
+        import pwd
+        try:
+            user_uid = pwd.getpwnam(fs.username).pw_uid
+            return [p for p in all_ports if p.get("uid") == user_uid]
+        except KeyError:
+            return []
+
+    own_pid = os.getpid()
+    descendant_pids = await asyncio.to_thread(get_descendant_pids, own_pid)
+    return [p for p in all_ports if p.get("pid") in descendant_pids]
+
+
 @app.get(
     "/ports",
     include_in_schema=False,
@@ -1710,27 +1735,7 @@ async def list_ports(request: Request):
     In multi-user mode, only shows ports owned by the requesting user.
     In single-user mode, shows ports owned by descendant processes.
     """
-    all_ports = await asyncio.to_thread(detect_listening_ports)
-
-    try:
-        fs = get_filesystem(request)
-    except Exception:
-        # User provisioning failed (e.g. useradd rejected in restricted
-        # container runtimes).  An unprovisioned user has no ports.
-        return {"ports": []}
-
-    if fs.username:
-        # Filter by user UID
-        import pwd
-        try:
-            user_uid = pwd.getpwnam(fs.username).pw_uid
-            all_ports = [p for p in all_ports if p.get("uid") == user_uid]
-        except KeyError:
-            all_ports = []
-    else:
-        own_pid = os.getpid()
-        descendant_pids = await asyncio.to_thread(get_descendant_pids, own_pid)
-        all_ports = [p for p in all_ports if p.get("pid") in descendant_pids]
+    all_ports = await _visible_ports(request)
 
     # Strip uid from response (internal detail)
     for p in all_ports:
@@ -1764,6 +1769,9 @@ async def port_proxy(port: int, path: str, request: Request):
     """Reverse-proxy a request to localhost:{port}/{path}."""
     if port < 1 or port > 65535:
         raise HTTPException(status_code=422, detail="Port must be between 1 and 65535")
+
+    if not any(p.get("port") == port for p in await _visible_ports(request)):
+        raise HTTPException(status_code=404, detail="Port not found")
 
     target_url = f"http://localhost:{port}/{path}"
     if request.query_params:
