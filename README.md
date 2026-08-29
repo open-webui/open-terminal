@@ -167,6 +167,25 @@ Set `OPEN_TERMINAL_FILE_BROWSER_ROOT` to:
 
 This is a UI hint for clients. It does not restrict terminal commands or file APIs.
 
+### External Workspace Storage
+
+Open Terminal uses the filesystem it is mounted on. To store workspace files
+externally, mount that storage into the container:
+
+- Single-user: `/home/user`
+- Multi-user: `/home`
+
+This can be a Docker volume, Kubernetes persistent volume, NFS/Azure Files
+mount, or FUSE mount such as blobfuse, s3fs, or rclone.
+
+### Office Previews
+
+`GET /files/view?path=...` always returns the original file by default. Clients
+that want a rendered preview can add `preview=true`; when LibreOffice is
+available the server can return DOCX and PPTX previews as PDF. When rendered
+preview support is not available, the same endpoint falls back to returning the
+original file bytes.
+
 ## Using with Open WebUI
 
 Open Terminal integrates with [Open WebUI](https://github.com/open-webui/open-webui), giving your AI assistants the ability to run commands, manage files, and interact with a terminal right from the AI interface. Make sure to add it under **Open Terminal** in the integrations settings, not as a tool server. Adding it as an Open Terminal connection gives you a built-in file navigation sidebar where you can browse directories, upload, download, and edit files. There are two ways to connect:

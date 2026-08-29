@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.12.3] - 2026-08-27
+
+### Added
+
+- Word and PowerPoint files can now open as PDF previews from the file viewer when preview mode is requested. If a preview cannot be made, Open Terminal still returns the original file.
+- The default Docker image now includes the PDF tools needed for previews and PDF file work, so users do not have to install them separately.
+- The README now explains how to use external workspace storage and how Office file previews behave.
+
 ## [0.12.2] - 2026-08-25
 
 ### Fixed

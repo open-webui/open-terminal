@@ -3,6 +3,8 @@ import hmac
 from importlib.metadata import version as _pkg_version
 import fnmatch
 import json
+import logging
+import tempfile
 
 import aiofiles
 import aiofiles.os
@@ -32,6 +34,7 @@ from open_terminal.utils.fs import UserFS
 MATCH_PAGE_SIZE = 100
 MAX_CONTENT_MATCHES_PER_FILE = 3
 MAX_CONTENT_SEARCH_FILE_SIZE = 1 * 1024 * 1024
+log = logging.getLogger(__name__)
 
 if MULTI_USER:
     from open_terminal.utils.user_isolation import check_environment, resolve_user
@@ -167,6 +170,37 @@ def get_file_browser_root(fs: UserFS) -> dict[str, str] | None:
     root_path = fs.resolve_path(path)
     label = "Home" if root_path == fs.home else os.path.basename(root_path) or root_path
     return {"path": root_path, "label": label}
+
+
+def _preview_pdf(target: str) -> bytes | None:
+    libreoffice = shutil.which("soffice") or shutil.which("libreoffice")
+    if not libreoffice:
+        return None
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        command = [
+            libreoffice,
+            "--headless",
+            "--nologo",
+            "--nofirststartwizard",
+            "--nodefault",
+            "--nolockcheck",
+            "--convert-to",
+            "pdf",
+            "--outdir",
+            tmpdir,
+            target,
+        ]
+        subprocess.run(command, check=True, capture_output=True, timeout=60)
+        pdf_path = os.path.join(tmpdir, f"{os.path.splitext(os.path.basename(target))[0]}.pdf")
+        if not os.path.isfile(pdf_path):
+            matches = [name for name in os.listdir(tmpdir) if name.lower().endswith(".pdf")]
+            if not matches:
+                return None
+            pdf_path = os.path.join(tmpdir, sorted(matches)[0])
+
+        with open(pdf_path, "rb") as f:
+            return f.read()
 
 
 app = FastAPI(
@@ -627,6 +661,7 @@ async def display_file(
 )
 async def view_file(
     path: str = Query(..., description="Path to the file to view."),
+    preview: bool = Query(False, description="Return a best-effort rendered preview when available."),
     fs: UserFS = Depends(get_filesystem),
 ):
     """Return raw file bytes with the appropriate Content-Type.
@@ -637,6 +672,18 @@ async def view_file(
     target = fs.resolve_path(path)
     if not await fs.isfile(target):
         raise HTTPException(status_code=404, detail="File not found")
+
+    if preview:
+        ext = os.path.splitext(target)[1].lower()
+        if ext in (".docx", ".pptx"):
+            try:
+                pdf = await asyncio.to_thread(_preview_pdf, target)
+            except Exception:
+                log.exception("Rendered preview failed for %s", target)
+                pdf = None
+
+            if pdf:
+                return Response(content=pdf, media_type="application/pdf")
 
     import mimetypes
 
@@ -653,7 +700,7 @@ async def view_file(
 )
 async def serve_file(path: str, fs: UserFS = Depends(get_filesystem)):
     """Path-based alias for view_file — enables relative URL resolution in iframes."""
-    return await view_file(path=f"/{path}", fs=fs)
+    return await view_file(path=f"/{path}", preview=False, fs=fs)
 
 
 @app.post(
