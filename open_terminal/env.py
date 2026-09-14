@@ -3,6 +3,24 @@ import os
 from open_terminal import config
 
 
+def sanitized_environ(extra: dict | None = None) -> dict:
+    """Return ``os.environ`` with all ``OPEN_TERMINAL_*`` variables stripped.
+
+    Used when spawning subprocesses (user shells, executed commands, notebook
+    kernels, etc.) so that child processes cannot observe internal
+    configuration — notably ``OPEN_TERMINAL_API_KEY`` and its
+    ``OPEN_TERMINAL_API_KEY_FILE`` Docker-secret variant.
+
+    *extra* is merged on top of the sanitized base.  Caller-supplied values
+    win, including any ``OPEN_TERMINAL_*`` keys the caller explicitly chooses
+    to re-introduce.
+    """
+    env = {k: v for k, v in os.environ.items() if not k.startswith("OPEN_TERMINAL_")}
+    if extra:
+        env.update(extra)
+    return env
+
+
 def _resolve_file_env(var: str, default: str = "") -> str:
     """Resolve an environment variable with Docker-secrets ``_FILE`` support.
 

@@ -7,6 +7,8 @@ import subprocess
 import time
 from abc import ABC, abstractmethod
 
+from open_terminal.env import sanitized_environ
+
 try:
     import fcntl
     import pty
@@ -207,9 +209,7 @@ class WinPtyRunner(ProcessRunner):
     """Spawn a command under a Windows pseudo-terminal (ConPTY via pywinpty)."""
 
     def __init__(self, command: str, cwd: str | None, env: dict | None):
-        spawn_env = os.environ.copy()
-        if env:
-            spawn_env.update(env)
+        spawn_env = sanitized_environ(env)
 
         # Determine the executable and arguments.
         # PtyProcess.spawn expects a list: [executable, *args]
