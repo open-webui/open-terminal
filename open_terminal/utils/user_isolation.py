@@ -15,10 +15,38 @@ import re
 import shutil
 import subprocess
 
+from open_terminal.env import USER_PREFIX
+
 log = logging.getLogger(__name__)
 
 # In-memory cache: upstream user-id → (os_username, home_dir)
 _user_cache: dict[str, tuple[str, str]] = {}
+
+# useradd creates accounts at this UID or above on every mainstream distro
+# (Debian/Ubuntu/RHEL default UID_MIN is 1000). Anything below it is a
+# pre-existing system/privileged account (root, daemon, www-data, ...) that
+# must never be reachable through the per-tenant sudo -u isolation path.
+_MIN_PROVISIONED_UID = 1000
+
+
+def _is_system_account(username: str) -> bool:
+    """True if *username* already exists as a system or server-owned account.
+
+    A sanitized ``X-User-Id`` can legitimately collide with the name of a
+    real system account (e.g. a header value of ``root`` sanitizes to the
+    literal username ``root``) or with the server process's own account
+    (e.g. ``user`` in the default Docker image, which has passwordless sudo).
+    Since every OS-level operation in multi-user mode is performed via
+    ``sudo -u <username>``, resolving to either would hand the caller that
+    account's privileges instead of a sandboxed per-tenant one.
+    """
+    try:
+        pw = pwd.getpwnam(username)
+    except KeyError:
+        return False
+    if pw.pw_uid < _MIN_PROVISIONED_UID:
+        return True
+    return pw.pw_uid == os.getuid()
 
 
 def _run_privileged(cmd: list[str]) -> subprocess.CompletedProcess:
@@ -58,25 +86,32 @@ def check_environment() -> None:
 def sanitize_username(user_id: str) -> str:
     """Convert an arbitrary user ID into a valid Linux username.
 
-    Uses the first 8 lowercase alphanumeric characters of the user ID,
-    optionally prefixed by ``OPEN_TERMINAL_USER_PREFIX``.  Prepends ``u``
-    only when the result starts with a digit (Linux usernames must begin
-    with a letter or underscore).  Falls back to a short hash when the ID
-    contains fewer than 4 usable characters.
+    Uses lowercase alphanumeric characters from the user ID combined with a
+    short hash to prevent cross-tenant collisions, optionally prefixed by
+    ``OPEN_TERMINAL_USER_PREFIX``. Prepends ``u`` when the result starts with a
+    digit (Linux usernames must begin with a letter or underscore). Truncates
+    to 32 characters max (standard Linux username length limit).
     """
-    from open_terminal.env import USER_PREFIX
-
     cleaned = re.sub(r"[^a-z0-9]", "", user_id.lower())
-    if len(cleaned) >= 4:
-        name = cleaned[:8]
+    user_hash = hashlib.sha256(user_id.encode()).hexdigest()[:8]
+
+    prefix = USER_PREFIX
+    if not prefix and (not cleaned or cleaned[0].isdigit()):
+        prefix = "u"
+    elif prefix and prefix[0].isdigit():
+        prefix = f"u{prefix}"
+
+    # Target max length: 32 chars. Format: {prefix}{slug}_{user_hash}
+    available_for_slug = 32 - len(prefix) - 1 - len(user_hash)
+    if available_for_slug >= 3 and len(cleaned) >= 3:
+        slug = cleaned[:available_for_slug]
+        name = f"{prefix}{slug}_{user_hash}"
     else:
-        # Fallback: hash-based name for very short / non-alphanumeric IDs
-        name = hashlib.sha256(user_id.encode()).hexdigest()[:8]
-    name = f"{USER_PREFIX}{name}"
-    # Linux usernames must start with a letter or underscore
+        name = f"{prefix}h{user_hash}"
+
     if name[0].isdigit():
         name = f"u{name}"
-    return name
+    return name[:32]
 
 
 def ensure_os_user(username: str) -> str:
@@ -149,6 +184,16 @@ def resolve_user(user_id: str) -> tuple[str, str]:
         return cached
 
     username = sanitize_username(user_id)
+    if _is_system_account(username):
+        # The sanitized name collides with a pre-existing system/privileged
+        # account (e.g. X-User-Id: "root"). Force a distinct name derived
+        # from the full hash using sanitize_username to enforce all invariants.
+        username = sanitize_username(f"h_{user_id}")
+        if _is_system_account(username):
+            raise RuntimeError(
+                f"Resolved username {username!r} for X-User-Id collides with "
+                "an existing system account; refusing to provision"
+            )
     home_dir = ensure_os_user(username)
     _user_cache[user_id] = (username, home_dir)
     return username, home_dir
