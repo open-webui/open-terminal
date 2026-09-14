@@ -152,14 +152,16 @@ if [ "${OPEN_TERMINAL_ALLOWED_DOMAINS+set}" = "set" ]; then
         echo "nameserver 127.0.0.1" | sudo tee /etc/resolv.conf > /dev/null
 
         # iptables: allow ONLY resolved IPs (via ipset) + block everything else
-        sudo iptables -A OUTPUT -p udp --dport 53 -j DROP       # block external DNS
-        sudo iptables -A OUTPUT -p tcp --dport 53 -j DROP       # block external DNS
+        sudo iptables -A OUTPUT -p udp -d "$UPSTREAM_DNS" --dport 53 -j ACCEPT  # allow dnsmasq → upstream DNS
+        sudo iptables -A OUTPUT -p tcp -d "$UPSTREAM_DNS" --dport 53 -j ACCEPT  # allow dnsmasq → upstream DNS (TCP)
+        sudo iptables -A OUTPUT -p udp --dport 53 -j DROP       # block all other external DNS
+        sudo iptables -A OUTPUT -p tcp --dport 53 -j DROP       # block all other external DNS
         sudo iptables -A OUTPUT -m set --match-set allowed dst -j ACCEPT  # allow resolved IPs
         sudo iptables -A OUTPUT -j DROP                          # drop everything else
     fi
 
     echo "Egress firewall active — dropping CAP_NET_ADMIN permanently"
-    exec capsh --drop=cap_net_admin -- -c "exec open-terminal $*"
+    exec sudo capsh --drop=cap_net_admin --user=user -- -c "exec open-terminal $*"
 fi
 
 exec open-terminal "$@"
