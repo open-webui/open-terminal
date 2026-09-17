@@ -239,7 +239,7 @@ Full interactive API documentation is available at [http://localhost:8000/docs](
 </a>
 
 > [!TIP]
-> **Need real isolation between users?** **[Terminals](https://github.com/open-webui/terminals)** provisions and manages a separate Open Terminal container per user, with its own files, processes, resource limits and network boundary. That is the setup to use when users must be protected from each other. Terminals requires an [Open WebUI Enterprise License](https://openwebui.com/enterprise) for production use, see the [Terminals documentation](https://docs.openwebui.com/features/open-terminal/terminals/) for deployment and licensing details. Built-in multi-user mode (`OPEN_TERMINAL_MULTI_USER=true`) only gives each user their own workspace inside one shared container.
+> **Need real isolation between users?** **[Terminals](https://github.com/open-webui/terminals)** provisions and manages a separate Open Terminal container per user, with its own files, processes, resource limits and network boundary. That is the setup to use when users must be protected from each other. Terminals requires an [Open WebUI Enterprise License](https://docs.openwebui.com/enterprise/) for production use, see the [Terminals documentation](https://docs.openwebui.com/features/open-terminal/terminals/) for deployment and licensing details. Built-in multi-user mode (`OPEN_TERMINAL_MULTI_USER=true`) only gives each user their own workspace inside one shared container.
 
 ## License
 

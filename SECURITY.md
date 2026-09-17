@@ -38,7 +38,7 @@ All users share one kernel, one process list, one network stack, and one temp di
 - Cross-user access to files, sessions, terminals, notebooks, or background processes in a single instance.
 - Resource exhaustion affecting other users of the same instance.
 
-If your users need to be protected from each other, run one Open Terminal per user, for example with [Terminals](https://github.com/open-webui/terminals), which provisions a separate container per user and requires an [Open WebUI Enterprise License](https://openwebui.com/enterprise) for production use. Reports asking us to defend a boundary inside a single shared container are closed as documented behaviour under this section.
+If your users need to be protected from each other, run one Open Terminal per user, for example with [Terminals](https://github.com/open-webui/terminals), which provisions a separate container per user and requires an [Open WebUI Enterprise License](https://docs.openwebui.com/enterprise/) for production use. Reports asking us to defend a boundary inside a single shared container are closed as documented behaviour under this section.
 
 ## What We Do Want to Hear About
 
