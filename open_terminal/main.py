@@ -2319,8 +2319,10 @@ if ENABLE_TERMINAL:
         except (asyncio.TimeoutError, ValueError, AttributeError, WebSocketDisconnect):
             await ws.close(code=4001, reason="Auth timeout or invalid payload")
             return
+        # Open WebUI < 0.11.4 only passes user_id as a query param on the WS handshake.
+        ws_user_id = ws.headers.get("x-user-id") or ws.query_params.get("user_id", "")
         if (
-            session["user_id"] != ws.headers.get("x-user-id", "")
+            session["user_id"] != ws_user_id
             or session["chat_id"] != ws.headers.get("x-session-id", payload.get("chat_id", ""))
         ):
             await ws.close(code=4004, reason="Session not found")
