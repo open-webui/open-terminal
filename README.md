@@ -206,12 +206,13 @@ Admins can configure Open Terminal connections for all their users from the admi
 2. Add the terminal **URL** and **API key**
 3. Enable the connection
 
-#### Built-in Multi-User Isolation
+#### Built-in Multi-User Mode
 
 > [!CAUTION]
-> Single-container multi-user mode is **not designed for production multi-user deployments**. All users share the same kernel, network, and system resources with no hard isolation boundaries between them. If one user's process misbehaves, it can affect every other user on the system. This mode exists as a lightweight convenience for small, trusted groups — not as a security model you should rely on.
+> **Multi-user mode separates workspaces. It does not create a security boundary between users, and it is not designed for production multi-user deployments.**
+> Everyone shares one container: one kernel, one process list, one network stack, one temp directory. Users can watch each other's running commands, reach ports other users open, exhaust CPU, memory and disk for everyone, and interfere with shared system state. Provisioning accounts requires elevated privileges inside the container, so a user who sets out to reach root inside that container will find a way. Run this mode only where every user on the instance is trusted at the same level, and give each user their own instance whenever that trust does not hold. See [SECURITY.md](SECURITY.md) for how reports about this mode are handled.
 
-For small, trusted deployments you can enable per-user isolation inside a single container:
+For small, trusted deployments you can give each user their own workspace inside a single container:
 
 ```bash
 docker run -d --name open-terminal -p 8000:8000 \
@@ -221,7 +222,7 @@ docker run -d --name open-terminal -p 8000:8000 \
   ghcr.io/open-webui/open-terminal
 ```
 
-Each user automatically gets a dedicated Linux account with its own home directory. Files, commands, and terminals are isolated between users via standard Unix permissions.
+Each user automatically gets a dedicated Linux account with its own home directory, so files, commands, and terminals stay in their own workspace and users do not walk over each other's work. Standard Unix permissions keep the workspaces apart in day-to-day use. They do not protect users from each other, and they are not meant to.
 
 ## API Docs
 
@@ -238,7 +239,7 @@ Full interactive API documentation is available at [http://localhost:8000/docs](
 </a>
 
 > [!TIP]
-> **Need container-per-user isolation?** Check out **[Terminals](https://github.com/open-webui/terminals)**, which provisions and manages separate Open Terminal containers per user. For lighter deployments, built-in multi-user mode (`OPEN_TERMINAL_MULTI_USER=true`) provides per-user isolation inside a single container.
+> **Need real isolation between users?** Check out **[Terminals](https://github.com/open-webui/terminals)**, which provisions and manages separate Open Terminal containers per user. That is the setup to use when users must be protected from each other. Built-in multi-user mode (`OPEN_TERMINAL_MULTI_USER=true`) only gives each user their own workspace inside one shared container.
 
 ## License
 
