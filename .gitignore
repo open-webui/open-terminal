@@ -12,6 +12,9 @@ build/
 # uv
 uv.lock
 
+# Agent instructions
+AGENTS.md
+
 # IDE
 .idea/
 .vscode/
