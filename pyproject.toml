@@ -27,7 +27,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-mcp = ["fastmcp>=2.0.0"]
+mcp = ["fastmcp>=4.0.0"]
 
 [project.scripts]
 open-terminal = "open_terminal.cli:main"
