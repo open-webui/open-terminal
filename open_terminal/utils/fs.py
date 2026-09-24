@@ -192,7 +192,7 @@ class UserFS:
             pass
         try:
             return os.access(path, os.W_OK, effective_ids=True)
-        except TypeError:
+        except (TypeError, OSError, NotImplementedError, AttributeError):
             return os.access(path, os.W_OK)
 
     async def is_writable(self, path: str) -> bool:
