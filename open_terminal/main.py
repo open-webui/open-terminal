@@ -28,15 +28,17 @@ from fastapi.responses import JSONResponse, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
-from open_terminal.env import API_KEY, BINARY_FILE_MIME_PREFIXES, CORS_ALLOWED_ORIGINS, ENABLE_NOTEBOOKS, ENABLE_SYSTEM_PROMPT, ENABLE_TERMINAL, EXECUTE_DESCRIPTION, EXECUTE_TIMEOUT, FILE_BROWSER_ROOT, LOG_DIR, MAX_TERMINAL_SESSIONS, MULTI_USER, OPEN_TERMINAL_INFO, PROCESS_LOG_RETENTION, SESSION_CWD_TTL, SYSTEM_PROMPT, TERMINAL_TERM
+from open_terminal.env import API_KEY, BINARY_FILE_MIME_PREFIXES, CORS_ALLOWED_ORIGINS, ENABLE_NOTEBOOKS, ENABLE_SYSTEM_PROMPT, ENABLE_TERMINAL, EXECUTE_DESCRIPTION, EXECUTE_TIMEOUT, FILE_BROWSER_ROOT, LOG_DIR, MAX_BINARY_FILE_SIZE, MAX_TERMINAL_SESSIONS, MULTI_USER, OPEN_TERMINAL_INFO, PROCESS_LOG_RETENTION, SESSION_CWD_TTL, SYSTEM_PROMPT, TERMINAL_TERM
 from open_terminal.utils.runner import PipeRunner, ProcessRunner, create_runner
 from open_terminal.utils.fs import UserFS
 from open_terminal.utils.file_compare import CompareRequest, run_comparison
 from open_terminal.utils.skills import join_skill_path, list_skill_resources, parse_skill_frontmatter
+from open_terminal.utils.limits import excerpt_around, fit_items, fit_lines, json_bytes
 
 MATCH_PAGE_SIZE = 100
 MAX_CONTENT_MATCHES_PER_FILE = 3
 MAX_CONTENT_SEARCH_FILE_SIZE = 1 * 1024 * 1024
+MAX_EXCERPT_SIZE = 2000
 log = logging.getLogger(__name__)
 
 if MULTI_USER:
@@ -122,7 +124,7 @@ def get_system_prompt() -> str:
 
 
 _EXECUTE_DESCRIPTION = (
-    "Run a shell command in the background and return a command ID.\n\n"
+    "Run a shell command in the background and return a command ID. Inline output is capped at the server's output limit: more output may remain, read it with get_process_status from next_offset. With tail, output starts at the returned offset, and earlier output is read with get_process_status from a lower offset.\n\n"
     + get_system_info()
 )
 if EXECUTE_DESCRIPTION:
@@ -443,6 +445,49 @@ def _get_process(process_id: str, request: Request) -> BackgroundProcess:
     return background_process
 
 
+_RESERVE_SHAPE = {
+    "total_lines": 9_999_999_999,
+    "content": "",
+    "returned_lines": 9_999_999_999,
+    "truncated": True,
+    "line_truncated": True,
+    "line_length": 9_999_999_999,
+}
+
+
+def _bounded_file_response(path: str, result: dict, start_line: int, line_offset: int) -> dict:
+    """Shape a read_file response, flagging content the byte budget cut short."""
+    response = {
+        "path": path,
+        "total_lines": result["total_lines"],
+        "content": result["content"],
+        "returned_lines": result["returned_lines"],
+        "truncated": result["truncated"],
+    }
+    if result["line_truncated"]:
+        # Continuing inside the cut line is the only way not to lose its tail,
+        # so next_line is withheld rather than offered as a second cursor.
+        response["line_truncated"] = True
+        response["start_line"] = start_line
+        response["line_offset"] = line_offset + len(result["content"])
+        response["line_length"] = result["line_length"]
+    elif result["truncated"]:
+        response["next_line"] = start_line + result["returned_lines"]
+    return response
+
+
+def _bounded_process_response(response: dict, *, keep_last: bool) -> dict:
+    """Trim process output to the byte budget, keeping the cursor honest."""
+    response["offset"] = response["next_offset"]  # widest value, reserves the digits
+    dropped = fit_items(response, "output", keep_last=keep_last)
+    if dropped:
+        response["truncated"] = True
+        if not keep_last:
+            response["next_offset"] -= dropped
+    response["offset"] = response["next_offset"] - len(response["output"])
+    return response
+
+
 # ---------------------------------------------------------------------------
 # Health
 # ---------------------------------------------------------------------------
@@ -674,10 +719,11 @@ async def compare_files(http_request: Request, payload: CompareRequest, fs: User
     "/files/read",
     operation_id="read_file",
     summary="Read a file",
-    description="Read a file and return its contents. Supports text files and images (PNG, JPEG, WebP, etc.). For text files you can optionally request a specific line range. Images are returned as binary so you can view and analyze them directly. Use display_file to show a file to the user.",
+    description="Read a file and return its contents. Supports text files and images (PNG, JPEG, WebP, etc.). For text files you can optionally request a specific line range. Images are returned as binary so you can view and analyze them directly. Use display_file to show a file to the user. Content is capped at the server's output limit: if the response is truncated, continue from next_line, or when line_truncated is set, from the start_line and line_offset in the response, where line_length gives that line's full length in characters. Images are returned whole up to a separate size limit, above which the call fails with 413.",
     dependencies=[Depends(verify_api_key)],
     responses={
         404: {"description": "File not found."},
+        413: {"description": "Binary file above the response size limit."},
         415: {"description": "Unsupported binary file type."},
         401: {"description": "Invalid or missing API key."},
     },
@@ -691,6 +737,11 @@ async def read_file(
     end_line: Optional[int] = Query(
         None, description="Last line to return (1-indexed, inclusive). Defaults to the end of the file.", ge=1
     ),
+    line_offset: int = Query(
+        0,
+        description="Characters to skip inside start_line. When a response sets line_truncated, call again with its start_line and line_offset to read the rest of that line.",
+        ge=0,
+    ),
     fs: UserFS = Depends(get_filesystem),
 ):
     session_id = http_request.headers.get("x-session-id")
@@ -699,13 +750,22 @@ async def read_file(
     if not await fs.isfile(target):
         raise HTTPException(status_code=404, detail="File not found")
 
+    start_line = start_line or 1
+    reserved = json_bytes(
+        _bounded_file_response(target, _RESERVE_SHAPE, start_line, 9_999_999_999)
+    )
+
     try:
-        content = await fs.read_text(target)
-        lines = content.splitlines(keepends=True)
+        result = await fs.read_lines(
+            target,
+            start_line=start_line,
+            end_line=end_line,
+            line_offset=line_offset,
+            reserved=reserved,
+        )
     except (UnicodeDecodeError, ValueError):
         import mimetypes
 
-        raw = await fs.read(target)
         mime, _ = mimetypes.guess_type(target)
         mime = mime or "application/octet-stream"
 
@@ -718,31 +778,29 @@ async def read_file(
             ):
                 text = await asyncio.to_thread(extractor, target)
                 lines = text.splitlines(keepends=True)
-                start = (start_line or 1) - 1
-                end = end_line or len(lines)
-                return {
-                    "path": target,
-                    "total_lines": len(lines),
-                    "content": "".join(lines[start:end]),
-                }
+                result = fit_lines(
+                    lines, start_line - 1, end_line or len(lines), line_offset, reserved
+                )
+                return _bounded_file_response(target, result, start_line, line_offset)
+
+        size = await aiofiles.os.path.getsize(target)
 
         # Return raw binary for allowed mime type prefixes (e.g. image/*)
         if any(mime.startswith(prefix) for prefix in BINARY_FILE_MIME_PREFIXES):
-            return Response(content=raw, media_type=mime)
+            if size > MAX_BINARY_FILE_SIZE:
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"Binary file too large: {mime} ({size} bytes, limit {MAX_BINARY_FILE_SIZE} bytes)",
+                )
+            return Response(content=await fs.read(target), media_type=mime)
 
         # Other binary files: reject (LLMs can't interpret raw bytes)
         raise HTTPException(
             status_code=415,
-            detail=f"Unsupported binary file type: {mime} ({len(raw)} bytes)",
+            detail=f"Unsupported binary file type: {mime} ({size} bytes)",
         )
 
-    start = (start_line or 1) - 1
-    end = end_line or len(lines)
-    return {
-        "path": target,
-        "total_lines": len(lines),
-        "content": "".join(lines[start:end]),
-    }
+    return _bounded_file_response(target, result, start_line, line_offset)
 
 
 @app.get(
@@ -968,7 +1026,7 @@ async def replace_file_content(http_request: Request, request: ReplaceRequest, f
     "/files/grep",
     operation_id="grep_search",
     summary="Search file contents",
-    description="Search for a text pattern across files in a directory. Returns structured matches with file paths, line numbers, and matching lines. Skips binary files.",
+    description="Search for a text pattern across files in a directory. Returns structured matches with file paths, line numbers, and matching lines. Skips binary files. Long matching lines are returned as a bounded excerpt around the match, flagged with excerpt_truncated, and the match list itself is cut to the output limit, flagged by truncated.",
     dependencies=[Depends(verify_api_key)],
     responses={
         404: {"description": "Search path not found."},
@@ -1028,15 +1086,21 @@ async def grep_search(
             try:
                 with open(file_path, "r", encoding="utf-8", errors="strict") as f:
                     for line_number, line in enumerate(f, 1):
-                        if pattern.search(line):
+                        found = pattern.search(line)
+                        if found:
                             if match_per_line:
-                                matches.append(
-                                    {
-                                        "file": file_path,
-                                        "line": line_number,
-                                        "content": line.rstrip("\n\r"),
-                                    }
+                                content = line.rstrip("\n\r")
+                                excerpt, excerpt_truncated = excerpt_around(
+                                    content, found.start(), MAX_EXCERPT_SIZE
                                 )
+                                match = {
+                                    "file": file_path,
+                                    "line": line_number,
+                                    "content": excerpt,
+                                }
+                                if excerpt_truncated:
+                                    match["excerpt_truncated"] = True
+                                matches.append(match)
                                 if len(matches) >= max_results:
                                     truncated = True
                                     return
@@ -1070,19 +1134,22 @@ async def grep_search(
         return matches, truncated
 
     matches, truncated = await asyncio.to_thread(_search_sync)
-    return {
+    response = {
         "query": query,
         "path": target,
         "matches": matches,
         "truncated": truncated,
     }
+    if fit_items(response, "matches"):
+        response["truncated"] = True
+    return response
 
 
 @app.get(
     "/files/matches",
     operation_id="match_files",
     summary="Search files by name and contents",
-    description="Search files and directories by ranked name, path, and content matches.",
+    description="Search files and directories by ranked name, path, and content matches. A page can hold fewer than limit results when the output limit is reached, so follow next_offset. Files above the content search size limit are not searched for content, and long matching lines are returned as a bounded excerpt around the match, flagged with excerpt_truncated.",
     dependencies=[Depends(verify_api_key)],
     responses={
         400: {"description": "Blank query."},
@@ -1116,17 +1183,24 @@ async def match_files(
 
     def _matches_sync():
         query_lower = query.lower()
+        # A real index into the line: lowercasing can change its length.
+        query_pattern = re.compile(re.escape(query), re.IGNORECASE)
 
         def is_hidden_path(candidate: str) -> bool:
             return any(part.startswith(".") for part in candidate.replace("\\", "/").split("/") if part)
 
         def content_match(text: str, line: int) -> dict | None:
             text = text.rstrip("\r\n")
-            index = text.lower().find(query_lower)
-            if index < 0:
+            found = query_pattern.search(text)
+            if not found:
                 return None
+            index = found.start()
             column = len(text[:index].encode("utf-16-le")) // 2 + 1
-            return {"line": line, "column": column, "text": text}
+            excerpt, excerpt_truncated = excerpt_around(text, index, MAX_EXCERPT_SIZE)
+            match = {"line": line, "column": column, "text": excerpt}
+            if excerpt_truncated:
+                match["excerpt_truncated"] = True
+            return match
 
         def walk_entries() -> list[tuple[str, str]]:
             try:
@@ -1194,6 +1268,8 @@ async def match_files(
                 "--column",
                 "--max-count",
                 str(MAX_CONTENT_MATCHES_PER_FILE + 1),
+                "--max-filesize",
+                str(MAX_CONTENT_SEARCH_FILE_SIZE),
             ]
             if show_hidden:
                 args.append("--hidden")
@@ -1298,10 +1374,13 @@ async def match_files(
 
         matches.sort(key=lambda item: (item[0], item[1], item[2]))
         next_offset = offset + limit if offset + limit < len(matches) else None
-        return {
+        response = {
             "results": [item[3] for item in matches[offset : offset + limit]],
             "next_offset": next_offset,
         }
+        if fit_items(response, "results"):
+            response["next_offset"] = offset + len(response["results"])
+        return response
 
     return await asyncio.to_thread(_matches_sync)
 
@@ -1737,7 +1816,7 @@ async def execute(
         background_process.log_path, offset=0, tail=tail
     )
 
-    return {
+    response = {
         "id": process_id,
         "command": request.command,
         "status": background_process.status,
@@ -1747,13 +1826,14 @@ async def execute(
         "next_offset": next_offset,
         "log_path": background_process.log_path,
     }
+    return _bounded_process_response(response, keep_last=tail is not None)
 
 
 @app.get(
     "/execute/{process_id}/status",
     operation_id="get_process_status",
     summary="Get command status and output",
-    description="Returns new output since the given offset, process status, and exit code. Reads do not consume output; each reader keeps its own offset.",
+    description="Returns new output since the given offset, process status, and exit code. Reads do not consume output; each reader keeps its own offset. Output is capped at the server's output limit: more output may remain, continue from next_offset. With tail, output ends at next_offset and starts at offset, and earlier output is reached by requesting a lower offset without tail. A response whose offset is higher than the one you asked for starts where the surviving output starts, once older entries have been discarded.",
     dependencies=[Depends(verify_api_key)],
     responses={
         404: {"description": "Process not found."},
@@ -1796,7 +1876,7 @@ async def get_status(
         background_process.log_path, offset=offset, tail=tail
     )
 
-    return {
+    response = {
         "id": background_process.id,
         "command": background_process.command,
         "status": background_process.status,
@@ -1806,6 +1886,7 @@ async def get_status(
         "next_offset": next_offset,
         "log_path": background_process.log_path,
     }
+    return _bounded_process_response(response, keep_last=tail is not None)
 
 
 @app.post(

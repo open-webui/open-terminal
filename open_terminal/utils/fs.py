@@ -19,6 +19,10 @@ import subprocess
 import aiofiles
 import aiofiles.os
 
+from open_terminal.utils.limits import LINE_BREAKS, LineBudget
+
+READ_CHUNK_SIZE = 64 * 1024
+
 
 class UserFS:
     """Filesystem operations scoped to an optional OS user.
@@ -155,6 +159,83 @@ class UserFS:
         self._check_path(path)
         async with aiofiles.open(path, "r", encoding=encoding, errors="strict") as f:
             return await f.read()
+
+    async def read_lines(
+        self,
+        path: str,
+        start_line: int = 1,
+        end_line: int | None = None,
+        line_offset: int = 0,
+        reserved: int = 0,
+        encoding: str = "utf-8",
+    ) -> dict:
+        """Read a line range without holding the whole file in memory.
+
+        Reading starts *line_offset* characters into *start_line*, so a line
+        that was cut short by the byte budget can be continued, and *reserved*
+        is the room the rest of the response needs. Returns ``content``,
+        ``total_lines``, ``returned_lines``, ``truncated`` (the range was cut
+        short), ``line_truncated`` (a single line was cut) and ``line_length``
+        (how long that line is in full).
+        """
+        self._check_path(path)
+        return await asyncio.to_thread(
+            self._read_lines, path, start_line, end_line, line_offset, reserved, encoding
+        )
+
+    def _read_lines(
+        self,
+        path: str,
+        start_line: int,
+        end_line: int | None,
+        line_offset: int,
+        reserved: int,
+        encoding: str,
+    ) -> dict:
+        budget = LineBudget(reserved)
+        line_number = 0
+        line_length = 0
+        partial = ""
+        unterminated = False
+        skipped_chars = 0
+        skip = line_offset
+
+        def take(line: str) -> None:
+            nonlocal line_length
+            if line_number < start_line:
+                return
+            if end_line is not None and line_number > end_line:
+                return
+            # take() keeps running to finish total_lines, so only the first
+            # cut line sets line_length.
+            was_cut = budget.line_truncated
+            budget.add(line[skip:] if line_number == start_line else line)
+            if budget.line_truncated and not was_cut:
+                line_length = len(line.rstrip(LINE_BREAKS)) + skipped_chars
+
+        with open(path, "r", encoding=encoding, errors="strict") as f:
+            while True:
+                chunk = f.read(READ_CHUNK_SIZE)
+                if not chunk:
+                    break
+                lines = (partial + chunk).splitlines(keepends=True)
+                partial = "" if lines[-1][-1:] in LINE_BREAKS else lines.pop()
+                unterminated = bool(partial)
+                for line in lines:
+                    line_number += 1
+                    take(line)
+                    skipped_chars = 0
+                if line_number + 1 == start_line and skip:
+                    head = min(skip, len(partial))
+                    partial = partial[head:]
+                    skip -= head
+                    skipped_chars += head
+                partial, clipped = budget.clip(partial)
+                skipped_chars += clipped
+        if unterminated:
+            line_number += 1
+            take(partial)
+        return {**budget.result(), "total_lines": line_number, "line_length": line_length}
 
     async def exists(self, path: str) -> bool:
         """Check if *path* exists."""

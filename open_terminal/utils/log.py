@@ -14,7 +14,8 @@ from typing import Optional
 import aiofiles
 import aiofiles.os
 
-from open_terminal.env import MAX_PROCESS_LOG_SIZE, LOG_FLUSH_INTERVAL, LOG_FLUSH_BUFFER
+from open_terminal.env import MAX_PROCESS_LOG_SIZE, LOG_FLUSH_INTERVAL, LOG_FLUSH_BUFFER, MAX_TOOL_OUTPUT_SIZE
+from open_terminal.utils.limits import json_bytes
 
 
 class BoundedLogWriter:
@@ -198,12 +199,15 @@ async def read_log(
 
     Offsets count output entries across rotations. Tail reads retain only
     the requested entries in memory while still returning an absolute cursor.
+    A sequential read stops at the entry that would exceed
+    *MAX_TOOL_OUTPUT_SIZE* and reports it as the next cursor position.
     """
     entries: list[dict] = []
     if not log_path or not await aiofiles.os.path.isfile(log_path):
         return entries, 0, False
 
     selected = deque(maxlen=tail)
+    used = 0
     total = 0
     available = 0
     truncated = False
@@ -218,7 +222,12 @@ async def read_log(
                 truncated = offset < total
             elif record.get("type") in ("stdout", "stderr", "output"):
                 if total >= offset:
-                    selected.append({"type": record["type"], "data": record["data"]})
+                    entry = {"type": record["type"], "data": record["data"]}
+                    if tail is None:
+                        used += json_bytes(entry)
+                        if selected and used > MAX_TOOL_OUTPUT_SIZE:
+                            return list(selected), total, True
+                    selected.append(entry)
                     available += 1
                 total += 1
 
