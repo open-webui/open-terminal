@@ -1740,6 +1740,7 @@ async def execute(
     return {
         "id": process_id,
         "command": request.command,
+        "cwd": cwd,
         "status": background_process.status,
         "exit_code": background_process.exit_code,
         "output": output,
