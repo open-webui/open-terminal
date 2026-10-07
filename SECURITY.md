@@ -4,7 +4,7 @@ Open Terminal is led and maintained by the same core team as Open WebUI, and it 
 
 ## Relationship to the Open WebUI Security Policy
 
-The [Open WebUI Security Policy](https://github.com/open-webui/open-webui/blob/main/docs/SECURITY.md) applies to Open Terminal in full wherever it is semantically applicable. That includes, and is not limited to: the rules for reporting a vulnerability, the proof-of-concept and remediation requirements, AI disclosure, CVSS accuracy, admin actions being out of scope, default configuration testing, already-fixed reports, self-affecting issues, duplicate and consolidation handling, our position on foreign CNAs and vendor disposition, and responsible disclosure.
+The [Open WebUI Security Policy](https://docs.openwebui.com/security/security-policy/) applies to Open Terminal in full wherever it is semantically applicable. That includes, and is not limited to: the rules for reporting a vulnerability, the proof-of-concept and remediation requirements, AI disclosure, CVSS accuracy, admin actions being out of scope, default configuration testing, already-fixed reports, self-affecting issues, duplicate and consolidation handling, our position on foreign CNAs and vendor disposition, and responsible disclosure.
 
 Read that policy before filing. Everything in it that can sensibly be applied to Open Terminal is applied to Open Terminal. This document adds what is specific to this project, and where the two documents differ, this one governs reports filed here.
 
@@ -54,4 +54,4 @@ When in doubt, file it. A report that lands outside the scope above is closed qu
 
 ---
 
-_Last updated on **2026-09-17**._
+_Last updated on **2026-10-07**._
