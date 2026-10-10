@@ -112,6 +112,8 @@ docker run -d --name open-terminal -p 8000:8000 \
 > [!CAUTION]
 > Mounting the Docker socket gives the container **full control over the host's Docker daemon**, which is effectively root access on the host machine. Anyone with access to the terminal can pull/run arbitrary containers (including `--privileged` ones), mount host directories, access host networking, and manage all containers on the host. Only do this in fully trusted environments.
 
+In [multi-user mode](#built-in-multi-user-mode), every provisioned user is added to the socket's group by default. Set `OPEN_TERMINAL_DOCKER_ALLOWED_USERS` to limit this to specific users.
+
 For full control, fork the repo, edit the [Dockerfile](Dockerfile), and build your own image:
 
 ```bash
@@ -223,6 +225,14 @@ docker run -d --name open-terminal -p 8000:8000 \
 ```
 
 Each user automatically gets a dedicated Linux account with its own home directory, so files, commands, and terminals stay in their own workspace and users do not walk over each other's work. Standard Unix permissions keep the workspaces apart in day-to-day use. They do not protect users from each other, and they are not meant to.
+
+When the [Docker socket](#docker-access) is mounted, each new user is added to the socket's group so `docker` works without `sudo`. To give Docker access only to some users, list their Linux usernames (as shown in the logs, including any `OPEN_TERMINAL_USER_PREFIX`):
+
+```bash
+-e OPEN_TERMINAL_DOCKER_ALLOWED_USERS=alice123,bob45678
+```
+
+Other users are provisioned normally, without the Docker group. Leave the variable unset to keep the default (every user), or set it to an empty value to give no provisioned user Docker access. The config file key is `docker_allowed_users`. The list is only checked when an account is created: existing accounts keep their groups until the container is recreated. Like the rest of multi-user mode, this limits default access and is not a security boundary.
 
 ## API Docs
 
