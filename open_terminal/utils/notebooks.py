@@ -9,17 +9,45 @@ own Jupyter kernel via nbclient. Requires the ``notebooks`` optional extra::
 import asyncio
 import json
 import os
+import subprocess
 import time
 import uuid
 from typing import Optional
 
 import aiofiles
 import aiofiles.os
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 import nbformat
 from nbclient import NotebookClient
+from jupyter_client.manager import AsyncKernelManager
+
+
+class _UserKernelManager(AsyncKernelManager):
+    """Launch the notebook kernel as a specific OS user (multi-user isolation).
+
+    In multi-user mode the kernel must run as the requesting user, not as the
+    privileged server process, so cell code is confined to that user's own
+    files by the OS (mirroring how commands run via ``sudo -u``). The Jupyter
+    connection file is made group-readable to that user so the kernel can read
+    it, while the server (its owner) can still reconcile connection info.
+    """
+
+    run_as_user = None
+    run_as_home = None
+
+    async def _async_launch_kernel(self, kernel_cmd, **kw):
+        if self.run_as_user:
+            cf = self.connection_file
+            subprocess.run(["sudo", "chgrp", self.run_as_user, cf], check=True)
+            subprocess.run(["sudo", "chmod", "640", cf], check=True)
+            kernel_cmd = [
+                "sudo", "-n", "-u", self.run_as_user,
+                "env", f"HOME={self.run_as_home}", f"PATH={os.environ.get('PATH', '')}",
+                *kernel_cmd,
+            ]
+        return await super()._async_launch_kernel(kernel_cmd, **kw)
 
 
 # ---------------------------------------------------------------------------
@@ -32,13 +60,14 @@ _IDLE_TIMEOUT = 30 * 60  # 30 minutes
 class _Session:
     """Wraps a NotebookClient for a specific notebook."""
 
-    __slots__ = ("id", "path", "nb", "client", "busy", "created_at", "last_used")
+    __slots__ = ("id", "path", "nb", "client", "busy", "created_at", "last_used", "owner")
 
-    def __init__(self, session_id: str, path: str, nb, client):
+    def __init__(self, session_id: str, path: str, nb, client, owner=None):
         self.id = session_id
         self.path = path
         self.nb = nb
         self.client = client
+        self.owner = owner
         self.busy = False
         self.created_at = time.time()
         self.last_used = time.time()
@@ -117,7 +146,7 @@ class SessionStatusResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-def create_notebooks_router(verify_api_key) -> APIRouter:
+def create_notebooks_router(verify_api_key, get_filesystem) -> APIRouter:
     """Create the notebooks router with the given auth dependency."""
 
     router = APIRouter(
@@ -136,11 +165,20 @@ def create_notebooks_router(verify_api_key) -> APIRouter:
         description="Start a Jupyter kernel for the given notebook. Returns a session ID for subsequent execute calls.",
         include_in_schema=False,
     )
-    async def create_session(req: CreateSessionRequest):
+    async def create_session(req: CreateSessionRequest, http_request: Request):
 
         _ensure_cleanup_task()
 
+        # Enforce the same per-user boundary as the file APIs: reject a notebook
+        # path that points into another user's home.
+        fs = get_filesystem(http_request)
+        owner = http_request.headers.get("x-user-id")
         path = os.path.abspath(req.path)
+        if not fs.is_path_allowed(path):
+            raise HTTPException(
+                status_code=403,
+                detail=f"Access denied: {path} belongs to another user",
+            )
         if not await aiofiles.os.path.isfile(path):
             raise HTTPException(status_code=404, detail=f"Notebook not found: {path}")
 
@@ -155,11 +193,20 @@ def create_notebooks_router(verify_api_key) -> APIRouter:
 
         kernel_name = nb.metadata.get("kernelspec", {}).get("name", "python3")
 
-        # Start kernel — follow nbclient's setup_kernel pattern
+        # Start kernel. In multi-user mode run the kernel as the requesting OS
+        # user so cell code is confined to that user's files.
         client = NotebookClient(nb, kernel_name=kernel_name, timeout=120)
         try:
-            client.create_kernel_manager()
-            await client.async_start_new_kernel()
+            if fs.username:
+                km = _UserKernelManager(kernel_name=kernel_name)
+                km.run_as_user = fs.username
+                km.run_as_home = fs.home
+                km.connection_file = f"/tmp/otnb-{uuid.uuid4().hex}.json"
+                client.km = km
+            else:
+                client.create_kernel_manager()
+            start_kwargs = {"cwd": fs.home} if fs.username else {}
+            await client.async_start_new_kernel(**start_kwargs)
             await client.async_start_new_kernel_client()
         except Exception as e:
             raise HTTPException(
@@ -168,7 +215,7 @@ def create_notebooks_router(verify_api_key) -> APIRouter:
             )
 
         session_id = uuid.uuid4().hex[:12]
-        _sessions[session_id] = _Session(session_id, path, nb, client)
+        _sessions[session_id] = _Session(session_id, path, nb, client, owner=owner)
 
         return CreateSessionResponse(
             id=session_id, kernel=kernel_name, status="ready"
@@ -183,11 +230,11 @@ def create_notebooks_router(verify_api_key) -> APIRouter:
         "Updates the .ipynb file in place after execution.",
         include_in_schema=False,
     )
-    async def execute_cell(session_id: str, req: ExecuteCellRequest):
+    async def execute_cell(session_id: str, req: ExecuteCellRequest, http_request: Request):
 
 
         session = _sessions.get(session_id)
-        if not session:
+        if not session or session.owner != http_request.headers.get("x-user-id"):
             raise HTTPException(status_code=404, detail="Session not found")
         if session.busy:
             raise HTTPException(status_code=409, detail="Cell already executing")
@@ -255,9 +302,9 @@ def create_notebooks_router(verify_api_key) -> APIRouter:
         summary="Get notebook session status",
         include_in_schema=False,
     )
-    async def get_session(session_id: str):
+    async def get_session(session_id: str, http_request: Request):
         session = _sessions.get(session_id)
-        if not session:
+        if not session or session.owner != http_request.headers.get("x-user-id"):
             raise HTTPException(status_code=404, detail="Session not found")
 
         kernel_name = session.nb.metadata.get("kernelspec", {}).get(
@@ -274,8 +321,9 @@ def create_notebooks_router(verify_api_key) -> APIRouter:
         summary="Stop a notebook session",
         include_in_schema=False,
     )
-    async def delete_session(session_id: str):
-        if session_id not in _sessions:
+    async def delete_session(session_id: str, http_request: Request):
+        session = _sessions.get(session_id)
+        if not session or session.owner != http_request.headers.get("x-user-id"):
             raise HTTPException(status_code=404, detail="Session not found")
         await _destroy_session(session_id)
         return {"status": "stopped"}
