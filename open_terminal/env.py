@@ -174,3 +174,22 @@ SESSION_CWD_TTL: float = float(
         config.get("session_cwd_ttl", 604_800),  # 7 days
     )
 )
+
+# Maximum size (in bytes) of a single model-facing tool response.
+MAX_TOOL_OUTPUT_SIZE: int = max(
+    int(
+        os.environ.get(
+            "OPEN_TERMINAL_MAX_TOOL_OUTPUT_SIZE",
+            config.get("max_tool_output_size", 262_144),  # 256 KiB
+        )
+    ),
+    4_096,  # below this the room a response needs would exceed the limit
+)
+
+# Maximum size (in bytes) of a binary file read_file will return.
+MAX_BINARY_FILE_SIZE: int = int(
+    os.environ.get(
+        "OPEN_TERMINAL_MAX_BINARY_FILE_SIZE",
+        config.get("max_binary_file_size", 5_242_880),  # 5 MiB
+    )
+)
