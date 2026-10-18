@@ -79,6 +79,7 @@ def run(
         if file_path:
             with open(file_path) as f:
                 api_key = f.read().strip()
+            os.environ.pop("OPEN_TERMINAL_API_KEY_FILE", None)
 
     # Fall back to config file value
     if not api_key:
