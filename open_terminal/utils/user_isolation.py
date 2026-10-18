@@ -87,6 +87,8 @@ def ensure_os_user(username: str) -> str:
     for reads while other provisioned users still get ``Permission denied``.
     Returns the home directory path.
     """
+    from open_terminal.env import USER_GROUP
+
     try:
         pw = pwd.getpwnam(username)
         return pw.pw_dir
@@ -100,6 +102,9 @@ def ensure_os_user(username: str) -> str:
     # different UID assignment) and set permissions.
     _run_privileged(["chown", "-R", f"{username}:{username}", home_dir])
     _run_privileged(["chmod", "2770", home_dir])
+    # Optionally add the OS user to a shared group
+    if USER_GROUP:
+        _run_privileged(["usermod", "-aG", USER_GROUP, username])
     # Add the server process user to the new user's group so Python can
     # read files natively without subprocess.
     server_user = os.getenv("USER", "user")

@@ -151,6 +151,11 @@ USER_PREFIX = os.environ.get(
     config.get("user_prefix", ""),
 )
 
+USER_GROUP = os.environ.get(
+    "OPEN_TERMINAL_USER_GROUP",
+    config.get("user_group", ""),
+)
+
 UVICORN_LOOP = os.environ.get(
     "OPEN_TERMINAL_UVICORN_LOOP",
     config.get("uvicorn_loop", "auto"),
