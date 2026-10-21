@@ -79,6 +79,18 @@ def sanitize_username(user_id: str) -> str:
     return name
 
 
+def _docker_access_allowed(username: str) -> bool:
+    """Return whether *username* may join the Docker socket group.
+
+    Controlled by ``OPEN_TERMINAL_DOCKER_ALLOWED_USERS``.  When unset, every
+    provisioned user is allowed (the default).  When set, only the listed
+    Linux usernames are allowed.
+    """
+    from open_terminal.env import DOCKER_ALLOWED_USERS
+
+    return DOCKER_ALLOWED_USERS is None or username in DOCKER_ALLOWED_USERS
+
+
 def ensure_os_user(username: str) -> str:
     """Create the OS user if it doesn't exist (idempotent).
 
@@ -106,8 +118,11 @@ def ensure_os_user(username: str) -> str:
     _run_privileged(["usermod", "-aG", username, server_user])
     # If the Docker socket is mounted, add the new user to its group
     # so docker commands work without sudo (mirrors entrypoint.sh).
+    # OPEN_TERMINAL_DOCKER_ALLOWED_USERS restricts this to listed users.
     _DOCKER_SOCK = "/var/run/docker.sock"
-    if os.path.exists(_DOCKER_SOCK):
+    if not _docker_access_allowed(username):
+        log.info("Not adding %s to Docker socket group (not in allowlist)", username)
+    elif os.path.exists(_DOCKER_SOCK):
         import grp as _grp
         sock_gid = os.stat(_DOCKER_SOCK).st_gid
         try:

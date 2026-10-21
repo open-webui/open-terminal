@@ -151,6 +151,21 @@ USER_PREFIX = os.environ.get(
     config.get("user_prefix", ""),
 )
 
+# Comma-separated Linux usernames that multi-user mode adds to the Docker
+# socket group.  None (unset) = every provisioned user (default behaviour).
+# Empty = no provisioned user.
+DOCKER_ALLOWED_USERS: frozenset[str] | None = None
+_docker_allowed_users = os.environ.get(
+    "OPEN_TERMINAL_DOCKER_ALLOWED_USERS",
+    config.get("docker_allowed_users"),
+)
+if isinstance(_docker_allowed_users, list):  # TOML array
+    _docker_allowed_users = ",".join(_docker_allowed_users)
+if _docker_allowed_users is not None:
+    DOCKER_ALLOWED_USERS = frozenset(
+        u.strip() for u in _docker_allowed_users.split(",") if u.strip()
+    )
+
 UVICORN_LOOP = os.environ.get(
     "OPEN_TERMINAL_UVICORN_LOOP",
     config.get("uvicorn_loop", "auto"),
