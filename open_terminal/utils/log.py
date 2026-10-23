@@ -13,7 +13,7 @@ from typing import Optional
 import aiofiles
 import aiofiles.os
 
-from open_terminal.env import MAX_PROCESS_LOG_SIZE, LOG_FLUSH_INTERVAL, LOG_FLUSH_BUFFER
+from open_terminal.env import MAX_PROCESS_LOG_SIZE, LOG_FLUSH_INTERVAL, LOG_FLUSH_BUFFER, MAX_TOOL_OUTPUT_SIZE
 from open_terminal.utils.limits import CHUNK_SIZE, run_io
 
 log = logging.getLogger(__name__)
@@ -183,15 +183,31 @@ async def read_log(log_path: Optional[str], offset: int = 0, tail: Optional[int]
     return await run_io(_read_log, log_path, offset, tail)
 
 
+def _log_response_end(next_offset: int, offset: int, truncated: bool) -> str:
+    return '],"next_offset":' + str(next_offset) + ',"offset":' + str(offset) + ',"truncated":' + json.dumps(truncated) + '}'
+
+
+_LOG_END_SIZE = len(_log_response_end(9_999_999_999, 9_999_999_999, False))
+
+
+def _entry_bytes(entry: dict) -> int:
+    return len(json.dumps(entry, ensure_ascii=False).encode("utf-8")) + 1
+
+
 def _build_log_response(path, metadata, offset, tail):
-    """Serialize complete output to disk without retaining a list of all entries."""
+    """Serialize output to disk without retaining a list of all entries, up to the tool output budget."""
     from open_terminal.utils.fs import TemporaryFileResponse
 
     fd, temporary = tempfile.mkstemp(suffix=".json")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as output:
-            output.write(json.dumps(metadata, ensure_ascii=False)[:-1] + ',"output":[')
+            head = json.dumps(metadata, ensure_ascii=False)[:-1] + ',"output":['
+            output.write(head)
+            budget = MAX_TOOL_OUTPUT_SIZE - len(head.encode("utf-8")) - _LOG_END_SIZE
+            tail_sizes = deque()
+            tail_bytes = 0
             total = available = 0
+            first_index = stop_index = None
             truncated = False
             try:
                 source = open(path, "rb") if path else None
@@ -216,11 +232,18 @@ def _build_log_response(path, metadata, offset, tail):
                             truncated = offset < total
                         elif kind in ("stdout", "stderr", "output"):
                             available += total >= offset
+                            if tail is not None and total >= offset:
+                                tail_sizes.append(_entry_bytes({"type": kind, "data": record["data"]}))
+                                tail_bytes += tail_sizes[-1]
+                                # One entry is always kept, so a cursor always advances.
+                                while len(tail_sizes) > tail or (tail_bytes > budget and len(tail_sizes) > 1):
+                                    tail_bytes -= tail_sizes.popleft()
                             total += 1
-                    skip = max(0, available - tail) if tail is not None else 0
+                    skip = available - len(tail_sizes) if tail is not None else 0
                     truncated |= skip > 0
                     source.seek(0)
                     index = 0
+                    used = 0
                     separator = ""
                     for record in records():
                         kind = record.get("type")
@@ -231,11 +254,20 @@ def _build_log_response(path, metadata, offset, tail):
                                 if skip:
                                     skip -= 1
                                 else:
+                                    entry = {"type": kind, "data": record["data"]}
+                                    used += _entry_bytes(entry)
+                                    if tail is None and first_index is not None and used > budget:
+                                        stop_index = index
+                                        break
+                                    if first_index is None:
+                                        first_index = index
                                     output.write(separator)
-                                    json.dump({"type": kind, "data": record["data"]}, output, ensure_ascii=False)
+                                    json.dump(entry, output, ensure_ascii=False)
                                     separator = ","
                             index += 1
-            output.write('],"next_offset":' + str(total) + ',"truncated":' + json.dumps(truncated) + '}')
+            next_offset = total if stop_index is None else stop_index
+            first_offset = next_offset if first_index is None else first_index
+            output.write(_log_response_end(next_offset, first_offset, truncated or stop_index is not None))
         return TemporaryFileResponse(temporary, media_type="application/json")
     except BaseException:
         os.unlink(temporary)
