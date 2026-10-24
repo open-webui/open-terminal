@@ -39,7 +39,7 @@ from open_terminal.utils.runner import PipeRunner, ProcessRunner, create_runner,
 from open_terminal.utils.fs import UserFS, FullFileResponse as FileResponse, TemporaryFileResponse, text_file_response, line_range_offsets
 from open_terminal.utils.limits import (CHUNK_SIZE, NormalizeNullQueryMiddleware, run_io, run_worker)
 from open_terminal.utils.file_compare import CompareRequest, run_comparison
-from open_terminal.utils.search import search_entries, matching_files, ranked_page
+from open_terminal.utils.search import is_regular_file, search_entries, matching_files, ranked_page
 from open_terminal.utils.skills import join_skill_path, list_skill_resources, parse_skill_frontmatter
 
 MATCH_PAGE_SIZE = 100
@@ -1124,7 +1124,7 @@ async def match_files(
                 score = (0 if name_lower == query_lower else 1 if name_lower.startswith(query_lower)
                     else 2 if query_lower in name_lower else 3 if query_lower in rel_lower else 4)
                 content_matches = []
-                if entry_type == "file" and not os.path.islink(entry_path):
+                if entry_type == "file" and not os.path.islink(entry_path) and is_regular_file(entry_path):
                     try:
                         size = os.path.getsize(entry_path)
                         eligible = rg_matches(entry_path) if rg_matches is not None else size <= MAX_CONTENT_SEARCH_FILE_SIZE
