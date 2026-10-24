@@ -237,6 +237,37 @@ Each user automatically gets a dedicated Linux account with its own home directo
 
 In multi-user mode, requests that access a user's workspace must include `X-User-Id` alongside the API key. Missing user IDs return HTTP 400. `X-Session-Id` tracks the working directory separately for each user, so users can reuse a session ID without changing each other's working directory. Single-user mode does not require `X-User-Id`.
 
+## MCP Server
+
+Open Terminal ships with an [MCP](https://modelcontextprotocol.io) server that exposes every API endpoint as an MCP tool. Install the optional dependency first:
+
+```bash
+pip install -e ".[mcp]"
+```
+
+### streamable-http (remote)
+
+To run the MCP server as a network service and connect from another machine:
+
+```bash
+open-terminal mcp --transport streamable-http --host 0.0.0.0 --port 8000 --api-key your-secret-key
+```
+
+Then connect from VS Code `mcp.json`:
+
+```json
+{
+  "servers": {
+    "open-terminal": {
+      "url": "http://<server-ip>:8000/mcp",
+      "type": "http"
+    }
+  }
+}
+```
+
+The `--api-key` flag (or `OPEN_TERMINAL_API_KEY` env var, or `api_key` in a config file) is required — it is used for both the MCP server and the underlying REST API.
+
 ## API Docs
 
 Full interactive API documentation is available at [http://localhost:8000/docs](http://localhost:8000/docs) once your instance is running.
