@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.14.7] - 2026-10-31
+
+### Added
+
+- File listings now include file and folder creation dates, enabling "Date Added" sorting with an updated Open WebUI. Editing a file does not change its creation date. This includes support in the Alpine Docker image; dates remain unavailable on filesystems that do not provide them.
+
+### Fixed
+
+- Fixed the missing OpenShift Docker image in GitHub Container Registry. Automatic builds and publishing now include `ghcr.io/open-webui/open-terminal:openshift` and versioned OpenShift images for both Intel/AMD and ARM systems. Previously, the OpenShift image was documented but left out of automatic publishing.
+
 ## [0.14.6] - 2026-10-29
 
 ### Fixed
