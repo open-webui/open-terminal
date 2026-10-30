@@ -314,7 +314,7 @@ class UserFS:
         return await asyncio.to_thread(self._is_writable_sync, path)
 
     async def listdir(self, path: str) -> list[dict]:
-        """List directory contents with type, size, mtime, and writability."""
+        """List contents with type, size, modification/creation times, and writability."""
         self._check_path(path)
         def _list_sync():
             entries = []
@@ -329,10 +329,29 @@ class UserFS:
                         "type": "directory" if os.path.isdir(full) else "file",
                         "size": s.st_size,
                         "modified": s.st_mtime,
+                        "created": getattr(s, "st_birthtime", s.st_ctime if os.name == "nt" else None),
                         "writable": self._is_writable_sync(full),
                     })
                 except OSError:
                     continue
+            # Python's Unix stat lacks birth time on Linux; ask GNU stat in batches.
+            if entries and entries[0]["created"] is None:
+                for offset in range(0, len(entries), 256):
+                    batch = entries[offset:offset + 256]
+                    try:
+                        result = subprocess.run(
+                            ["stat", "-L", r"--printf=%n\0%.9W\0", "--", *[e["name"] for e in batch]],
+                            cwd=path, capture_output=True, timeout=10,
+                            env={**os.environ, "LC_ALL": "C"},
+                        )
+                        if result.returncode and not result.stdout:
+                            break
+                        fields = result.stdout.split(b"\0")
+                        created = dict(zip(fields[::2], fields[1::2]))
+                        for entry in batch:
+                            entry["created"] = float(created.get(os.fsencode(entry["name"]), b"0")) or None
+                    except (OSError, subprocess.TimeoutExpired, ValueError):
+                        break
             return entries
         return await run_io(_list_sync)
 

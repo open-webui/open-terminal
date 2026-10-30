@@ -74,6 +74,7 @@ FROM python:3.12.13-alpine
 RUN apk add --no-cache \
         tini \
         su-exec \
+        coreutils \
         curl \
         git \
         jq \
