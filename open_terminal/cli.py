@@ -21,6 +21,37 @@ BANNER = r"""
         |_|
 """
 
+DEFAULT_CORS_ALLOWED_ORIGINS = "*"
+
+
+def resolve_cors_allowed_origins(cli_value: str | None, cfg: dict) -> str:
+    """Resolve the allowed CORS origins for ``open-terminal run``.
+
+    Precedence (highest wins):
+
+    1. ``--cors-allowed-origins`` CLI flag
+    2. ``OPEN_TERMINAL_CORS_ALLOWED_ORIGINS`` environment variable
+    3. ``cors_allowed_origins`` from the config file(s)
+    4. Built-in default (``"*"``)
+
+    Click resolves levels 1 and 2 into *cli_value*.  The option deliberately
+    has no Click-level default, so ``None`` means "not supplied" and any
+    explicit value -- including ``"*"`` or ``""`` -- is returned unchanged.
+    """
+    if cli_value is not None:
+        return cli_value
+
+    value = cfg.get("cors_allowed_origins")
+    if value is None:
+        return DEFAULT_CORS_ALLOWED_ORIGINS
+    if not isinstance(value, str):
+        raise click.BadParameter(
+            "expected a comma-separated string, got "
+            f"{type(value).__name__} {value!r}",
+            param_hint="'cors_allowed_origins' in config file",
+        )
+    return value
+
 
 @main.command()
 @click.option("--host", default=None, help="Bind host (default: 127.0.0.1 with --cftunnel, otherwise 0.0.0.0)")
@@ -46,9 +77,14 @@ BANNER = r"""
 )
 @click.option(
     "--cors-allowed-origins",
-    default="*",
+    # No Click default: a default here would always win over the config file.
+    default=None,
     envvar="OPEN_TERMINAL_CORS_ALLOWED_ORIGINS",
-    help="Allowed CORS origins, comma-separated (default: * for all)",
+    help=(
+        "Allowed CORS origins, comma-separated (or set "
+        "OPEN_TERMINAL_CORS_ALLOWED_ORIGINS; falls back to the config file, "
+        "then * for all)"
+    ),
 )
 @click.option(
     "--cftunnel", is_flag=True,
@@ -61,7 +97,7 @@ def run(
     config_path: str | None,
     cwd: str | None,
     api_key: str,
-    cors_allowed_origins: str,
+    cors_allowed_origins: str | None,
     cftunnel: bool,
     yes: bool,
 ):
@@ -82,6 +118,9 @@ def run(
     port = port if port is not None else cfg.get("port", 8000)
     if cftunnel and (type(port) is not int or not 1 <= port <= 65535):
         raise click.UsageError("--cftunnel requires a port between 1 and 65535.")
+
+    # Resolve CORS origins: CLI flag > env var > config file > built-in default
+    cors_allowed_origins = resolve_cors_allowed_origins(cors_allowed_origins, cfg)
 
     if cwd:
         os.chdir(cwd)
