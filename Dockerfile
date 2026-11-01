@@ -9,6 +9,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # Networking
     curl wget net-tools iputils-ping dnsutils netcat-openbsd socat telnet \
     openssh-client rsync \
+    # Browser tabs
+    chromium \
     # Editors
     vim nano \
     # Version control

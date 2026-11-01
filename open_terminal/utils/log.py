@@ -176,33 +176,63 @@ async def log_process(background_process, on_finish=None) -> None:
                 on_finish()
 
 
-def _read_log(path, offset, tail):
-    selected = deque(maxlen=tail)
-    total = available = 0
-    truncated = False
-    try:
-        source = open(path, "rb")
-    except FileNotFoundError:
-        return [], 0, False
-    with source:
-        for record in _records(source):
-            kind = record.get("type")
-            if kind == "log_rotated":
-                total = record.get("offset", 0)
-                truncated = offset < total
-            elif kind in ("stdout", "stderr", "output"):
-                if total >= offset:
-                    selected.append({"type": kind, "data": record["data"]})
-                    available += 1
-                total += 1
-    return list(selected), total, truncated or available > len(selected)
+class LogReader:
+    """Keep a byte position for live reads; retain absolute cursors across rotation."""
+
+    def __init__(self, path, offset=0, tail=None):
+        self.path = path
+        self.offset = offset
+        self.tail = tail
+        self.identity = None
+        self.position = 0
+        self.total = 0
+
+    def _read(self):
+        selected = deque(maxlen=self.tail)
+        available = 0
+        truncated = False
+        try:
+            source = open(self.path, "rb") if self.path else None
+        except FileNotFoundError:
+            source = None
+        if source is None:
+            return [], self.offset, False
+        with source:
+            stat = os.fstat(source.fileno())
+            identity = (stat.st_dev, stat.st_ino)
+            if identity != self.identity or stat.st_size < self.position:
+                self.position = self.total = 0
+            source.seek(self.position)
+            while True:
+                position = source.tell()
+                line = source.readline()
+                if not line or not line.endswith(b"\n"):
+                    # A concurrent writer may not have finished its last record yet.
+                    self.position = position
+                    break
+                try:
+                    record = json.loads(line)
+                except (ValueError, UnicodeError):
+                    continue
+                kind = record.get("type")
+                if kind == "log_rotated":
+                    self.total = record.get("offset", 0)
+                    truncated = self.offset < self.total
+                elif kind in ("stdout", "stderr", "output"):
+                    if self.total >= self.offset:
+                        selected.append({"type": kind, "data": record["data"]})
+                        available += 1
+                    self.total += 1
+            self.identity = identity
+            self.offset = self.total
+        return list(selected), self.offset, truncated or available > len(selected)
+
+    async def read(self):
+        return await run_io(self._read)
 
 
 async def read_log(log_path: Optional[str], offset: int = 0, tail: Optional[int] = None) -> tuple[list[dict], int, bool]:
-    """Read the requested output entries with the original absolute cursor semantics."""
-    if not log_path:
-        return [], 0, False
-    return await run_io(_read_log, log_path, offset, tail)
+    return await LogReader(log_path, offset, tail).read()
 
 
 def _build_log_response(path, metadata, offset, tail):

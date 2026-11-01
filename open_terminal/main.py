@@ -26,7 +26,7 @@ from urllib.parse import quote as url_quote
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.exceptions import RequestValidationError
-from fastapi.middleware.cors import CORSMiddleware
+from open_terminal.browser.router import BrowserCORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.formparsers import MultiPartParser, MultiPartException, parse_options_header
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError
@@ -202,6 +202,8 @@ async def lifespan(app):
         if ENABLE_NOTEBOOKS:
             from open_terminal.utils.notebooks import shutdown_notebooks
             await shutdown_notebooks()
+        from open_terminal.browser.router import shutdown as shutdown_browsers
+        await shutdown_browsers()
         global _port_proxy_client
         if _port_proxy_client is not None:
             await _port_proxy_client.aclose()
@@ -216,7 +218,7 @@ app = FastAPI(
 )
 app.add_middleware(NormalizeNullQueryMiddleware)
 app.add_middleware(
-    CORSMiddleware,
+    BrowserCORSMiddleware,
     allow_origins=[o.strip() for o in CORS_ALLOWED_ORIGINS.split(",")],
     allow_credentials=True,
     allow_methods=["*"],
@@ -410,7 +412,7 @@ def _set_session_cwd(session_id: str | None, path: str, fs: "UserFS"):
         _session_cwds[(fs.home, session_id)] = (path, time.time())
 
 
-from open_terminal.utils.log import log_process, log_response, read_log
+from open_terminal.utils.log import LogReader, log_process, log_response
 
 
 
@@ -501,6 +503,7 @@ async def get_config():
             "system": ENABLE_SYSTEM_PROMPT,
             "git": shutil.which("git") is not None,
             "events": True,
+            "browser": True,
         },
     }
 
@@ -1721,17 +1724,16 @@ async def stream_process_output(ws: WebSocket, process_id: str,
         return
 
     async def send():
-        cursor = offset
+        reader = LogReader(process.log_path, offset, tail)
         while True:
             changed = process.changed
             finished = process.finished_at is not None
-            output, next_offset, truncated = await read_log(process.log_path, cursor, tail)
+            output, next_offset, truncated = await reader.read()
             await ws.send_json({"id": process.id, "command": process.command,
                                 "status": process.status if finished else "running",
                                 "exit_code": process.exit_code if finished else None,
                                 "output": output, "next_offset": next_offset,
                                 "truncated": truncated})
-            cursor = next_offset
             if finished:
                 return
             await changed.wait()
@@ -2467,3 +2469,7 @@ if ENABLE_NOTEBOOKS:
     from open_terminal.utils import notebooks
 
     app.include_router(notebooks.router)
+
+# Browser tabs share the terminal's authenticated user and chat context.
+from open_terminal.browser.router import router as browser_router
+app.include_router(browser_router)
