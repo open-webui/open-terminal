@@ -38,6 +38,7 @@ from open_terminal.utils.runner import PipeRunner, ProcessRunner, create_runner,
 from open_terminal.utils.fs import UserFS, FullFileResponse as FileResponse, TemporaryFileResponse, text_file_response, line_range_offsets
 from open_terminal.utils.limits import (CHUNK_SIZE, NormalizeNullQueryMiddleware, run_io, run_worker)
 from open_terminal.utils.file_compare import CompareRequest, run_comparison
+from open_terminal.utils.git import GitRepository
 from open_terminal.utils.search import search_entries, matching_files, ranked_page
 from open_terminal.utils.skills import join_skill_path, list_skill_resources, parse_skill_frontmatter
 
@@ -668,6 +669,107 @@ async def list_files(
         raise HTTPException(status_code=404, detail="Directory not found")
     entries = await fs.listdir(target)
     return {"dir": target, "writable": await fs.is_writable(target), "entries": entries}
+
+
+@app.get("/git/status", dependencies=[Depends(verify_api_key)], include_in_schema=False)
+async def git_status(http_request: Request, root: str = ".", fs: UserFS = Depends(get_filesystem)):
+    cwd = _get_session_cwd(http_request.headers.get("x-session-id"), fs)
+    return await GitRepository(fs, root, cwd).status()
+
+
+@app.get("/git/diff", dependencies=[Depends(verify_api_key)], include_in_schema=False)
+async def git_diff(http_request: Request, file: str, root: str = ".", staged: bool = False,
+                   untracked: bool = False, ignore_whitespace: bool = False, fs: UserFS = Depends(get_filesystem)):
+    cwd = _get_session_cwd(http_request.headers.get("x-session-id"), fs)
+    return await GitRepository(fs, root, cwd).diff(file, staged, untracked, ignore_whitespace)
+
+
+@app.get("/git/log", dependencies=[Depends(verify_api_key)], include_in_schema=False)
+async def git_history(http_request: Request, root: str = ".", limit: int = 50, offset: int = 0, fs: UserFS = Depends(get_filesystem)):
+    cwd = _get_session_cwd(http_request.headers.get("x-session-id"), fs)
+    return await GitRepository(fs, root, cwd).history(limit, offset)
+
+
+@app.get("/git/show", dependencies=[Depends(verify_api_key)], include_in_schema=False)
+async def git_show(http_request: Request, ref: str, root: str = ".", fs: UserFS = Depends(get_filesystem)):
+    cwd = _get_session_cwd(http_request.headers.get("x-session-id"), fs)
+    return await GitRepository(fs, root, cwd).show(ref)
+
+
+@app.get("/git/branches", dependencies=[Depends(verify_api_key)], include_in_schema=False)
+async def git_branches(http_request: Request, root: str = ".", fs: UserFS = Depends(get_filesystem)):
+    cwd = _get_session_cwd(http_request.headers.get("x-session-id"), fs)
+    return await GitRepository(fs, root, cwd).branches()
+
+
+@app.get("/git/worktrees", dependencies=[Depends(verify_api_key)], include_in_schema=False)
+async def git_worktrees(http_request: Request, root: str = ".", fs: UserFS = Depends(get_filesystem)):
+    cwd = _get_session_cwd(http_request.headers.get("x-session-id"), fs)
+    return await GitRepository(fs, root, cwd).worktrees()
+
+
+@app.get("/git/pr/{view}", dependencies=[Depends(verify_api_key)], include_in_schema=False)
+async def git_pull_requests(http_request: Request, view: str, root: str = ".", number: int = 0,
+                            state: str = "open", fs: UserFS = Depends(get_filesystem)):
+    cwd = _get_session_cwd(http_request.headers.get("x-session-id"), fs)
+    return await GitRepository(fs, root, cwd).pull_requests(view, number, state)
+
+
+class PullRequestAction(BaseModel):
+    root: str = "."
+    number: int = 0
+    title: str = ""
+    body: str = ""
+    base: str = ""
+    head: str = ""
+    draft: bool = False
+    strategy: str = "squash"
+    event: str = "comment"
+
+
+@app.post("/git/pr/{action}", dependencies=[Depends(verify_api_key)], include_in_schema=False)
+async def git_pull_request_action(http_request: Request, action: str, payload: PullRequestAction, fs: UserFS = Depends(get_filesystem)):
+    cwd = _get_session_cwd(http_request.headers.get("x-session-id"), fs)
+    fields = payload.model_dump(exclude={"root", "strategy", "event"})
+    if action == "review":
+        if payload.event not in ("approve", "comment", "request_changes"):
+            raise HTTPException(400, "Invalid review event")
+        action = {"approve": "approve", "comment": "review-comment", "request_changes": "request-changes"}[payload.event]
+    return await GitRepository(fs, payload.root, cwd).pull_request_action(action, method=payload.strategy, **fields)
+
+
+class GitActionRequest(BaseModel):
+    root: str = "."
+    files: list[str] = Field(default_factory=list)
+    message: str = ""
+    branch: str = ""
+    name: str = ""
+    path: str = ""
+    old_name: str = ""
+    new_name: str = ""
+    set_upstream: bool = False
+
+
+@app.api_route("/git/{action}", methods=["POST", "PATCH", "DELETE"], dependencies=[Depends(verify_api_key)], include_in_schema=False)
+async def git_action(http_request: Request, action: str, payload: GitActionRequest, fs: UserFS = Depends(get_filesystem)):
+    cwd = _get_session_cwd(http_request.headers.get("x-session-id"), fs)
+    branch, target = payload.branch, ""
+    if action == "branch":
+        if http_request.method == "DELETE":
+            action, branch = "delete_branch", payload.name
+        elif http_request.method == "PATCH":
+            action, branch, target = "rename_branch", payload.old_name, payload.new_name
+        else:
+            branch = payload.name
+    elif http_request.method != "POST":
+        raise HTTPException(405, "Method not allowed")
+    elif action == "worktrees":
+        action, target = "worktree", payload.path
+    elif action == "push" and payload.set_upstream:
+        action = "publish"
+    if action not in {"stage", "unstage", "discard", "commit", "checkout", "branch", "delete_branch", "rename_branch", "worktree", "fetch", "pull", "push", "publish", "stash", "unstash", "uncommit"}:
+        raise HTTPException(404, "Unknown Git operation")
+    return await GitRepository(fs, payload.root, cwd).action(action, payload.files, payload.message, branch, target)
 
 
 @app.post("/files/compare", dependencies=[Depends(verify_api_key)], include_in_schema=False)
@@ -1989,10 +2091,19 @@ if ENABLE_TERMINAL:
         )
 
 
+    def _set_terminal_active(session: dict, active: bool):
+        if active and not session.get("active", False):
+            session["last_active"] = time.monotonic_ns()
+        session["active"] = active
+
+
     def _user_terminal(request: Request) -> dict:
-        for session in reversed(_terminal_sessions.values()):
-            if _owns_terminal(session, request) and session["connected"] and _session_is_alive(session):
-                return session
+        sessions = [
+            session for session in reversed(_terminal_sessions.values())
+            if _owns_terminal(session, request) and session["connected"] and _session_is_alive(session)
+        ]
+        if sessions:
+            return max(sessions, key=lambda session: (session.get("active", False), session.get("last_active", 0)))
         raise HTTPException(status_code=404, detail="No connected user shell")
 
 
@@ -2006,7 +2117,8 @@ if ENABLE_TERMINAL:
 
     @app.get("/api/terminals/user/output", operation_id="read_user_terminal", dependencies=[Depends(verify_api_key)])
     async def read_user_terminal(request: Request):
-        """Read recent output from the user's connected shell. Inspect before sending input:
+        """Read recent output from the user's active shell, or last-used shell when none is visible.
+        Inspect before sending input:
         a foreground program may already be running. Does not create a shell."""
         session = _user_terminal(request)
         return {"output": bytes(session["output"]).decode(errors="replace")}
@@ -2014,7 +2126,8 @@ if ENABLE_TERMINAL:
 
     @app.post("/api/terminals/user/input", operation_id="send_user_terminal_input", dependencies=[Depends(verify_api_key)])
     async def send_user_terminal_input(request: Request, body: InputRequest):
-        """Send literal text to the user's connected shell or its foreground program.
+        """Send literal text to the user's active shell, or last-used shell when none is visible.
+        Input goes to that shell or its foreground program.
         Include actual newlines to submit input. Read the shell first. Sending input
         does not wait for command completion and does not create a shell."""
         session = _user_terminal(request)
@@ -2087,6 +2200,10 @@ if ENABLE_TERMINAL:
         To resize, send a **text** JSON frame::
 
             {"type": "resize", "cols": 120, "rows": 40}
+
+        Report tab visibility so user-shell tools select the active or last-used shell::
+
+            {"type": "activity", "active": true}
         """
         session = _terminal_sessions.get(session_id)
         if session is None:
@@ -2180,6 +2297,8 @@ if ENABLE_TERMINAL:
                             cols = payload.get("cols", 80)
                             rows = payload.get("rows", 24)
                             _do_resize(rows, cols)
+                        elif payload.get("type") == "activity" and isinstance(payload.get("active"), bool):
+                            _set_terminal_active(session, payload["active"])
                     except (json.JSONDecodeError, KeyError):
                         pass
         tasks = (asyncio.create_task(_pty_reader()), asyncio.create_task(_ws_reader()))
