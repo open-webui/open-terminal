@@ -6,6 +6,8 @@ import os
 from pathlib import Path
 import secrets
 import shutil
+import sys
+import importlib.util
 import signal
 import tempfile
 from typing import Literal
@@ -32,6 +34,10 @@ startup_lock = asyncio.Lock()
 
 
 def available():
+    if sys.platform in ("darwin", "win32"):
+        return all(
+            importlib.util.find_spec(name) for name in ("mss", "pyautogui", "pyperclip")
+        )
     return all(
         shutil.which(name)
         for name in (
@@ -47,6 +53,9 @@ def available():
 
 
 class Desktop:
+    transport = "vnc"
+    width, height = WIDTH, HEIGHT
+
     def __init__(self, fs):
         self.fs = fs
         self.runtime = Path(tempfile.mkdtemp(prefix="open-terminal-desktop-"))
@@ -257,6 +266,10 @@ class Desktop:
 async def get_desktop(request, fs):
     if not available():
         raise HTTPException(503, "Desktop is not installed on this terminal")
+    if sys.platform in ("darwin", "win32"):
+        from open_terminal.desktop_native import check_permissions
+
+        check_permissions()
     key = (request.headers.get("x-user-id", ""), fs.home)
     async with startup_lock:
         desktop = desktops.get(key)
@@ -265,7 +278,12 @@ async def get_desktop(request, fs):
         if desktop:
             await desktop.close()
             desktops.pop(key, None)
-        desktop = Desktop(fs)
+        if sys.platform in ("darwin", "win32"):
+            from open_terminal.desktop_native import NativeDesktop
+
+            desktop = NativeDesktop(fs)
+        else:
+            desktop = Desktop(fs)
         try:
             await desktop.start()
         except BaseException:
@@ -284,8 +302,13 @@ async def shutdown():
 
 @router.get("", include_in_schema=False, dependencies=[Depends(verify_api_key)])
 async def connect(request: Request, fs: UserFS = Depends(get_filesystem)):
-    await get_desktop(request, fs)
-    return {"width": WIDTH, "height": HEIGHT}
+    desktop = await get_desktop(request, fs)
+    return {
+        "width": desktop.width,
+        "height": desktop.height,
+        "transport": desktop.transport,
+        "platform": sys.platform,
+    }
 
 
 @router.get(
@@ -296,8 +319,8 @@ async def connect(request: Request, fs: UserFS = Depends(get_filesystem)):
 )
 async def screenshot(request: Request, fs: UserFS = Depends(get_filesystem)):
     """Return an image of the same desktop the user sees. Starts it if needed.
-    Coordinates are pixels on a 1280x800 screen. Inspect before interacting.
-    Desktop applications and files belong to this terminal workspace.
+    Coordinates are pixels in the returned image. Inspect before interacting.
+    On macOS and Windows this is the logged-in user's primary screen, shared across workspaces.
     """
     desktop = await get_desktop(request, fs)
     async with desktop.actions:
@@ -306,10 +329,10 @@ async def screenshot(request: Request, fs: UserFS = Depends(get_filesystem)):
 
 class Action(BaseModel):
     action: Literal["click", "double_click", "move", "drag", "scroll", "type", "key"]
-    x: int | None = Field(default=None, ge=0, lt=WIDTH)
-    y: int | None = Field(default=None, ge=0, lt=HEIGHT)
-    to_x: int | None = Field(default=None, ge=0, lt=WIDTH)
-    to_y: int | None = Field(default=None, ge=0, lt=HEIGHT)
+    x: int | None = Field(default=None, ge=0, le=32767)
+    y: int | None = Field(default=None, ge=0, le=32767)
+    to_x: int | None = Field(default=None, ge=0, le=32767)
+    to_y: int | None = Field(default=None, ge=0, le=32767)
     button: Literal["left", "middle", "right"] = "left"
     direction: Literal["up", "down", "left", "right"] = "down"
     amount: int = Field(default=3, ge=1, le=20)
@@ -318,7 +341,7 @@ class Action(BaseModel):
         default=None,
         pattern=r"^[A-Za-z0-9_+]+$",
         max_length=100,
-        description="X11 key or combination, e.g. Return, ctrl+c, alt+F2, Super_L",
+        description="Key or combination, e.g. Return, ctrl+c, command+c on macOS, alt+F2 on Linux",
     )
 
     @model_validator(mode="after")
@@ -347,11 +370,25 @@ class Action(BaseModel):
 async def action(request: Request, body: Action, fs: UserFS = Depends(get_filesystem)):
     """Click, double-click, move, drag, scroll, type text or press a key combination.
     Returns a screenshot after the action. Use desktop_screenshot first and work
-    from its 1280x800 pixel coordinates. Shares the user's desktop and workspace.
-    Use alt+F2 to launch an application. Type pastes literal text into the focused application.
+    from that image's pixel coordinates. Native macOS/Windows share the logged-in desktop.
+    Type pastes literal text into the focused application.
     """
     desktop = await get_desktop(request, fs)
     async with desktop.actions:
+        for x, y in ((body.x, body.y), (body.to_x, body.to_y)):
+            if x is not None and (
+                x >= desktop.width or y is None or y >= desktop.height
+            ):
+                raise HTTPException(
+                    400, "Coordinates are outside the current desktop screenshot"
+                )
+        if desktop.transport == "frames":
+            try:
+                await asyncio.to_thread(desktop.perform, body)
+            except ValueError as exc:
+                raise HTTPException(400, str(exc)) from exc
+            await asyncio.sleep(0.1)
+            return Response(await desktop.screenshot(), media_type="image/png")
         button = str({"left": 1, "middle": 2, "right": 3}[body.button])
         if body.x is not None:
             await desktop.run(

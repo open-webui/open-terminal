@@ -1,8 +1,9 @@
-"""Chrome tabs. CDP stays on private pipes, never a shared TCP port."""
+"""Chrome tabs using private CDP pipes on POSIX and loopback CDP on Windows."""
 
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import hashlib
 import json
@@ -11,6 +12,8 @@ import os
 from pathlib import Path
 import shutil
 import sys
+
+import websockets
 
 from fastapi import WebSocket, WebSocketDisconnect
 from open_terminal.env import sanitized_environ
@@ -26,12 +29,24 @@ def find_browser():
         shutil.which(name)
         for name in (
             "chromium",
+            "chrome",
             "chromium-browser",
             "google-chrome",
             "google-chrome-stable",
             "msedge",
         )
     ]
+    if os.name == "nt":
+        for root in ("PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA"):
+            if directory := os.environ.get(root):
+                candidates += [
+                    str(Path(directory) / path)
+                    for path in (
+                        "Google/Chrome/Application/chrome.exe",
+                        "Microsoft/Edge/Application/msedge.exe",
+                        "Chromium/Application/chrome.exe",
+                    )
+                ]
     candidates += [
         "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
         "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
@@ -77,8 +92,9 @@ def lock_profile(profile):
 
 
 class Host:
-    def __init__(self, process, display=None):
+    def __init__(self, process, display=None, channel=None):
         self.process = process
+        self.channel = channel
         self.display = display
         self.viewer = None
         self.display_mode = None
@@ -91,8 +107,12 @@ class Host:
     async def read(self):
         try:
             while True:
-                raw = await self.process.stdout.readuntil(b"\0")
-                message = json.loads(raw[:-1])
+                raw = (
+                    await self.channel.recv()
+                    if self.channel
+                    else (await self.process.stdout.readuntil(b"\0"))[:-1]
+                )
+                message = json.loads(raw)
                 if "id" in message:
                     future = self.pending.pop(message["id"], None)
                     if future and not future.done():
@@ -124,8 +144,11 @@ class Host:
         if session:
             message["sessionId"] = session
         try:
-            self.process.stdin.write(json.dumps(message).encode() + b"\0")
-            await self.process.stdin.drain()
+            if self.channel:
+                await self.channel.send(json.dumps(message))
+            else:
+                self.process.stdin.write(json.dumps(message).encode() + b"\0")
+                await self.process.stdin.drain()
             try:
                 return await asyncio.wait_for(future, 15)
             except TimeoutError as exc:
@@ -146,12 +169,52 @@ class Host:
                 await self.process.wait()
         self.reader.cancel()
         await asyncio.gather(self.reader, return_exceptions=True)
+        if self.channel:
+            await self.channel.close()
         if self.display:
             await self.display.close()
 
 
 hosts = {}
 host_lock = asyncio.Lock()
+
+
+async def windows_host(args, profile, home):
+    # Chrome on Windows exposes CDP on a random loopback port, scoped to this profile.
+    path = Path(profile) / "DevToolsActivePort"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.unlink(missing_ok=True)
+    process = await asyncio.create_subprocess_exec(
+        *args,
+        "--headless=new",
+        "--remote-debugging-port=0",
+        "--remote-debugging-address=127.0.0.1",
+        "about:blank",
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL,
+        env=sanitized_environ({"HOME": home}),
+    )
+    try:
+        for _ in range(150):
+            if process.returncode is not None:
+                raise RuntimeError(
+                    "Chrome exited during startup. Close any other process using its profile."
+                )
+            if path.exists():
+                lines = path.read_text().splitlines()
+                if len(lines) == 2 and lines[1].startswith("/devtools/browser/"):
+                    channel = await websockets.connect(
+                        f"ws://127.0.0.1:{int(lines[0])}{lines[1]}",
+                        max_size=16 * 1024 * 1024,
+                    )
+                    return Host(process, channel=channel)
+            await asyncio.sleep(0.1)
+        raise RuntimeError("Chrome did not open its debugging connection")
+    except BaseException:
+        if process.returncode is None:
+            process.kill()
+        await process.wait()
+        raise
 
 
 async def get_host(session):
@@ -166,8 +229,6 @@ async def get_host(session):
             raise RuntimeError(
                 "Chrome mode requires Chromium. Install it or set OPEN_TERMINAL_BROWSER_EXECUTABLE."
             )
-        if os.name == "nt":
-            raise RuntimeError("Managed Chrome currently requires a POSIX host")
         # Let Chrome create its own profile as the same OS user as the terminal.
         suffix = hashlib.sha256(session.owner.encode()).hexdigest()[:24]
         profile = str(
@@ -175,12 +236,16 @@ async def get_host(session):
         )
         args = [
             binary,
-            "--remote-debugging-pipe",
             f"--user-data-dir={profile}",
             "--no-first-run",
             "--no-default-browser-check",
             "--disable-dev-shm-usage",
         ]
+        if os.name == "nt":
+            host = await windows_host(args, profile, session.fs.home)
+            hosts[key] = host
+            return host
+        args.append("--remote-debugging-pipe")
         if Path("/.dockerenv").exists():
             args.append("--no-sandbox")
         display = None
@@ -279,6 +344,7 @@ class Chrome:
         self.navigation = None
         self.error = ""
         self.vnc_peer = None
+        self.acks = set()
         host.handlers[cdp_session] = self.event
 
     @classmethod
@@ -341,7 +407,18 @@ class Chrome:
 
     def event(self, method, params):
         if method == "Page.screencastFrame":
-            # Chrome applies backpressure until the frame is acknowledged.
+            # A slow viewer must not block Chrome; retain only its newest full frame.
+            task = asyncio.create_task(
+                self.send("Page.screencastFrameAck", {"sessionId": params["sessionId"]})
+            )
+            self.acks.add(task)
+
+            def done(task):
+                self.acks.discard(task)
+                if not task.cancelled():
+                    task.exception()
+
+            task.add_done_callback(done)
             if self.frame.full():
                 self.frame.get_nowait()
             self.frame.put_nowait(params)
@@ -375,7 +452,7 @@ class Chrome:
             "error": self.error,
             "canGoBack": index > 0,
             "canGoForward": index < len(entries) - 1,
-            "transport": "vnc" if self.host.display else "jpeg",
+            "transport": "vnc" if self.host.display else "frames",
         }
 
     async def capture(self):
@@ -384,6 +461,7 @@ class Chrome:
         await self.send("Page.stopScreencast")
         if not self.visible:
             return
+        await self.send("Page.bringToFront")
         await self.send(
             "Page.startScreencast",
             {
@@ -452,25 +530,48 @@ class Chrome:
                 )
         self.peer = ws
         tasks = []
+        binary_frames = False
+        ready = asyncio.Event()
+        ready.set()
+        pending_mouse = {}
+        mouse_changed = asyncio.Event()
         try:
             if state := await self.state():
                 await ws.send_json(state)
             await self.capture()
 
             async def frames():
+                from open_terminal.frames import Frames
+
+                encoder = Frames()
                 while True:
+                    await ready.wait()
                     frame = await self.frame.get()
-                    await ws.send_json(
-                        {
-                            "type": "frame",
-                            "data": frame["data"],
-                            "width": self.width,
-                            "height": self.height,
-                        }
-                    )
-                    await self.send(
-                        "Page.screencastFrameAck", {"sessionId": frame["sessionId"]}
-                    )
+                    if binary_frames:
+                        packet = await asyncio.to_thread(
+                            encoder.jpeg, base64.b64decode(frame["data"]), self.quality
+                        )
+                        if packet is not None:
+                            ready.clear()
+                            await ws.send_bytes(packet)
+                    else:
+                        await ws.send_json(
+                            {
+                                "type": "frame",
+                                "data": frame["data"],
+                                "width": self.width,
+                                "height": self.height,
+                            }
+                        )
+
+            async def mouse_commands():
+                while True:
+                    await mouse_changed.wait()
+                    events = list(pending_mouse.values())
+                    pending_mouse.clear()
+                    mouse_changed.clear()
+                    for event in events:
+                        await self.send("Input.dispatchMouseEvent", event)
 
             async def states():
                 while True:
@@ -480,12 +581,19 @@ class Chrome:
                         await ws.send_json(state)
 
             async def commands():
+                nonlocal binary_frames
                 while True:
                     msg = await ws.receive_json()
                     if not isinstance(msg, dict):
                         continue
                     kind = msg.get("type")
-                    if kind == "navigate":
+                    if kind == "frames":
+                        binary_frames = True
+                        await self.capture()
+                    elif kind == "frameAck":
+                        ready.set()
+                    elif kind == "navigate":
+                        pending_mouse.clear()
                         self.navigate(str(msg.get("url", "")))
                     elif kind in ("back", "forward"):
                         history = await self.send("Page.getNavigationHistory")
@@ -559,7 +667,21 @@ class Chrome:
                             "mouseMoved",
                             "mouseWheel",
                         ):
-                            await self.send("Input.dispatchMouseEvent", event)
+                            if event["type"] in ("mouseMoved", "mouseWheel"):
+                                if event["type"] == "mouseWheel" and (
+                                    previous := pending_mouse.get("mouseWheel")
+                                ):
+                                    event["deltaX"] = previous.get(
+                                        "deltaX", 0
+                                    ) + event.get("deltaX", 0)
+                                    event["deltaY"] = previous.get(
+                                        "deltaY", 0
+                                    ) + event.get("deltaY", 0)
+                                pending_mouse[event["type"]] = event
+                                mouse_changed.set()
+                            else:
+                                pending_mouse.pop("mouseMoved", None)
+                                await self.send("Input.dispatchMouseEvent", event)
                     elif kind == "key":
                         event = {
                             k: msg[k]
@@ -586,6 +708,7 @@ class Chrome:
                 asyncio.create_task(frames()),
                 asyncio.create_task(states()),
                 asyncio.create_task(commands()),
+                asyncio.create_task(mouse_commands()),
             ]
             await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
         except (WebSocketDisconnect, RuntimeError, ValueError, TypeError):
@@ -603,6 +726,9 @@ class Chrome:
                     await self.send("Page.stopScreencast")
 
     async def close(self):
+        for task in list(self.acks):
+            task.cancel()
+        await asyncio.gather(*self.acks, return_exceptions=True)
         if self.navigation:
             self.navigation.cancel()
             await asyncio.gather(self.navigation, return_exceptions=True)

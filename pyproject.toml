@@ -26,6 +26,10 @@ dependencies = [
     "nbclient>=0.10.0",
     "ipykernel>=6.0.0",
     "pywinpty>=2.0.0; sys_platform == 'win32'",
+    "pillow>=10.0.0",
+    "mss>=10.0.0; sys_platform == 'darwin' or sys_platform == 'win32'",
+    "pyautogui>=0.9.54; sys_platform == 'darwin' or sys_platform == 'win32'",
+    "pyperclip>=1.9.0; sys_platform == 'darwin' or sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]
