@@ -56,7 +56,7 @@ def _rotate_log(path: str) -> int:
 class BoundedLogWriter:
     """Rotate on disk; disable logging on I/O failure while draining the child."""
 
-    def __init__(self, file, log_path: str, *, flush_interval: float = 0, flush_buffer: int = 0):
+    def __init__(self, file, log_path: str, *, flush_interval: float = 0, flush_buffer: int = 0, on_flush=None):
         self._file = file
         self._log_path = log_path
         self._bytes_written = 0
@@ -66,6 +66,8 @@ class BoundedLogWriter:
         self._unflushed = 0
         self._last_flush = time.monotonic()
         self._lock = asyncio.Lock()
+        self._on_flush = on_flush
+        self._flush_task = None
 
     async def _disable(self, exc):
         log.warning("Disabling process log %s: %s", self._log_path, exc)
@@ -86,25 +88,41 @@ class BoundedLogWriter:
                     or time.monotonic() - self._last_flush >= self._flush_interval
                     or self._flush_buffer > 0 and self._unflushed >= self._flush_buffer):
                     await self.flush()
+                elif self._flush_task is None:
+                    self._flush_task = asyncio.create_task(self._flush_pending())
             except (OSError, ValueError) as exc:
                 await self._disable(exc)
 
     async def flush(self) -> None:
+        task, self._flush_task = self._flush_task, None
+        if task and task is not asyncio.current_task():
+            task.cancel()
         if self._file is not None:
             try:
                 await self._file.flush()
                 self._unflushed = 0
                 self._last_flush = time.monotonic()
+                if self._on_flush:
+                    self._on_flush()
             except (OSError, ValueError) as exc:
                 await self._disable(exc)
 
     async def close(self):
+        if self._flush_task:
+            self._flush_task.cancel()
+            self._flush_task = None
         file, self._file = self._file, None
         if file is not None:
             try:
                 await file.close()
             except (OSError, ValueError):
                 pass
+
+    async def _flush_pending(self):
+        # A quiet command still needs to publish its last buffered chunk.
+        await asyncio.sleep(self._flush_interval)
+        async with self._lock:
+            await self.flush()
 
     async def _rotate(self):
         await self._file.flush()
@@ -115,7 +133,7 @@ class BoundedLogWriter:
         self.rotated = True
 
 
-async def log_process(background_process) -> None:
+async def log_process(background_process, on_finish=None) -> None:
     writer = None
     runner = background_process.runner
     try:
@@ -124,7 +142,8 @@ async def log_process(background_process) -> None:
                 await aiofiles.os.makedirs(os.path.dirname(background_process.log_path), exist_ok=True)
                 file = await aiofiles.open(background_process.log_path, "a", encoding="utf-8")
                 writer = BoundedLogWriter(file, background_process.log_path,
-                    flush_interval=LOG_FLUSH_INTERVAL, flush_buffer=LOG_FLUSH_BUFFER)
+                    flush_interval=LOG_FLUSH_INTERVAL, flush_buffer=LOG_FLUSH_BUFFER,
+                    on_flush=background_process.notify_output)
                 await file.write(json.dumps({"type": "start", "command": background_process.command, "pid": runner.pid, "ts": time.time()}) + "\n")
                 await writer.flush()
             except OSError as exc:
@@ -145,13 +164,16 @@ async def log_process(background_process) -> None:
             runner.close()
             if background_process.status == "running":
                 background_process.status = "done"
-            background_process.finished_at = time.time()
             if writer:
                 try:
                     await writer.write(json.dumps({"type": "end", "exit_code": background_process.exit_code, "log_rotated": writer.rotated, "ts": time.time()}) + "\n")
                     await writer.flush()
                 finally:
                     await writer.close()
+            background_process.finished_at = time.time()
+            background_process.notify_output()
+            if on_finish:
+                on_finish()
 
 
 def _read_log(path, offset, tail):

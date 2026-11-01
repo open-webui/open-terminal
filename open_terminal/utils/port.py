@@ -2,6 +2,60 @@
 
 import os
 import platform
+import asyncio
+
+import anyio
+
+from open_terminal.utils.limits import run_io
+
+
+_subscribers: set[asyncio.Queue] = set()
+_scanner: asyncio.Task | None = None
+_snapshot: list[dict] | None = None
+
+
+async def watch_listening_ports():
+    """Share one OS scan across viewers; publish only changed snapshots."""
+    global _scanner, _snapshot
+    queue = asyncio.Queue(maxsize=1)
+    _subscribers.add(queue)
+    if _snapshot is not None:
+        queue.put_nowait(_snapshot)
+
+    async def scan():
+        global _snapshot
+        try:
+            while True:
+                ports = await run_io(detect_listening_ports)
+                if ports != _snapshot:
+                    _snapshot = ports
+                    for subscriber in _subscribers:
+                        if subscriber.full():
+                            subscriber.get_nowait()
+                        subscriber.put_nowait(ports)
+                await asyncio.sleep(5)
+        except Exception as exc:
+            for subscriber in _subscribers:
+                if subscriber.full():
+                    subscriber.get_nowait()
+                subscriber.put_nowait(exc)
+
+    if _scanner is None:
+        _scanner = asyncio.create_task(scan())
+    try:
+        while True:
+            snapshot = await queue.get()
+            if isinstance(snapshot, Exception):
+                raise snapshot
+            yield snapshot
+    finally:
+        _subscribers.discard(queue)
+        if not _subscribers:
+            scanner, _scanner = _scanner, None
+            _snapshot = None
+            with anyio.CancelScope(shield=True):
+                scanner.cancel()
+                await asyncio.gather(scanner, return_exceptions=True)
 
 
 def detect_listening_ports() -> list[dict]:

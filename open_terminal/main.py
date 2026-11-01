@@ -39,7 +39,7 @@ from open_terminal.utils.fs import UserFS, FullFileResponse as FileResponse, Tem
 from open_terminal.utils.limits import (CHUNK_SIZE, NormalizeNullQueryMiddleware, run_io, run_worker)
 from open_terminal.utils.file_compare import CompareRequest, run_comparison
 from open_terminal.utils.git import GitRepository
-from open_terminal.utils.events import filesystem_events
+from open_terminal.utils.events import system_events
 from open_terminal.utils.search import search_entries, matching_files, ranked_page
 from open_terminal.utils.skills import join_skill_path, list_skill_resources, parse_skill_frontmatter
 
@@ -354,9 +354,23 @@ class BackgroundProcess:
     log_path: Optional[str] = field(default=None, repr=False)
     user_id: str = ""
     session_id: str = ""
+    changed: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
+
+    def notify_output(self):
+        changed, self.changed = self.changed, asyncio.Event()
+        changed.set()
 
 
 _processes: dict[str, BackgroundProcess] = {}
+_process_list_changed = asyncio.Event()
+
+
+def _notify_process_list():
+    global _process_list_changed
+    changed, _process_list_changed = _process_list_changed, asyncio.Event()
+    changed.set()
+
+
 _EXPIRY_SECONDS = 300  # auto-clean finished processes after 5 min
 
 
@@ -396,7 +410,7 @@ def _set_session_cwd(session_id: str | None, path: str, fs: "UserFS"):
         _session_cwds[(fs.home, session_id)] = (path, time.time())
 
 
-from open_terminal.utils.log import log_process, log_response
+from open_terminal.utils.log import log_process, log_response, read_log
 
 
 
@@ -407,6 +421,7 @@ def _cleanup_expired():
     for process in finished:
         if now - process.finished_at > _EXPIRY_SECONDS:
             _processes.pop(process.id, None)
+            _notify_process_list()
 
 
 def _cleanup_log_files(active_paths):
@@ -484,6 +499,9 @@ async def get_config():
             "terminal": ENABLE_TERMINAL,
             "notebooks": ENABLE_NOTEBOOKS,
             "system": ENABLE_SYSTEM_PROMPT,
+            "git": shutil.which("git") is not None,
+            "events": True,
+            "execute_stream": True,
         },
     }
 
@@ -672,8 +690,30 @@ async def list_files(
     return {"dir": target, "writable": await fs.is_writable(target), "entries": entries}
 
 
-@app.websocket("/files/events")
-async def ws_filesystem_events(ws: WebSocket):
+@app.websocket("/events")
+async def ws_events(ws: WebSocket):
+    payload = await _authenticate_websocket(ws)
+    if payload is None:
+        return
+    request = Request({**ws.scope, "type": "http", "method": "GET"})
+    try:
+        fs = await asyncio.to_thread(get_filesystem, request)
+        session_id = ws.headers.get("x-session-id", payload.get("chat_id", ""))
+        async def ports():
+            previous = None
+            async for snapshot in watch_listening_ports():
+                visible = await _visible_ports(request, snapshot)
+                visible = [{k: v for k, v in port.items() if k != "uid"} for port in visible]
+                if visible != previous:
+                    yield visible
+                    previous = visible
+
+        await system_events(ws, fs, _get_session_cwd(session_id, fs), ports)
+    except HTTPException:
+        await ws.close(code=4003, reason="Filesystem access denied")
+
+
+async def _authenticate_websocket(ws: WebSocket):
     await ws.accept()
     try:
         payload = await asyncio.wait_for(ws.receive_json(), timeout=10)
@@ -685,16 +725,10 @@ async def ws_filesystem_events(ws: WebSocket):
     except (TimeoutError, ValueError, KeyError):
         await ws.close(code=4001, reason="Auth timeout or invalid payload")
         return
-    request = Request({**ws.scope, "type": "http", "method": "GET"})
-    try:
-        fs = await asyncio.to_thread(get_filesystem, request)
-        session_id = ws.headers.get("x-session-id", payload.get("chat_id", ""))
-        if not isinstance(session_id, str):
-            await ws.close(code=4000, reason="Invalid session")
-            return
-        await filesystem_events(ws, fs, _get_session_cwd(session_id, fs))
-    except HTTPException:
-        await ws.close(code=4003, reason="Filesystem access denied")
+    if not isinstance(ws.headers.get("x-session-id", payload.get("chat_id", "")), str):
+        await ws.close(code=4000, reason="Invalid session")
+        return
+    return payload
 
 
 @app.get("/git/status", dependencies=[Depends(verify_api_key)], include_in_schema=False)
@@ -1616,6 +1650,96 @@ async def list_processes(http_request: Request):
     ]
 
 
+async def _stream_websocket(ws, send):
+    """Stop delivery on disconnect without stopping the underlying command."""
+    async def receive():
+        while (await ws.receive())["type"] != "websocket.disconnect":
+            pass
+
+    tasks = [asyncio.create_task(send()), asyncio.create_task(receive())]
+    close_code = 1000
+    try:
+        done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        for task in done:
+            task.result()
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        close_code = 1011
+        log.exception("Command stream failed")
+    finally:
+        import anyio
+        with anyio.CancelScope(shield=True):
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+        try:
+            await ws.close(code=close_code)
+        except (WebSocketDisconnect, RuntimeError):
+            pass
+
+
+async def _command_socket_request(ws):
+    payload = await _authenticate_websocket(ws)
+    if payload is None:
+        return None
+    headers = list(ws.scope["headers"])
+    if "x-session-id" not in ws.headers:
+        headers.append((b"x-session-id", payload.get("chat_id", "").encode()))
+    return Request({**ws.scope, "type": "http", "method": "GET", "headers": headers})
+
+
+@app.websocket("/execute")
+async def stream_processes(ws: WebSocket):
+    request = await _command_socket_request(ws)
+    if request is None:
+        return
+
+    async def send():
+        previous = None
+        while True:
+            changed = _process_list_changed
+            processes = await list_processes(request)
+            if processes != previous:
+                await ws.send_json(processes)
+                previous = processes
+            await changed.wait()
+
+    await _stream_websocket(ws, send)
+
+
+@app.websocket("/execute/{process_id}/status")
+async def stream_process_output(ws: WebSocket, process_id: str,
+                                offset: int = Query(0, ge=0),
+                                tail: int = Query(1000, ge=1, le=1000)):
+    request = await _command_socket_request(ws)
+    if request is None:
+        return
+    try:
+        process = _get_process(process_id, request)
+    except HTTPException:
+        await ws.close(code=4004, reason="Process not found")
+        return
+
+    async def send():
+        cursor = offset
+        while True:
+            changed = process.changed
+            finished = process.finished_at is not None
+            output, next_offset, truncated = await read_log(process.log_path, cursor, tail)
+            await ws.send_json({"id": process.id, "command": process.command,
+                                "status": process.status if finished else "running",
+                                "exit_code": process.exit_code if finished else None,
+                                "output": output, "next_offset": next_offset,
+                                "truncated": truncated})
+            cursor = next_offset
+            if finished:
+                return
+            await changed.wait()
+
+    await _stream_websocket(ws, send)
+
+
 @app.post(
     "/execute",
     operation_id="run_command",
@@ -1656,8 +1780,9 @@ async def execute(
         user_id=http_request.headers.get("x-user-id", ""),
         session_id=http_request.headers.get("x-session-id", ""),
     )
-    background_process.log_task = asyncio.create_task(log_process(background_process))
+    background_process.log_task = asyncio.create_task(log_process(background_process, on_finish=_notify_process_list))
     _processes[process_id] = background_process
+    _notify_process_list()
 
     if wait is None and EXECUTE_TIMEOUT:
         wait = EXECUTE_TIMEOUT
@@ -1796,11 +1921,12 @@ async def kill_process(
 # Port detection & proxy
 # ---------------------------------------------------------------------------
 
-from open_terminal.utils.port import detect_listening_ports, get_descendant_pids
+from open_terminal.utils.port import detect_listening_ports, get_descendant_pids, watch_listening_ports
 
 
-async def _visible_ports(request: Request) -> list[dict]:
-    all_ports = await run_io(detect_listening_ports)
+async def _visible_ports(request: Request, all_ports=None) -> list[dict]:
+    if all_ports is None:
+        all_ports = await run_io(detect_listening_ports)
 
     try:
         fs = get_filesystem(request)
@@ -2241,17 +2367,8 @@ if ENABLE_TERMINAL:
             await ws.close(code=4004, reason="Session has ended")
             return
 
-        await ws.accept()
-
-        # First-message authentication
-        try:
-            msg = await asyncio.wait_for(ws.receive_text(), timeout=10.0)
-            payload = json.loads(msg)
-            if not isinstance(payload, dict) or payload.get("type") != "auth" or (API_KEY and not matches_api_key(payload.get("token"))):
-                await ws.close(code=4001, reason="Invalid API key")
-                return
-        except (asyncio.TimeoutError, ValueError, AttributeError, KeyError, WebSocketDisconnect):
-            await ws.close(code=4001, reason="Auth timeout or invalid payload")
+        payload = await _authenticate_websocket(ws)
+        if payload is None:
             return
         if (
             session["user_id"] != ws.headers.get("x-user-id", "")
