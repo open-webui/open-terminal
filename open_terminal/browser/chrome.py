@@ -276,7 +276,13 @@ class Chrome:
             self.state_changed.set()
 
     async def state(self):
-        history = await self.send("Page.getNavigationHistory")
+        try:
+            history = await self.send("Page.getNavigationHistory")
+        except RuntimeError as exc:
+            # Chrome briefly detaches the renderer during cross-site navigation.
+            if str(exc) == "Not attached to an active page":
+                return None
+            raise
         entries, index = history["entries"], history["currentIndex"]
         entry = entries[index] if entries else {}
         url = entry.get("url", "")
@@ -317,7 +323,8 @@ class Chrome:
         self.peer = ws
         tasks = []
         try:
-            await ws.send_json(await self.state())
+            if state := await self.state():
+                await ws.send_json(state)
             await self.capture()
 
             async def frames():
@@ -339,7 +346,8 @@ class Chrome:
                 while True:
                     await self.state_changed.wait()
                     self.state_changed.clear()
-                    await ws.send_json(await self.state())
+                    if state := await self.state():
+                        await ws.send_json(state)
 
             async def commands():
                 while True:
