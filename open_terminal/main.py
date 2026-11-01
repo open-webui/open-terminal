@@ -39,6 +39,7 @@ from open_terminal.utils.fs import UserFS, FullFileResponse as FileResponse, Tem
 from open_terminal.utils.limits import (CHUNK_SIZE, NormalizeNullQueryMiddleware, run_io, run_worker)
 from open_terminal.utils.file_compare import CompareRequest, run_comparison
 from open_terminal.utils.git import GitRepository
+from open_terminal.utils.events import filesystem_events
 from open_terminal.utils.search import search_entries, matching_files, ranked_page
 from open_terminal.utils.skills import join_skill_path, list_skill_resources, parse_skill_frontmatter
 
@@ -669,6 +670,31 @@ async def list_files(
         raise HTTPException(status_code=404, detail="Directory not found")
     entries = await fs.listdir(target)
     return {"dir": target, "writable": await fs.is_writable(target), "entries": entries}
+
+
+@app.websocket("/files/events")
+async def ws_filesystem_events(ws: WebSocket):
+    await ws.accept()
+    try:
+        payload = await asyncio.wait_for(ws.receive_json(), timeout=10)
+        if not isinstance(payload, dict) or payload.get("type") != "auth" or not matches_api_key(payload.get("token")):
+            await ws.close(code=4001, reason="Invalid API key")
+            return
+    except WebSocketDisconnect:
+        return
+    except (TimeoutError, ValueError, KeyError):
+        await ws.close(code=4001, reason="Auth timeout or invalid payload")
+        return
+    request = Request({**ws.scope, "type": "http", "method": "GET"})
+    try:
+        fs = await asyncio.to_thread(get_filesystem, request)
+        session_id = ws.headers.get("x-session-id", payload.get("chat_id", ""))
+        if not isinstance(session_id, str):
+            await ws.close(code=4000, reason="Invalid session")
+            return
+        await filesystem_events(ws, fs, _get_session_cwd(session_id, fs))
+    except HTTPException:
+        await ws.close(code=4003, reason="Filesystem access denied")
 
 
 @app.get("/git/status", dependencies=[Depends(verify_api_key)], include_in_schema=False)
