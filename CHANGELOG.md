@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.14.8] - 2026-11-01
+
+### Added
+
+- Added support for Open WebUI's Git panel when browsing a Git repository, including its subfolders. The panel can show the current branch, changed files, added and removed lines, and commit history. Requires an updated Open WebUI.
+- From the Git panel, you can select files to commit, review or discard edits, undo the last commit while keeping your files, switch or manage branches, and create separate working folders for other branches. You can also set changes aside and restore them later, download remote changes, and upload your commits.
+- Added GitHub pull request controls for viewing changes, comments, reviews, and checks; creating and editing pull requests; leaving comments and reviews; and merging, closing, or reopening them. These controls require GitHub CLI to be installed and signed in on the machine running Open Terminal.
+
+### Fixed
+
+- When several terminal tabs are open in the same chat, the assistant now reads output and sends input to the active terminal. When no terminal is visible, it uses the last-used terminal that is still connected. Previously, it always used the newest terminal, even after you switched to another tab. Requires an updated Open WebUI.
+
 ## [0.14.7] - 2026-10-31
 
 ### Added

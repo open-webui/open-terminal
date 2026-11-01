@@ -264,7 +264,7 @@ class GitRepository:
         elif number <= 0:
             raise HTTPException(400, "Select a pull request")
         elif view == "view":
-            args = ["pr", "view", str(number), "--json", fields + ",comments,reviews,statusCheckRollup"]
+            args = ["pr", "view", str(number), "--json", fields + ",comments,reviews,statusCheckRollup,reviewRequests,assignees,labels"]
         elif view == "diff":
             args = ["pr", "diff", str(number), "--color=never"]
         elif view == "checks":
