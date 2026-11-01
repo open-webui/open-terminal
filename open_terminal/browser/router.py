@@ -620,20 +620,23 @@ async def screenshot(
         return await image(chrome)
 
 
+ActionType = Literal[
+    "navigate",
+    "back",
+    "forward",
+    "reload",
+    "click",
+    "double_click",
+    "move",
+    "drag",
+    "scroll",
+    "type",
+    "key",
+]
+
+
 class Action(BaseModel):
-    action: Literal[
-        "navigate",
-        "back",
-        "forward",
-        "reload",
-        "click",
-        "double_click",
-        "move",
-        "drag",
-        "scroll",
-        "type",
-        "key",
-    ]
+    action: ActionType
     session_id: str | None = Field(default=None, max_length=128)
     ref: str | None = Field(
         default=None, pattern=r"^@?e[0-9]+$", max_length=64,
@@ -674,6 +677,28 @@ class Action(BaseModel):
         if self.action == "navigate" and not self.url:
             raise ValueError("Navigate requires an HTTP or HTTPS URL")
         return self
+
+
+class ActionRequest(Action):
+    action: ActionType | None = None
+    actions: list[Action] | None = Field(
+        default=None,
+        min_length=1,
+        max_length=50,
+        description="Actions to run in order in one tab, with one final accessibility snapshot.",
+    )
+
+    @model_validator(mode="after")
+    def required_fields(self):
+        if self.actions is not None:
+            if self.model_fields_set - {"actions", "session_id"}:
+                raise ValueError("Provide actions without single-action fields")
+            if any(item.session_id is not None for item in self.actions):
+                raise ValueError("Set session_id only at the top level of a batch")
+            return self
+        if self.action is None:
+            raise ValueError("Provide an action or an actions list")
+        return super().required_fields()
 
 
 def key_event(value):
@@ -736,116 +761,150 @@ def key_event(value):
     return event
 
 
+async def perform_action(chrome, body):
+    if body.ref:
+        try:
+            node = chrome.ref_node(body.ref)
+            if body.action in ("type", "key"):
+                await chrome.send("DOM.focus", node)
+            else:
+                body.x, body.y = await chrome.ref_position(node)
+        except (ValueError, RuntimeError) as exc:
+            raise HTTPException(409, f"Element ref unavailable: {exc}") from exc
+    if body.action == "navigate":
+        chrome.navigate(valid_url(body.url))
+        await chrome.navigation
+        if chrome.error:
+            raise HTTPException(502, chrome.error)
+    elif body.action in ("back", "forward"):
+        history = await chrome.send("Page.getNavigationHistory")
+        index = history["currentIndex"] + (-1 if body.action == "back" else 1)
+        if 0 <= index < len(history["entries"]):
+            await chrome.send(
+                "Page.navigateToHistoryEntry",
+                {"entryId": history["entries"][index]["id"]},
+            )
+    elif body.action == "reload":
+        await chrome.send("Page.reload")
+    elif body.action == "type":
+        if body.ref:
+            await chrome.send("Input.dispatchKeyEvent", {"type": "keyDown", "key": "a", "modifiers": 2, "commands": ["selectAll"]})
+            await chrome.send("Input.dispatchKeyEvent", {"type": "keyUp", "key": "a", "modifiers": 2})
+        await chrome.send("Input.insertText", {"text": body.text})
+    elif body.action == "key":
+        event = key_event(body.key)
+        await chrome.send("Input.dispatchKeyEvent", {"type": "keyDown", **event})
+        await chrome.send(
+            "Input.dispatchKeyEvent",
+            {
+                "type": "keyUp",
+                **{k: v for k, v in event.items() if k not in ("text", "commands")},
+            },
+        )
+    elif body.action == "scroll":
+        delta = body.amount * (-1 if body.direction in ("up", "left") else 1)
+        await chrome.send(
+            "Input.dispatchMouseEvent",
+            {
+                "type": "mouseWheel",
+                "x": body.x if body.x is not None else chrome.width // 2,
+                "y": body.y if body.y is not None else chrome.height // 2,
+                "deltaX": delta if body.direction in ("left", "right") else 0,
+                "deltaY": delta if body.direction in ("up", "down") else 0,
+            },
+        )
+    else:
+        await chrome.send(
+            "Input.dispatchMouseEvent",
+            {"type": "mouseMoved", "x": body.x, "y": body.y},
+        )
+        if body.action != "move":
+            for count in range(1, 3 if body.action == "double_click" else 2):
+                try:
+                    await chrome.send(
+                        "Input.dispatchMouseEvent",
+                        {
+                            "type": "mousePressed",
+                            "x": body.x,
+                            "y": body.y,
+                            "button": body.button,
+                            "clickCount": count,
+                        },
+                    )
+                    if body.action == "drag":
+                        await chrome.send(
+                            "Input.dispatchMouseEvent",
+                            {
+                                "type": "mouseMoved",
+                                "x": body.to_x,
+                                "y": body.to_y,
+                                "button": body.button,
+                                "buttons": {"left": 1, "right": 2, "middle": 4}[
+                                    body.button
+                                ],
+                            },
+                        )
+                finally:
+                    await chrome.send(
+                        "Input.dispatchMouseEvent",
+                        {
+                            "type": "mouseReleased",
+                            "x": body.to_x if body.action == "drag" else body.x,
+                            "y": body.to_y if body.action == "drag" else body.y,
+                            "button": body.button,
+                            "clickCount": count,
+                        },
+                    )
+    await asyncio.sleep(0.1)
+
+
 @router.post(
     "/action",
     operation_id="browser_action",
     dependencies=[Depends(verify_api_key)],
     summary="Interact with the user's Browser tab",
 )
-async def action(request: Request, body: Action):
+async def action(request: Request, body: ActionRequest):
     """Navigate, click, drag, scroll, type literal text, or press a key in the
     existing Chrome browser tab using refs from browser_snapshot. Typing with a ref
     replaces that input's contents; without a ref it types into the focused element.
     Pixel coordinates from browser_screenshot are also supported for visual targets.
-    Defaults to the active tab, or the last-used browser tab when hidden. Accepts
-    a session_id from browser_tabs. Returns the updated accessibility snapshot.
+    Send an actions list to run up to 50 actions in order with one accessibility
+    snapshot at the end. A single action object is also accepted. Prefer short
+    batches of known actions, such as filling fields from the current snapshot.
+    Observe again after navigation or other uncertain UI changes; refs may expire.
+    Defaults to the active tab, or the last-used browser tab when hidden. Set a
+    session_id from browser_tabs at the top level to target one tab for the batch.
+    Batches stop on failure and report completed_actions and failed_action_index
+    (zero-based, null if only the final snapshot failed). Completed actions are
+    not rolled back; the failed action may also have taken effect. Inspect the
+    page before retrying, and do not blindly replay the batch.
     """
+    actions = body.actions if body.actions is not None else [body]
     async with browser_page(request, body.session_id) as chrome:
-        for x, y in ((body.x, body.y), (body.to_x, body.to_y)):
-            if x is not None and (x >= chrome.width or y is None or y >= chrome.height):
-                raise HTTPException(400, "Coordinates are outside the Browser viewport")
-        if body.ref:
-            try:
-                node = chrome.ref_node(body.ref)
-                if body.action in ("type", "key"):
-                    await chrome.send("DOM.focus", node)
-                else:
-                    body.x, body.y = await chrome.ref_position(node)
-            except (ValueError, RuntimeError) as exc:
-                raise HTTPException(409, f"Element ref unavailable: {exc}") from exc
-        if body.action == "navigate":
-            chrome.navigate(valid_url(body.url))
-            await chrome.navigation
-            if chrome.error:
-                raise HTTPException(502, chrome.error)
-        elif body.action in ("back", "forward"):
-            history = await chrome.send("Page.getNavigationHistory")
-            index = history["currentIndex"] + (-1 if body.action == "back" else 1)
-            if 0 <= index < len(history["entries"]):
-                await chrome.send(
-                    "Page.navigateToHistoryEntry",
-                    {"entryId": history["entries"][index]["id"]},
-                )
-        elif body.action == "reload":
-            await chrome.send("Page.reload")
-        elif body.action == "type":
-            if body.ref:
-                await chrome.send("Input.dispatchKeyEvent", {"type": "keyDown", "key": "a", "modifiers": 2, "commands": ["selectAll"]})
-                await chrome.send("Input.dispatchKeyEvent", {"type": "keyUp", "key": "a", "modifiers": 2})
-            await chrome.send("Input.insertText", {"text": body.text})
-        elif body.action == "key":
-            event = key_event(body.key)
-            await chrome.send("Input.dispatchKeyEvent", {"type": "keyDown", **event})
-            await chrome.send(
-                "Input.dispatchKeyEvent",
+        # Reject invalid input anywhere in the batch before acting on the page.
+        for item in actions:
+            for x, y in ((item.x, item.y), (item.to_x, item.to_y)):
+                if x is not None and (x >= chrome.width or y is None or y >= chrome.height):
+                    raise HTTPException(400, "Coordinates are outside the Browser viewport")
+            if item.action == "navigate":
+                valid_url(item.url)
+            elif item.action == "key":
+                key_event(item.key)
+        completed = 0
+        try:
+            for item in actions:
+                await perform_action(chrome, item)
+                completed += 1
+            return await chrome.snapshot()
+        except (HTTPException, OSError, RuntimeError, ValueError) as exc:
+            if body.actions is None:
+                raise
+            raise HTTPException(
+                exc.status_code if isinstance(exc, HTTPException) else 502,
                 {
-                    "type": "keyUp",
-                    **{k: v for k, v in event.items() if k not in ("text", "commands")},
+                    "completed_actions": completed,
+                    "failed_action_index": completed if completed < len(actions) else None,
+                    "error": exc.detail if isinstance(exc, HTTPException) else str(exc),
                 },
-            )
-        elif body.action == "scroll":
-            delta = body.amount * (-1 if body.direction in ("up", "left") else 1)
-            await chrome.send(
-                "Input.dispatchMouseEvent",
-                {
-                    "type": "mouseWheel",
-                    "x": body.x if body.x is not None else chrome.width // 2,
-                    "y": body.y if body.y is not None else chrome.height // 2,
-                    "deltaX": delta if body.direction in ("left", "right") else 0,
-                    "deltaY": delta if body.direction in ("up", "down") else 0,
-                },
-            )
-        else:
-            await chrome.send(
-                "Input.dispatchMouseEvent",
-                {"type": "mouseMoved", "x": body.x, "y": body.y},
-            )
-            if body.action != "move":
-                for count in range(1, 3 if body.action == "double_click" else 2):
-                    try:
-                        await chrome.send(
-                            "Input.dispatchMouseEvent",
-                            {
-                                "type": "mousePressed",
-                                "x": body.x,
-                                "y": body.y,
-                                "button": body.button,
-                                "clickCount": count,
-                            },
-                        )
-                        if body.action == "drag":
-                            await chrome.send(
-                                "Input.dispatchMouseEvent",
-                                {
-                                    "type": "mouseMoved",
-                                    "x": body.to_x,
-                                    "y": body.to_y,
-                                    "button": body.button,
-                                    "buttons": {"left": 1, "right": 2, "middle": 4}[
-                                        body.button
-                                    ],
-                                },
-                            )
-                    finally:
-                        await chrome.send(
-                            "Input.dispatchMouseEvent",
-                            {
-                                "type": "mouseReleased",
-                                "x": body.to_x if body.action == "drag" else body.x,
-                                "y": body.to_y if body.action == "drag" else body.y,
-                                "button": body.button,
-                                "clickCount": count,
-                            },
-                        )
-        await asyncio.sleep(0.1)
-        return await chrome.snapshot()
+            ) from exc

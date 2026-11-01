@@ -329,8 +329,11 @@ async def screenshot(request: Request, fs: UserFS = Depends(get_filesystem)):
         return Response(await desktop.screenshot(), media_type="image/png")
 
 
+ActionType = Literal["click", "double_click", "move", "drag", "scroll", "type", "key"]
+
+
 class Action(BaseModel):
-    action: Literal["click", "double_click", "move", "drag", "scroll", "type", "key"]
+    action: ActionType
     x: int | None = Field(default=None, ge=0, le=32767)
     y: int | None = Field(default=None, ge=0, le=32767)
     to_x: int | None = Field(default=None, ge=0, le=32767)
@@ -363,82 +366,132 @@ class Action(BaseModel):
         return self
 
 
+class ActionRequest(Action):
+    action: ActionType | None = None
+    actions: list[Action] | None = Field(
+        default=None,
+        min_length=1,
+        max_length=50,
+        description="Desktop actions to execute in order, with one screenshot at the end.",
+    )
+
+    @model_validator(mode="after")
+    def required_fields(self):
+        if self.actions is not None:
+            if self.model_fields_set - {"actions"}:
+                raise ValueError("Provide actions without single-action fields")
+            return self
+        if self.action is None:
+            raise ValueError("Provide an action or an actions list")
+        return super().required_fields()
+
+
+async def perform_action(desktop, body):
+    if desktop.transport == "frames":
+        try:
+            await asyncio.to_thread(desktop.perform, body)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        await asyncio.sleep(0.1)
+        return
+    button = str({"left": 1, "middle": 2, "right": 3}[body.button])
+    if body.x is not None:
+        await desktop.run(
+            "xdotool", "mousemove", "--sync", str(body.x), str(body.y)
+        )
+    if body.action in ("click", "double_click"):
+        await desktop.run(
+            "xdotool",
+            "click",
+            "--repeat",
+            "2" if body.action == "double_click" else "1",
+            "--delay",
+            "100",
+            button,
+        )
+    elif body.action == "drag":
+        try:
+            await desktop.run(
+                "xdotool",
+                "mousedown",
+                button,
+                "mousemove",
+                "--sync",
+                str(body.to_x),
+                str(body.to_y),
+            )
+        finally:
+            await desktop.run("xdotool", "mouseup", button)
+    elif body.action == "scroll":
+        await desktop.run(
+            "xdotool",
+            "click",
+            "--repeat",
+            str(body.amount),
+            "--delay",
+            "50",
+            str({"up": 4, "down": 5, "left": 6, "right": 7}[body.direction]),
+        )
+    elif body.action == "type":
+        for selection in ("clipboard", "primary"):
+            await desktop.run(
+                "xclip", "-selection", selection, input=body.text.encode()
+            )
+        await desktop.run("xdotool", "key", "--clearmodifiers", "shift+Insert")
+    elif body.action == "key":
+        await desktop.run("xdotool", "key", "--clearmodifiers", body.key)
+    await asyncio.sleep(0.15)
+
+
 @router.post(
     "/action",
     operation_id="desktop_action",
     summary="Interact with the workspace desktop",
     dependencies=[Depends(verify_api_key)],
 )
-async def action(request: Request, body: Action, fs: UserFS = Depends(get_filesystem)):
+async def action(
+    request: Request, body: ActionRequest, fs: UserFS = Depends(get_filesystem)
+):
     """Click, double-click, move, drag, scroll, type text or press a key combination.
-    Returns a screenshot after the action. Use desktop_screenshot first and work
-    from that image's pixel coordinates. Native macOS/Windows share the logged-in desktop.
-    Type pastes literal text into the focused application.
+    Send an actions list to execute up to 50 actions in order with one screenshot
+    at the end. A single action object is also accepted. Prefer short batches of
+    known actions; observe again after navigation or other uncertain UI changes.
+    Use desktop_screenshot first and work from that image's pixel coordinates.
+    Native macOS/Windows share the logged-in desktop. Type pastes literal text.
+    Batches stop on failure and report completed_actions and failed_action_index
+    (zero-based, null if only the final screenshot failed). Completed actions are
+    not rolled back; the failed action may also have taken effect. Inspect the
+    desktop before retrying, and do not blindly replay the batch.
     """
     desktop = await get_desktop(request, fs)
+    actions = body.actions if body.actions is not None else [body]
     async with desktop.actions:
-        for x, y in ((body.x, body.y), (body.to_x, body.to_y)):
-            if x is not None and (
-                x >= desktop.width or y is None or y >= desktop.height
-            ):
-                raise HTTPException(
-                    400, "Coordinates are outside the current desktop screenshot"
-                )
-        if desktop.transport == "frames":
-            try:
-                await asyncio.to_thread(desktop.perform, body)
-            except ValueError as exc:
-                raise HTTPException(400, str(exc)) from exc
-            await asyncio.sleep(0.1)
+        # Reject invalid coordinates anywhere in the batch before sending input.
+        for item in actions:
+            for x, y in ((item.x, item.y), (item.to_x, item.to_y)):
+                if x is not None and (
+                    x >= desktop.width or y is None or y >= desktop.height
+                ):
+                    raise HTTPException(
+                        400, "Coordinates are outside the current desktop screenshot"
+                    )
+        completed = 0
+        try:
+            for item in actions:
+                await perform_action(desktop, item)
+                completed += 1
             return Response(await desktop.screenshot(), media_type="image/png")
-        button = str({"left": 1, "middle": 2, "right": 3}[body.button])
-        if body.x is not None:
-            await desktop.run(
-                "xdotool", "mousemove", "--sync", str(body.x), str(body.y)
-            )
-        if body.action in ("click", "double_click"):
-            await desktop.run(
-                "xdotool",
-                "click",
-                "--repeat",
-                "2" if body.action == "double_click" else "1",
-                "--delay",
-                "100",
-                button,
-            )
-        elif body.action == "drag":
-            try:
-                await desktop.run(
-                    "xdotool",
-                    "mousedown",
-                    button,
-                    "mousemove",
-                    "--sync",
-                    str(body.to_x),
-                    str(body.to_y),
-                )
-            finally:
-                await desktop.run("xdotool", "mouseup", button)
-        elif body.action == "scroll":
-            await desktop.run(
-                "xdotool",
-                "click",
-                "--repeat",
-                str(body.amount),
-                "--delay",
-                "50",
-                str({"up": 4, "down": 5, "left": 6, "right": 7}[body.direction]),
-            )
-        elif body.action == "type":
-            for selection in ("clipboard", "primary"):
-                await desktop.run(
-                    "xclip", "-selection", selection, input=body.text.encode()
-                )
-            await desktop.run("xdotool", "key", "--clearmodifiers", "shift+Insert")
-        elif body.action == "key":
-            await desktop.run("xdotool", "key", "--clearmodifiers", body.key)
-        await asyncio.sleep(0.15)
-        return Response(await desktop.screenshot(), media_type="image/png")
+        except (HTTPException, OSError, RuntimeError, ValueError) as exc:
+            if body.actions is None:
+                raise
+            raise HTTPException(
+                exc.status_code if isinstance(exc, HTTPException) else 502,
+                {
+                    "completed_actions": completed,
+                    "failed_action_index": completed if completed < len(actions) else None,
+                    "error": exc.detail if isinstance(exc, HTTPException) else str(exc),
+                },
+            ) from exc
 
 
 @router.websocket("/stream")

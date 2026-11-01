@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.15.3] - 2026-11-02
+
+### Added
+
+- Assistants can now click a desktop field, enter text, and press Enter in one sequence, receiving a screenshot after the last step instead of after each action.
+- Assistants can now fill several fields in the same Browser tab in one sequence, receiving the updated page contents after the last step. Connected apps must support sending actions together to use these Browser and Desktop improvements.
+- Browser and Desktop sequences stop when a step fails and report how many earlier steps completed. Completed steps are not undone, and assistants can still perform one action at a time.
+
 ## [0.15.2] - 2026-11-02
 
 ### Added
