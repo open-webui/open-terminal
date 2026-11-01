@@ -66,6 +66,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     xauth xdotool xclip scrot libreoffice libreoffice-gtk3 \
     && rm -rf /var/lib/apt/lists/*
 
+# Debian's launcher resets CHROMIUM_FLAGS before reading this directory.
+RUN printf '%s\n' \
+    'case "${OPEN_TERMINAL_BROWSER_NO_SANDBOX:-false}" in' \
+    '  [tT][rR][uU][eE]|1|[yY][eE][sS]) export CHROMIUM_FLAGS="$CHROMIUM_FLAGS --no-sandbox" ;;' \
+    'esac' > /etc/chromium.d/open-terminal
+
 COPY . .
 # Create a capability-bearing Python copy for the server process only.
 # The system python3 stays clean so user-spawned Python processes remain

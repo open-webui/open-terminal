@@ -234,6 +234,12 @@ and advertise them as disabled in `/api/config`. Values `false`, `0`, and `no`
 (case-insensitive) disable the feature. Restart the server after changing these settings.
 Desktop support still requires its platform dependencies to be available.
 
+Chromium's sandbox is enabled by default, including in Docker. For a deployment
+that cannot support it, set `OPEN_TERMINAL_BROWSER_NO_SANDBOX=true` and restart the
+server. This applies to both managed Browser tabs and Chromium launched from the
+Linux Desktop in the Docker image. It disables Chromium's sandbox; the container's isolation remains
+unchanged. Values `true`, `1`, and `yes` (case-insensitive) enable this override.
+
 > [!TIP]
 > Use the system config at `/etc/open-terminal/config.toml` to set site-wide defaults for host and port, and the user config for personal settings like the API key — this keeps the key out of `ps` / `htop`.
 

@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.15.2] - 2026-11-02
+
+### Added
+
+- Added `OPEN_TERMINAL_BROWSER_NO_SANDBOX=true` for deployments where Chromium cannot start with its sandbox enabled. The same setting applies to Browser tabs and Chromium opened from the Linux Desktop in the Docker image. Restart or redeploy Open Terminal after changing it. This setting turns off Chromium's built-in sandbox protection.
+
+### Fixed
+
+- Chrome startup failures on Linux and Mac now show the actual error, such as a locked browser profile or an unavailable sandbox, instead of the generic message asking you to check the installation, user, and sandbox support. The error is also saved in the server logs.
+
+### Security
+
+- Chromium's sandbox now stays enabled by default in Docker. Previously, Open Terminal automatically disabled it when it detected Docker. Existing deployments that cannot run sandboxed Chromium must now explicitly set `OPEN_TERMINAL_BROWSER_NO_SANDBOX=true` to keep launching the browser.
+
 ## [0.15.1] - 2026-11-02
 
 ### Added

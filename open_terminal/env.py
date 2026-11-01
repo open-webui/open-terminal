@@ -144,6 +144,10 @@ ENABLE_BROWSER = os.environ.get(
     str(config.get("enable_browser", True)),
 ).lower() not in ("false", "0", "no")
 
+BROWSER_NO_SANDBOX = os.environ.get(
+    "OPEN_TERMINAL_BROWSER_NO_SANDBOX", "false"
+).lower() in ("true", "1", "yes")
+
 ENABLE_DESKTOP = os.environ.get(
     "OPEN_TERMINAL_ENABLE_DESKTOP",
     str(config.get("enable_desktop", True)),

@@ -24,7 +24,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field, model_validator
 
 from open_terminal.dependencies import get_filesystem, matches_api_key, verify_api_key
-from open_terminal.env import sanitized_environ
+from open_terminal.env import BROWSER_NO_SANDBOX, sanitized_environ
 from open_terminal.utils.fs import UserFS
 
 router = APIRouter(prefix="/desktop", tags=["desktop"])
@@ -67,6 +67,8 @@ class Desktop:
             "XDG_RUNTIME_DIR": str(self.runtime),
             "XAUTHORITY": str(self.runtime / "Xauthority"),
         }
+        if BROWSER_NO_SANDBOX:
+            self.env["OPEN_TERMINAL_BROWSER_NO_SANDBOX"] = "true"
 
     async def spawn(self, *command, **kwargs):
         if self.fs.username:

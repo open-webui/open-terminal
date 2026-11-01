@@ -17,7 +17,7 @@ import sys
 import websockets
 
 from fastapi import WebSocket, WebSocketDisconnect
-from open_terminal.env import sanitized_environ
+from open_terminal.env import BROWSER_NO_SANDBOX, sanitized_environ
 from .rewrite import target_url
 
 log = logging.getLogger(__name__)
@@ -104,7 +104,14 @@ class Host:
         self.sequence = 0
         self.pending = {}
         self.handlers = {}
+        self.stderr = b""
+        self.stderr_reader = asyncio.create_task(self.read_stderr())
         self.reader = asyncio.create_task(self.read())
+
+    async def read_stderr(self):
+        if self.process.stderr is not None:
+            while chunk := await self.process.stderr.read(4096):
+                self.stderr = (self.stderr + chunk)[-4096:]
 
     async def read(self):
         try:
@@ -171,6 +178,8 @@ class Host:
                 await self.process.wait()
         self.reader.cancel()
         await asyncio.gather(self.reader, return_exceptions=True)
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(self.stderr_reader, 1)
         if self.channel:
             await self.channel.close()
         if self.display:
@@ -243,13 +252,13 @@ async def get_host(session):
             "--no-default-browser-check",
             "--disable-dev-shm-usage",
         ]
+        if BROWSER_NO_SANDBOX:
+            args.append("--no-sandbox")
         if os.name == "nt":
             host = await windows_host(args, profile, session.fs.home)
             hosts[key] = host
             return host
         args.append("--remote-debugging-pipe")
-        if Path("/.dockerenv").exists():
-            args.append("--no-sandbox")
         display = None
         if all(
             shutil.which(name) for name in ("Xtigervnc", "xauth", "xrandr", "xdotool")
@@ -302,7 +311,7 @@ async def get_host(session):
                 *command,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.PIPE,
                 limit=16 * 1024 * 1024,
                 **kwargs,
             )
@@ -313,11 +322,11 @@ async def get_host(session):
         host = Host(process, display)
         try:
             await host.send("Browser.getVersion")
-        except Exception:
+        except Exception as exc:
             await host.close()
-            raise RuntimeError(
-                "Chrome could not start. Check its installation, OS user, and sandbox support."
-            )
+            detail = host.stderr.decode(errors="replace").strip() or str(exc)
+            log.warning("Chrome startup failed: %s", detail)
+            raise RuntimeError(f"Chrome could not start: {detail}") from exc
         hosts[key] = host
         return host
 
