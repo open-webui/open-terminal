@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.15.1] - 2026-11-02
+
+### Added
+
+- The Desktop tab can now show and control your Mac or Windows computer when Open Terminal runs directly on it. You and the assistant can use the mouse, type, paste text, and interact with your open applications. It shares the logged-in user's primary screen across workspaces. On Mac, grant Screen Recording and Accessibility permissions to the app running Open Terminal. Requires an updated Open WebUI.
+- Chrome mode in the Browser tab now works on Windows, with automatic detection of installed Chrome, Edge, and Chromium browsers.
+- Browser and Desktop can now be turned off separately with `OPEN_TERMINAL_ENABLE_BROWSER=false` and `OPEN_TERMINAL_ENABLE_DESKTOP=false`. Both remain on by default. Restart Open Terminal after changing either setting.
+
+### Changed
+
+- Browser views on Mac, Windows, and Linux installations without the desktop packages now use less data by skipping unchanged parts of the page and dropping outdated screen updates. Requires an updated Open WebUI.
+
+### Fixed
+
+- Assistants now have controls for your open Browser tabs, addressing requests that previously sent them to Desktop instead. They can see the page, click, scroll, type, and navigate in the existing tab with its current login. They use the selected browser tab, or the last-used tab when the pane is hidden. The tab must be in Chrome mode. Requires an updated Open WebUI.
+- Fixed browser lag after rapid mouse movement and scrolling on Mac, Windows, and Linux installations without the desktop packages. These actions no longer build up a queue that delays typing or navigation.
+
 ## [0.15.0] - 2026-11-02
 
 ### Added

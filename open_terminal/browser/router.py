@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import hmac
 import secrets
@@ -10,6 +11,7 @@ import posixpath
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Literal
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import httpx
@@ -18,13 +20,14 @@ from fastapi import (
     APIRouter,
     Depends,
     HTTPException,
+    Query,
     Request,
     WebSocket,
     WebSocketDisconnect,
 )
 from fastapi.responses import Response, StreamingResponse
 from starlette.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from open_terminal.dependencies import get_filesystem, verify_api_key
 from open_terminal.utils.fs import UserFS
@@ -36,7 +39,7 @@ from .rewrite import (
     target_url,
 )
 
-router = APIRouter(prefix="/browser", include_in_schema=False)
+router = APIRouter(prefix="/browser", tags=["browser"])
 
 
 @dataclass
@@ -49,6 +52,8 @@ class Session:
     url: str = ""
     title: str = ""
     mode: str = "proxy"
+    active: bool = False
+    last_used: float = 0
     chrome: object | None = None
     touched: float = field(default_factory=time.monotonic)
     peers: set = field(default_factory=set)
@@ -154,6 +159,8 @@ class UpdateSession(BaseModel):
     url: str | None = Field(default=None, max_length=16384)
     title: str | None = Field(default=None, max_length=512)
     mode: str | None = None
+    active: bool | None = None
+    chat_id: str | None = Field(default=None, min_length=1, max_length=128)
 
 
 def valid_url(url):
@@ -163,7 +170,7 @@ def valid_url(url):
         raise HTTPException(400, str(exc)) from exc
 
 
-@router.post("/sessions", dependencies=[Depends(verify_api_key)])
+@router.post("/sessions", include_in_schema=False, dependencies=[Depends(verify_api_key)])
 async def create(
     request: Request, body: CreateSession, fs: UserFS = Depends(get_filesystem)
 ):
@@ -190,12 +197,12 @@ async def create(
     return payload(session)
 
 
-@router.get("/sessions/{sid}", dependencies=[Depends(verify_api_key)])
+@router.get("/sessions/{sid}", include_in_schema=False, dependencies=[Depends(verify_api_key)])
 async def get_session(request: Request, sid: str):
     return payload(owned(request, sid))
 
 
-@router.patch("/sessions/{sid}", dependencies=[Depends(verify_api_key)])
+@router.patch("/sessions/{sid}", include_in_schema=False, dependencies=[Depends(verify_api_key)])
 async def update(request: Request, sid: str, body: UpdateSession):
     session = owned(request, sid)
     if body.mode not in (None, "proxy", "chrome"):
@@ -203,6 +210,20 @@ async def update(request: Request, sid: str, body: UpdateSession):
     if body.url:
         valid_url(body.url)
     async with session.lock:
+        if body.chat_id is not None:
+            if session.chat and session.chat != body.chat_id:
+                raise HTTPException(409, "Browser tab already belongs to a saved chat")
+            session.chat = body.chat_id
+        if body.active is not None:
+            session.active = body.active
+            if body.active:
+                session.last_used = time.monotonic()
+                for other in sessions.values():
+                    if other is not session and (other.owner, other.chat) == (
+                        session.owner,
+                        session.chat,
+                    ):
+                        other.active = False
         if body.url is not None:
             session.url = body.url
         if body.title is not None:
@@ -222,7 +243,7 @@ async def update(request: Request, sid: str, body: UpdateSession):
     return payload(session)
 
 
-@router.delete("/sessions/{sid}", dependencies=[Depends(verify_api_key)])
+@router.delete("/sessions/{sid}", include_in_schema=False, dependencies=[Depends(verify_api_key)])
 async def close(request: Request, sid: str):
     session = owned(request, sid)
     await remove(session)
@@ -267,7 +288,7 @@ def response_headers(upstream):
     }
 
 
-@router.get("/view/{sid}/{token}/runtime.js")
+@router.get("/view/{sid}/{token}/runtime.js", include_in_schema=False)
 async def runtime(sid: str, token: str):
     capability(sid, token)
     return Response(
@@ -279,6 +300,7 @@ async def runtime(sid: str, token: str):
 
 @router.api_route(
     "/view/{sid}/{token}/frame/{scheme}/{host}/{path:path}",
+    include_in_schema=False,
     methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"],
 )
 async def frame(
@@ -477,3 +499,353 @@ async def chrome_socket(ws: WebSocket, sid: str, token: str):
         await (session.chrome.stream_vnc(ws) if vnc else session.chrome.stream(ws))
     finally:
         session.peers.discard(ws)
+
+
+def visible_sessions(request):
+    return [
+        s
+        for s in sessions.values()
+        if s.owner == owner(request)
+        and s.chat == request.headers.get("x-session-id", "")
+    ]
+
+
+def current(request, session_id=None):
+    if session_id:
+        return owned(request, session_id)
+    candidates = visible_sessions(request)
+    if not candidates:
+        raise HTTPException(
+            404,
+            "No Browser tab is open in this chat. Open a Browser tab from the + menu.",
+        )
+    selected = max(candidates, key=lambda s: (s.active, s.last_used, s.touched))
+    return owned(request, selected.id)
+
+
+@contextlib.asynccontextmanager
+async def browser_page(request, session_id=None):
+    session = current(request, session_id)
+    async with session.lock:
+        if session.mode != "chrome" or session.chrome is None:
+            raise HTTPException(
+                409,
+                "This Browser tab is in Proxy mode. Switch that tab to Chrome to control it.",
+            )
+        chrome = session.chrome
+        async with chrome.host.view_lock:
+            # Headed Chrome cannot reliably capture background pages.
+            if chrome.host.display:
+                await chrome.send("Page.bringToFront")
+                await asyncio.sleep(0.1)
+            try:
+                yield chrome
+            finally:
+                viewer = chrome.host.viewer
+                if chrome.host.display and viewer and viewer is not chrome:
+                    with contextlib.suppress(RuntimeError):
+                        await viewer.send("Page.bringToFront")
+
+
+async def image(chrome):
+    await chrome.state()
+    result = await chrome.send(
+        "Page.captureScreenshot", {"format": "png", "captureBeyondViewport": False}
+    )
+    return Response(base64.b64decode(result["data"]), media_type="image/png")
+
+
+@router.get(
+    "/tabs", operation_id="browser_tabs", summary="List the user's open Browser tabs", dependencies=[Depends(verify_api_key)]
+)
+async def tabs(request: Request):
+    """List this user's open browser tabs in this chat, including their session IDs,
+    URLs, titles, and modes. The selected tab is the active browser tab, or the
+    last-used browser tab when hidden.
+    """
+    candidates = visible_sessions(request)
+    for session in candidates:
+        async with session.lock:
+            if session.chrome:
+                await session.chrome.state()
+    selected = current(request).id if candidates else None
+    return {
+        "current_session_id": selected,
+        "tabs": [
+            {
+                "session_id": s.id,
+                "url": s.url,
+                "title": s.title,
+                "mode": s.mode,
+                "active": s.active,
+                "selected": s.id == selected,
+            }
+            for s in candidates
+        ],
+    }
+
+
+@router.get(
+    "/snapshot",
+    operation_id="browser_snapshot",
+    dependencies=[Depends(verify_api_key)],
+    summary="Read the current Browser tab",
+)
+async def snapshot(
+    request: Request, session_id: str | None = Query(default=None, max_length=128)
+):
+    """Return the page's accessibility tree with text, roles, values, states, and
+    element refs such as @e1 for browser_action. Defaults to the active browser tab,
+    or the last-used browser tab when hidden. Accepts a session_id from browser_tabs.
+    """
+    async with browser_page(request, session_id) as chrome:
+        return await chrome.snapshot()
+
+
+@router.get(
+    "/screenshot",
+    operation_id="browser_screenshot",
+    dependencies=[Depends(verify_api_key)],
+    summary="Capture a Browser tab image",
+)
+async def screenshot(
+    request: Request, session_id: str | None = Query(default=None, max_length=128)
+):
+    """Return a PNG for visual inspection of layouts, canvas, and other page graphics.
+    Defaults to the active
+    browser tab, or the last-used browser tab when hidden. Accepts a session_id
+    from browser_tabs. Action coordinates are pixels in the returned image.
+    """
+    async with browser_page(request, session_id) as chrome:
+        return await image(chrome)
+
+
+class Action(BaseModel):
+    action: Literal[
+        "navigate",
+        "back",
+        "forward",
+        "reload",
+        "click",
+        "double_click",
+        "move",
+        "drag",
+        "scroll",
+        "type",
+        "key",
+    ]
+    session_id: str | None = Field(default=None, max_length=128)
+    ref: str | None = Field(
+        default=None, pattern=r"^@?e[0-9]+$", max_length=64,
+        description="Element ref from browser_snapshot, e.g. @e1",
+    )
+    x: int | None = Field(default=None, ge=0, le=16384)
+    y: int | None = Field(default=None, ge=0, le=16384)
+    to_x: int | None = Field(default=None, ge=0, le=16384)
+    to_y: int | None = Field(default=None, ge=0, le=16384)
+    button: Literal["left", "middle", "right"] = "left"
+    direction: Literal["up", "down", "left", "right"] = "down"
+    amount: int = Field(
+        default=400, ge=1, le=10000, description="Scroll distance in pixels"
+    )
+    text: str | None = Field(default=None, max_length=20000)
+    key: str | None = Field(
+        default=None,
+        max_length=100,
+        pattern=r"^[A-Za-z0-9_+]+$",
+        description="Key or combination, e.g. Enter, Tab, ArrowDown, ctrl+a, command+a",
+    )
+    url: str | None = Field(default=None, max_length=16384)
+
+    @model_validator(mode="after")
+    def required_fields(self):
+        if (self.x is None) != (self.y is None):
+            raise ValueError("Provide both x and y")
+        if self.ref and (self.x is not None or self.action in ("navigate", "back", "forward", "reload")):
+            raise ValueError("Use ref for an element action, without x and y")
+        if self.action in ("click", "double_click", "move", "drag") and self.x is None and not self.ref:
+            raise ValueError("This action requires an element ref or x and y")
+        if self.action == "drag" and (self.to_x is None or self.to_y is None):
+            raise ValueError("Drag requires to_x and to_y")
+        if self.action == "type" and self.text is None:
+            raise ValueError("Type requires text")
+        if self.action == "key" and not self.key:
+            raise ValueError("Key requires a key combination")
+        if self.action == "navigate" and not self.url:
+            raise ValueError("Navigate requires an HTTP or HTTPS URL")
+        return self
+
+
+def key_event(value):
+    parts = value.lower().split("+")
+    modifiers = 0
+    for part in parts[:-1]:
+        flag = {
+            "alt": 1,
+            "ctrl": 2,
+            "control": 2,
+            "meta": 4,
+            "cmd": 4,
+            "command": 4,
+            "shift": 8,
+        }.get(part)
+        if flag is None:
+            raise HTTPException(400, "Unknown key modifier")
+        modifiers |= flag
+    key = parts[-1]
+    special = {
+        "enter": ("Enter", 13),
+        "return": ("Enter", 13),
+        "tab": ("Tab", 9),
+        "escape": ("Escape", 27),
+        "esc": ("Escape", 27),
+        "backspace": ("Backspace", 8),
+        "delete": ("Delete", 46),
+        "space": (" ", 32),
+        "arrowleft": ("ArrowLeft", 37),
+        "arrowup": ("ArrowUp", 38),
+        "arrowright": ("ArrowRight", 39),
+        "arrowdown": ("ArrowDown", 40),
+        "home": ("Home", 36),
+        "end": ("End", 35),
+        "pageup": ("PageUp", 33),
+        "pagedown": ("PageDown", 34),
+    }
+    if key in special:
+        name, code = special[key]
+    elif len(key) == 1 and key.isascii() and key.isalnum():
+        name, code = key, ord(key.upper())
+    elif key.startswith("f") and key[1:].isdigit() and 1 <= int(key[1:]) <= 24:
+        name, code = key.upper(), 111 + int(key[1:])
+    else:
+        raise HTTPException(400, "Unknown key")
+    event = {"key": name, "windowsVirtualKeyCode": code, "modifiers": modifiers}
+    if modifiers & 6:
+        command = {
+            "a": "selectAll",
+            "c": "copy",
+            "x": "cut",
+            "z": "redo" if modifiers & 8 else "undo",
+        }.get(key)
+        if command:
+            event["commands"] = [command]
+    elif name == "Enter":
+        event["text"] = "\r"
+    elif len(name) == 1:
+        event["text"] = name.upper() if modifiers & 8 else name
+    return event
+
+
+@router.post(
+    "/action",
+    operation_id="browser_action",
+    dependencies=[Depends(verify_api_key)],
+    summary="Interact with the user's Browser tab",
+)
+async def action(request: Request, body: Action):
+    """Navigate, click, drag, scroll, type literal text, or press a key in the
+    existing Chrome browser tab using refs from browser_snapshot. Typing with a ref
+    replaces that input's contents; without a ref it types into the focused element.
+    Pixel coordinates from browser_screenshot are also supported for visual targets.
+    Defaults to the active tab, or the last-used browser tab when hidden. Accepts
+    a session_id from browser_tabs. Returns the updated accessibility snapshot.
+    """
+    async with browser_page(request, body.session_id) as chrome:
+        for x, y in ((body.x, body.y), (body.to_x, body.to_y)):
+            if x is not None and (x >= chrome.width or y is None or y >= chrome.height):
+                raise HTTPException(400, "Coordinates are outside the Browser viewport")
+        if body.ref:
+            try:
+                node = chrome.ref_node(body.ref)
+                if body.action in ("type", "key"):
+                    await chrome.send("DOM.focus", node)
+                else:
+                    body.x, body.y = await chrome.ref_position(node)
+            except (ValueError, RuntimeError) as exc:
+                raise HTTPException(409, f"Element ref unavailable: {exc}") from exc
+        if body.action == "navigate":
+            chrome.navigate(valid_url(body.url))
+            await chrome.navigation
+            if chrome.error:
+                raise HTTPException(502, chrome.error)
+        elif body.action in ("back", "forward"):
+            history = await chrome.send("Page.getNavigationHistory")
+            index = history["currentIndex"] + (-1 if body.action == "back" else 1)
+            if 0 <= index < len(history["entries"]):
+                await chrome.send(
+                    "Page.navigateToHistoryEntry",
+                    {"entryId": history["entries"][index]["id"]},
+                )
+        elif body.action == "reload":
+            await chrome.send("Page.reload")
+        elif body.action == "type":
+            if body.ref:
+                await chrome.send("Input.dispatchKeyEvent", {"type": "keyDown", "key": "a", "modifiers": 2, "commands": ["selectAll"]})
+                await chrome.send("Input.dispatchKeyEvent", {"type": "keyUp", "key": "a", "modifiers": 2})
+            await chrome.send("Input.insertText", {"text": body.text})
+        elif body.action == "key":
+            event = key_event(body.key)
+            await chrome.send("Input.dispatchKeyEvent", {"type": "keyDown", **event})
+            await chrome.send(
+                "Input.dispatchKeyEvent",
+                {
+                    "type": "keyUp",
+                    **{k: v for k, v in event.items() if k not in ("text", "commands")},
+                },
+            )
+        elif body.action == "scroll":
+            delta = body.amount * (-1 if body.direction in ("up", "left") else 1)
+            await chrome.send(
+                "Input.dispatchMouseEvent",
+                {
+                    "type": "mouseWheel",
+                    "x": body.x if body.x is not None else chrome.width // 2,
+                    "y": body.y if body.y is not None else chrome.height // 2,
+                    "deltaX": delta if body.direction in ("left", "right") else 0,
+                    "deltaY": delta if body.direction in ("up", "down") else 0,
+                },
+            )
+        else:
+            await chrome.send(
+                "Input.dispatchMouseEvent",
+                {"type": "mouseMoved", "x": body.x, "y": body.y},
+            )
+            if body.action != "move":
+                for count in range(1, 3 if body.action == "double_click" else 2):
+                    try:
+                        await chrome.send(
+                            "Input.dispatchMouseEvent",
+                            {
+                                "type": "mousePressed",
+                                "x": body.x,
+                                "y": body.y,
+                                "button": body.button,
+                                "clickCount": count,
+                            },
+                        )
+                        if body.action == "drag":
+                            await chrome.send(
+                                "Input.dispatchMouseEvent",
+                                {
+                                    "type": "mouseMoved",
+                                    "x": body.to_x,
+                                    "y": body.to_y,
+                                    "button": body.button,
+                                    "buttons": {"left": 1, "right": 2, "middle": 4}[
+                                        body.button
+                                    ],
+                                },
+                            )
+                    finally:
+                        await chrome.send(
+                            "Input.dispatchMouseEvent",
+                            {
+                                "type": "mouseReleased",
+                                "x": body.to_x if body.action == "drag" else body.x,
+                                "y": body.to_y if body.action == "drag" else body.y,
+                                "button": body.button,
+                                "clickCount": count,
+                            },
+                        )
+        await asyncio.sleep(0.1)
+        return await chrome.snapshot()

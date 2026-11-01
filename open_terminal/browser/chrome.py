@@ -6,6 +6,7 @@ import asyncio
 import base64
 import contextlib
 import hashlib
+from itertools import count
 import json
 import logging
 import os
@@ -20,6 +21,7 @@ from open_terminal.env import sanitized_environ
 from .rewrite import target_url
 
 log = logging.getLogger(__name__)
+ref_ids = count(1)
 
 
 def find_browser():
@@ -345,6 +347,7 @@ class Chrome:
         self.error = ""
         self.vnc_peer = None
         self.acks = set()
+        self.refs = {}
         host.handlers[cdp_session] = self.event
 
     @classmethod
@@ -387,8 +390,71 @@ class Chrome:
     async def send(self, method, params=None):
         return await self.host.send(method, params, self.cdp_session)
 
+    async def snapshot(self):
+        await self.state()
+        result = await self.send("Accessibility.getFullAXTree")
+        nodes = {node["nodeId"]: node for node in result.get("nodes", [])}
+        previous = {node_id: ref for ref, node_id in self.refs.items()}
+        refs, lines = {}, []
+        interactive = {
+            "link", "button", "textbox", "searchbox", "combobox", "checkbox",
+            "radio", "tab", "menuitem", "menuitemcheckbox", "menuitemradio",
+            "option", "switch", "slider", "spinbutton", "treeitem",
+        }
+        stack = [(node, 0, "") for node in reversed(list(nodes.values()))
+                 if node.get("parentId") not in nodes]
+        while stack:
+            node, depth, parent_name = stack.pop()
+            role = node.get("role", {}).get("value", "")
+            name = node.get("name", {}).get("value", "")
+            properties = {p["name"]: p.get("value", {}).get("value")
+                          for p in node.get("properties", [])}
+            show = not node.get("ignored") and role not in ("", "none", "generic", "InlineTextBox")
+            if role == "StaticText" and name == parent_name:
+                show = False
+            if show:
+                label = role
+                backend_id = node.get("backendDOMNodeId")
+                if backend_id and (role in interactive or properties.get("focusable")):
+                    ref = previous.get(backend_id) or f"@e{next(ref_ids)}"
+                    refs[ref] = backend_id
+                    label += f" {ref}"
+                if name:
+                    label += " " + json.dumps(name, ensure_ascii=False)
+                if "value" in node:
+                    label += " value=" + json.dumps(node["value"].get("value"), ensure_ascii=False)
+                for prop in ("checked", "pressed", "selected", "expanded", "disabled", "required", "readonly", "level"):
+                    if prop in properties:
+                        label += f" {prop}=" + json.dumps(properties[prop])
+                lines.append("  " * depth + label)
+            for child_id in reversed(node.get("childIds", [])):
+                if child_id in nodes:
+                    stack.append((nodes[child_id], depth + int(show), name if show else parent_name))
+        self.refs = refs
+        return {
+            "session_id": self.session.id,
+            "url": self.session.url,
+            "title": self.session.title,
+            "snapshot": "\n".join(lines) or "[empty page]",
+        }
+
+    def ref_node(self, ref):
+        node_id = self.refs.get("@" + ref.lstrip("@"))
+        if node_id is None:
+            raise ValueError("Unknown or expired element ref. Take a new browser_snapshot.")
+        return {"backendNodeId": node_id}
+
+    async def ref_position(self, node):
+        await self.send("DOM.scrollIntoViewIfNeeded", node)
+        result = await self.send("DOM.getContentQuads", node)
+        for quad in result.get("quads", []):
+            if len(quad) == 8 and max(quad[::2]) > min(quad[::2]) and max(quad[1::2]) > min(quad[1::2]):
+                return sum(quad[::2]) / 4, sum(quad[1::2]) / 4
+        raise ValueError("Element has no visible bounds. Take a new browser_snapshot.")
+
     def navigate(self, url):
         url = target_url(url)
+        self.refs.clear()
         if self.navigation:
             self.navigation.cancel()
         self.error = ""
@@ -427,6 +493,8 @@ class Chrome:
             "Page.navigatedWithinDocument",
             "Page.loadEventFired",
         ):
+            if method == "Page.frameNavigated" and not params.get("frame", {}).get("parentId"):
+                self.refs.clear()
             if method == "Page.loadEventFired":
                 self.error = ""
             self.state_changed.set()

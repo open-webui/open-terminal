@@ -139,6 +139,16 @@ ENABLE_NOTEBOOKS = os.environ.get(
     str(config.get("enable_notebooks", True)),
 ).lower() not in ("false", "0", "no")
 
+ENABLE_BROWSER = os.environ.get(
+    "OPEN_TERMINAL_ENABLE_BROWSER",
+    str(config.get("enable_browser", True)),
+).lower() not in ("false", "0", "no")
+
+ENABLE_DESKTOP = os.environ.get(
+    "OPEN_TERMINAL_ENABLE_DESKTOP",
+    str(config.get("enable_desktop", True)),
+).lower() not in ("false", "0", "no")
+
 ENABLE_SYSTEM_PROMPT = os.environ.get(
     "OPEN_TERMINAL_ENABLE_SYSTEM_PROMPT",
     str(config.get("enable_system_prompt", True)),

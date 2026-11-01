@@ -224,7 +224,15 @@ log_dir = "/var/log/open-terminal"
 binary_mime_prefixes = "image,audio"
 execute_timeout = 5  # seconds to wait for command output (unset by default)
 file_browser_root = "home"
+enable_browser = true
+enable_desktop = true
 ```
+
+Browser and desktop support are enabled by default. Set `OPEN_TERMINAL_ENABLE_BROWSER=false`
+or `OPEN_TERMINAL_ENABLE_DESKTOP=false` to disable their HTTP and WebSocket endpoints
+and advertise them as disabled in `/api/config`. Values `false`, `0`, and `no`
+(case-insensitive) disable the feature. Restart the server after changing these settings.
+Desktop support still requires its platform dependencies to be available.
 
 > [!TIP]
 > Use the system config at `/etc/open-terminal/config.toml` to set site-wide defaults for host and port, and the user config for personal settings like the API key — this keeps the key out of `ps` / `htop`.
