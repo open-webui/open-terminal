@@ -90,14 +90,11 @@ class GitRepository:
             await process.wait()
 
     async def detect(self):
-        try:
-            code, output, _ = await self.run("rev-parse", "--show-toplevel", check=False)
-        except HTTPException as exc:
-            if exc.status_code == 404:
-                return False
-            raise
+        code, output, error = await self.run("rev-parse", "--show-toplevel", check=False)
         if code:
-            return False
+            if "not a git repository" in error.lower():
+                return False
+            raise HTTPException(400, error.strip() or "Git repository detection failed")
         self.root = self.checked_path(output.removesuffix("\n"))
         # Linked worktrees can keep their metadata outside the working directory.
         for flag in ("--absolute-git-dir", "--git-common-dir"):
@@ -174,6 +171,8 @@ class GitRepository:
                     files[path]["binary"] = True
                 else:
                     files[path]["additions"] = count
+        code, remote, _ = await self.run("remote", "get-url", "origin", check=False)
+        result["remote_url"] = remote.strip() if code == 0 else ""
         return result
 
     @staticmethod
@@ -220,8 +219,8 @@ class GitRepository:
     async def branches(self):
         if not await self.detect():
             raise HTTPException(400, "Not a Git repository")
-        _, output, _ = await self.run("for-each-ref", "--format=%(refname:short)%00%(HEAD)%00%(upstream:short)%00%(symref)", "refs/heads", "refs/remotes")
-        return [{"name": name, "current": current == "*", "upstream": upstream} for line in output.splitlines() if len(parts := line.split("\0")) == 4 for name, current, upstream, symbolic in [parts] if not symbolic]
+        _, output, _ = await self.run("for-each-ref", "--format=%(refname:short)%00%(HEAD)%00%(upstream:short)%00%(symref)%00%(refname)", "refs/heads", "refs/remotes")
+        return [{"name": name, "current": current == "*", "upstream": upstream, "is_local": ref.startswith("refs/heads/")} for line in output.splitlines() if len(parts := line.split("\0")) == 5 for name, current, upstream, symbolic, ref in [parts] if not symbolic]
 
     async def worktrees(self):
         if not await self.detect():
