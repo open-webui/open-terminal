@@ -1,4 +1,5 @@
 """Browser resource rewriting, adapted from Computer's browser proxy."""
+
 import html
 import json
 import re
@@ -8,10 +9,16 @@ from urllib.parse import quote, urljoin, urlsplit, urlunsplit
 _URL_ATTRIBUTES = {"href", "src", "action", "poster", "data", "formaction"}
 _SKIP_SCHEMES = ("data:", "javascript:", "mailto:", "tel:", "about:", "blob:")
 
+
 def proxy_path(prefix: str, url: str) -> str:
     """Return the same-origin URL used by the Browser iframe for an upstream URL."""
     parsed = urlsplit(url)
-    if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password:
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username
+        or parsed.password
+    ):
         raise ValueError("Only HTTP(S) URLs can be opened in Browser")
     host = quote(parsed.netloc, safe=":[]")
     path = quote(parsed.path or "/", safe="/%:@!$&'()*+,;=-._~")
@@ -22,10 +29,23 @@ def proxy_path(prefix: str, url: str) -> str:
 
 def target_url(url: str) -> str:
     parsed = urlsplit(url)
-    if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password:
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username
+        or parsed.password
+    ):
         raise ValueError("Only HTTP(S) URLs can be opened in Browser")
     parsed.port  # Validate malformed port numbers before dispatching a request.
-    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path or "/", parsed.query, parsed.fragment))
+    return urlunsplit(
+        (
+            parsed.scheme,
+            parsed.netloc,
+            parsed.path or "/",
+            parsed.query,
+            parsed.fragment,
+        )
+    )
 
 
 def rewrite_url(value: str, base_url: str, prefix: str) -> str:
@@ -92,7 +112,9 @@ class _HtmlRewriter(HTMLParser):
                     r"(?i)(url\s*=\s*)([^;]+)",
                     lambda match: (
                         match.group(1)
-                        + rewrite_url(match.group(2).strip(), self.base_url, self.prefix)
+                        + rewrite_url(
+                            match.group(2).strip(), self.base_url, self.prefix
+                        )
                     ),
                     value,
                 )
@@ -112,13 +134,17 @@ def rewrite_html(content: str, base_url: str, prefix: str, final_url: str) -> st
     parser.feed(content)
     parser.close()
     config = json.dumps({"prefix": prefix, "url": final_url}).replace("<", "\\u003c")
-    runtime = (f"<script>window.__terminalBrowser={config};</script>"
-               f'<script src="{html.escape(prefix, quote=True)}/runtime.js"></script>')
+    runtime = (
+        f"<script>window.__terminalBrowser={config};</script>"
+        f'<script src="{html.escape(prefix, quote=True)}/runtime.js"></script>'
+    )
     rendered = "".join(parser.output)
     if urlsplit(final_url).hostname in {"localhost", "127.0.0.1", "::1"}:
         rendered = rewrite_javascript(rendered, final_url, prefix)
     if re.search(r"<head(?:\s[^>]*)?>", rendered, re.I):
-        return re.sub(r"(<head(?:\s[^>]*)?>)", r"\1" + runtime, rendered, count=1, flags=re.I)
+        return re.sub(
+            r"(<head(?:\s[^>]*)?>)", r"\1" + runtime, rendered, count=1, flags=re.I
+        )
     return runtime + rendered
 
 
@@ -127,7 +153,9 @@ def rewrite_css(content: str, base_url: str, prefix: str) -> str:
         quote, value = match.group(1), match.group(2)
         return f"url({quote}{rewrite_url(value, base_url, prefix)}{quote})"
 
-    content = re.sub(r"url\(\s*(['\"]?)([^'\")]+)\1\s*\)", replace_url, content, flags=re.I)
+    content = re.sub(
+        r"url\(\s*(['\"]?)([^'\")]+)\1\s*\)", replace_url, content, flags=re.I
+    )
     return re.sub(
         r"(@import\s+(?:url\()?['\"])([^'\"]+)",
         lambda match: match.group(1) + rewrite_url(match.group(2), base_url, prefix),
@@ -139,10 +167,11 @@ def rewrite_css(content: str, base_url: str, prefix: str) -> str:
 def rewrite_javascript(content: str, base_url: str, prefix: str) -> str:
     """Rewrite root-relative ES module imports used by local dev servers."""
     # Vite builds hot-update imports dynamically from `base`, outside import declarations.
-    if urlsplit(base_url).path.endswith('/@vite/client'):
+    if urlsplit(base_url).path.endswith("/@vite/client"):
         content = re.sub(
             r'(\bconst base\s*=\s*)(["\'])(/[^"\']*)\2',
-            lambda match: match[1] + json.dumps(proxy_path(prefix, urljoin(base_url, match[3]))),
+            lambda match: match[1]
+            + json.dumps(proxy_path(prefix, urljoin(base_url, match[3]))),
             content,
         )
     return re.sub(
@@ -150,4 +179,3 @@ def rewrite_javascript(content: str, base_url: str, prefix: str) -> str:
         lambda match: match.group(1) + rewrite_url(match.group(2), base_url, prefix),
         content,
     )
-

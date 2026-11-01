@@ -2,8 +2,8 @@
   const config = window.__terminalBrowser;
   if (!config) return;
 
-  const prefix = `${config.prefix}/frame`;
-  const api = config.prefix;
+  const api = new URL(config.prefix + "/", location.href).pathname.replace(/\/$/, "");
+  const prefix = `${api}/frame`;
   const nativeFetch = window.fetch.bind(window);
   const nativeWebSocket = window.WebSocket;
 
