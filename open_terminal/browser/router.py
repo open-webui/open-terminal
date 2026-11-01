@@ -458,6 +458,7 @@ async def proxy_socket(ws: WebSocket, sid: str, token: str):
 
 
 @router.websocket("/view/{sid}/{token}/stream")
+@router.websocket("/view/{sid}/{token}/vnc")
 async def chrome_socket(ws: WebSocket, sid: str, token: str):
     try:
         session = capability(sid, token)
@@ -467,4 +468,12 @@ async def chrome_socket(ws: WebSocket, sid: str, token: str):
     if not session.chrome:
         await ws.close(code=4004)
         return
-    await session.chrome.stream(ws)
+    vnc = ws.url.path.endswith("/vnc")
+    if vnc and not session.chrome.host.display:
+        await ws.close(code=4004)
+        return
+    session.peers.add(ws)
+    try:
+        await (session.chrome.stream_vnc(ws) if vnc else session.chrome.stream(ws))
+    finally:
+        session.peers.discard(ws)

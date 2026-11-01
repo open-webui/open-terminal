@@ -1,4 +1,4 @@
-"""Headless Chrome tabs. CDP stays on private pipes, never a shared TCP port."""
+"""Chrome tabs. CDP stays on private pipes, never a shared TCP port."""
 
 from __future__ import annotations
 
@@ -77,8 +77,12 @@ def lock_profile(profile):
 
 
 class Host:
-    def __init__(self, process):
+    def __init__(self, process, display=None):
         self.process = process
+        self.display = display
+        self.viewer = None
+        self.display_mode = None
+        self.view_lock = asyncio.Lock()
         self.sequence = 0
         self.pending = {}
         self.handlers = {}
@@ -142,6 +146,8 @@ class Host:
                 await self.process.wait()
         self.reader.cancel()
         await asyncio.gather(self.reader, return_exceptions=True)
+        if self.display:
+            await self.display.close()
 
 
 hosts = {}
@@ -150,8 +156,11 @@ host_lock = asyncio.Lock()
 
 async def get_host(session):
     async with host_lock:
-        if session.owner in hosts and hosts[session.owner].process.returncode is None:
-            return hosts[session.owner]
+        key = (session.owner, session.fs.home)
+        if key in hosts and hosts[key].process.returncode is None:
+            return hosts[key]
+        if key in hosts:
+            await hosts.pop(key).close()
         binary = find_browser()
         if not binary:
             raise RuntimeError(
@@ -166,7 +175,6 @@ async def get_host(session):
         )
         args = [
             binary,
-            "--headless=new",
             "--remote-debugging-pipe",
             f"--user-data-dir={profile}",
             "--no-first-run",
@@ -175,6 +183,22 @@ async def get_host(session):
         ]
         if Path("/.dockerenv").exists():
             args.append("--no-sandbox")
+        display = None
+        if all(
+            shutil.which(name) for name in ("Xtigervnc", "xauth", "xrandr", "xdotool")
+        ):
+            from open_terminal.desktop import Desktop, startup_lock
+
+            display = Desktop(session.fs)
+            try:
+                async with startup_lock:
+                    await display.start(shell=False)
+            except BaseException:
+                await display.close()
+                raise
+            args += ["--kiosk", "--window-position=0,0", "--window-size=1280,800"]
+        else:
+            args.append("--headless=new")
         args.append("about:blank")
         # Chrome's pipe transport uses fd 3/4. A tiny exec shim maps subprocess stdin/stdout.
         shim = (
@@ -184,7 +208,7 @@ async def get_host(session):
         )
         command = [sys.executable, "-c", shim, profile, *args]
         kwargs = {}
-        if session.fs.username:
+        if session.fs.username and not display:
             import pwd
 
             account = pwd.getpwnam(session.fs.username)
@@ -202,16 +226,24 @@ async def get_host(session):
                     "--",
                     *command,
                 ]
-        process = await asyncio.create_subprocess_exec(
-            *command,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL,
-            env=sanitized_environ({"HOME": session.fs.home}),
-            limit=16 * 1024 * 1024,
-            **kwargs,
-        )
-        host = Host(process)
+        if not display:
+            kwargs["env"] = sanitized_environ({"HOME": session.fs.home})
+        try:
+            process = await (
+                display.spawn if display else asyncio.create_subprocess_exec
+            )(
+                *command,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
+                limit=16 * 1024 * 1024,
+                **kwargs,
+            )
+        except BaseException:
+            if display:
+                await display.close()
+            raise
+        host = Host(process, display)
         try:
             await host.send("Browser.getVersion")
         except Exception:
@@ -219,7 +251,7 @@ async def get_host(session):
             raise RuntimeError(
                 "Chrome could not start. Check its installation, OS user, and sandbox support."
             )
-        hosts[session.owner] = host
+        hosts[key] = host
         return host
 
 
@@ -246,15 +278,19 @@ class Chrome:
         self.visible = True
         self.navigation = None
         self.error = ""
+        self.vnc_peer = None
         host.handlers[cdp_session] = self.event
 
     @classmethod
     async def create(cls, session):
         host = await get_host(session)
         chrome = None
-        target = (await host.send("Target.createTarget", {"url": "about:blank"}))[
-            "targetId"
-        ]
+        target = (
+            await host.send(
+                "Target.createTarget",
+                {"url": "about:blank", "background": bool(host.display)},
+            )
+        )["targetId"]
         try:
             attached = await host.send(
                 "Target.attachToTarget", {"targetId": target, "flatten": True}
@@ -264,11 +300,13 @@ class Chrome:
             await chrome.send("Runtime.enable")
             await chrome.send(
                 "Page.addScriptToEvaluateOnNewDocument",
-                {"source": """
+                {
+                    "source": """
                 window.open = url => { if (url) location.assign(url); return null; };
                 addEventListener('click', e => {const a=e.target.closest?.('a[target]');
                   if(a && a.target !== '_self'){e.preventDefault(); location.assign(a.href);}},true);
-            """},
+            """
+                },
             )
             if session.url:
                 chrome.navigate(session.url)
@@ -337,9 +375,12 @@ class Chrome:
             "error": self.error,
             "canGoBack": index > 0,
             "canGoForward": index < len(entries) - 1,
+            "transport": "vnc" if self.host.display else "jpeg",
         }
 
     async def capture(self):
+        if self.host.display:
+            return
         await self.send("Page.stopScreencast")
         if not self.visible:
             return
@@ -353,6 +394,54 @@ class Chrome:
                 "everyNthFrame": 1,
             },
         )
+
+    async def resize_display(self):
+        display = self.host.display
+        mode = f"browser-{self.width}x{self.height}"
+        if self.host.display_mode != mode:
+            w, h = str(self.width), str(self.height)
+            await display.run("xrandr", "--newmode", mode, "0", w, w, w, w, h, h, h, h)
+            await display.run("xrandr", "--addmode", "VNC-0", mode)
+            await display.run("xrandr", "--output", "VNC-0", "--mode", mode)
+            previous, self.host.display_mode = self.host.display_mode, mode
+            if previous:
+                await display.run("xrandr", "--delmode", "VNC-0", previous)
+                await display.run("xrandr", "--rmmode", previous)
+        await self.send("Page.bringToFront")
+        # X11 sizing avoids Chrome's minimum window width in mobile preview.
+        await display.run(
+            "xdotool",
+            "getwindowfocus",
+            "windowsize",
+            str(self.width),
+            str(self.height),
+            "windowmove",
+            "0",
+            "0",
+        )
+
+    async def stream_vnc(self, ws):
+        await ws.accept()
+        try:
+            async with self.host.view_lock:
+                # A workspace browser has one visible page; keep its other tabs running.
+                for peer in list(self.host.display.peers):
+                    await peer.close(code=4000)
+                self.host.viewer = self
+                self.vnc_peer = ws
+                await self.resize_display()
+                self.host.display.peers.add(ws)
+            await self.host.display.stream(ws)
+        except (WebSocketDisconnect, RuntimeError, OSError):
+            pass
+        finally:
+            self.host.display.peers.discard(ws)
+            if self.vnc_peer is ws:
+                self.vnc_peer = None
+                if self.host.viewer is self:
+                    self.host.viewer = None
+            with contextlib.suppress(Exception):
+                await ws.close()
 
     async def stream(self, ws: WebSocket):
         await ws.accept()
@@ -437,6 +526,10 @@ class Chrome:
                                 )
                             },
                         )
+                        if self.host.display and self.host.viewer is self:
+                            async with self.host.view_lock:
+                                if self.host.viewer is self:
+                                    await self.resize_display()
                         await self.capture()
                     elif kind == "quality":
                         self.quality = {"low": 40, "balanced": 65, "crisp": 90}.get(
@@ -516,6 +609,9 @@ class Chrome:
         if self.peer:
             with contextlib.suppress(Exception):
                 await self.peer.close()
+        if self.vnc_peer:
+            with contextlib.suppress(Exception):
+                await self.vnc_peer.close(code=4004)
         self.host.handlers.pop(self.cdp_session, None)
         with contextlib.suppress(Exception):
             await self.host.send("Target.closeTarget", {"targetId": self.target})

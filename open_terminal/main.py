@@ -204,6 +204,8 @@ async def lifespan(app):
             await shutdown_notebooks()
         from open_terminal.browser.router import shutdown as shutdown_browsers
         await shutdown_browsers()
+        from open_terminal.desktop import shutdown as shutdown_desktops
+        await shutdown_desktops()
         global _port_proxy_client
         if _port_proxy_client is not None:
             await _port_proxy_client.aclose()
@@ -504,6 +506,7 @@ async def get_config():
             "git": shutil.which("git") is not None,
             "events": True,
             "browser": True,
+            "desktop": desktop_available(),
         },
     }
 
@@ -2473,3 +2476,5 @@ if ENABLE_NOTEBOOKS:
 # Browser tabs share the terminal's authenticated user and chat context.
 from open_terminal.browser.router import router as browser_router
 app.include_router(browser_router)
+from open_terminal.desktop import router as desktop_router, available as desktop_available
+app.include_router(desktop_router, include_in_schema=desktop_available())

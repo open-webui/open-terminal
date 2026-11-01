@@ -1,0 +1,423 @@
+"""One on-demand desktop per workspace, shared by the viewer and model tools."""
+
+import asyncio
+import contextlib
+import os
+from pathlib import Path
+import secrets
+import shutil
+import signal
+import tempfile
+from typing import Literal
+
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Request,
+    WebSocket,
+    WebSocketDisconnect,
+)
+from fastapi.responses import Response
+from pydantic import BaseModel, Field, model_validator
+
+from open_terminal.dependencies import get_filesystem, matches_api_key, verify_api_key
+from open_terminal.env import sanitized_environ
+from open_terminal.utils.fs import UserFS
+
+router = APIRouter(prefix="/desktop", tags=["desktop"])
+WIDTH, HEIGHT = 1280, 800
+desktops = {}
+startup_lock = asyncio.Lock()
+
+
+def available():
+    return all(
+        shutil.which(name)
+        for name in (
+            "Xtigervnc",
+            "startxfce4",
+            "dbus-run-session",
+            "xauth",
+            "xdotool",
+            "scrot",
+            "xclip",
+        )
+    )
+
+
+class Desktop:
+    def __init__(self, fs):
+        self.fs = fs
+        self.runtime = Path(tempfile.mkdtemp(prefix="open-terminal-desktop-"))
+        self.processes = []
+        self.actions = asyncio.Lock()
+        self.peers = set()
+        self.env = {
+            "HOME": fs.home,
+            "XDG_RUNTIME_DIR": str(self.runtime),
+            "XAUTHORITY": str(self.runtime / "Xauthority"),
+        }
+
+    async def spawn(self, *command, **kwargs):
+        if self.fs.username:
+            command = (
+                "sudo",
+                "-H",
+                "-n",
+                "-u",
+                self.fs.username,
+                "--",
+                "env",
+                *(f"{k}={v}" for k, v in self.env.items()),
+                *command,
+            )
+        return await asyncio.create_subprocess_exec(
+            *command,
+            cwd=self.fs.home,
+            env=sanitized_environ(self.env),
+            start_new_session=True,
+            **kwargs,
+        )
+
+    async def stop_process(self, process):
+        if process.returncode is not None:
+            return
+        for sig in (signal.SIGTERM, signal.SIGKILL):
+            if self.fs.username and os.getuid() != 0:
+                killer = await asyncio.create_subprocess_exec(
+                    "sudo",
+                    "-n",
+                    "kill",
+                    f"-{sig.name[3:]}",
+                    "--",
+                    f"-{process.pid}",
+                    stderr=asyncio.subprocess.DEVNULL,
+                )
+                await killer.wait()
+            else:
+                with contextlib.suppress(ProcessLookupError):
+                    os.killpg(process.pid, sig)
+            try:
+                await asyncio.wait_for(process.wait(), 3)
+                return
+            except TimeoutError:
+                pass
+
+    async def run(self, *command, input=None):
+        # xclip forks a clipboard owner; inherited pipes would never reach EOF.
+        output = (
+            asyncio.subprocess.DEVNULL
+            if command[0] == "xclip"
+            else asyncio.subprocess.PIPE
+        )
+        process = await self.spawn(
+            *command,
+            stdin=asyncio.subprocess.PIPE
+            if input is not None
+            else asyncio.subprocess.DEVNULL,
+            stdout=output,
+            stderr=output,
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(process.communicate(input), 10)
+            if process.returncode:
+                raise RuntimeError(
+                    (stderr or b"").decode(errors="replace")[-1000:]
+                    or "Desktop command failed"
+                )
+            return stdout or b""
+        finally:
+            await self.stop_process(process)
+
+    async def start(self, *, shell=True):
+        if self.fs.username:
+            import pwd
+
+            account = pwd.getpwnam(self.fs.username)
+            os.chmod(self.runtime, 0o770)
+            process = await asyncio.create_subprocess_exec(
+                "sudo",
+                "-n",
+                "chown",
+                f"{account.pw_uid}:{os.getegid()}",
+                str(self.runtime),
+            )
+            if await process.wait():
+                raise RuntimeError("Could not create desktop runtime directory")
+        display = next(
+            n
+            for n in range(40, 1040)
+            if not Path(f"/tmp/.X{n}-lock").exists()
+            and not Path(f"/tmp/.X11-unix/X{n}").exists()
+        )
+        self.env["DISPLAY"] = f":{display}"
+        await self.run(
+            "xauth",
+            "-f",
+            self.env["XAUTHORITY"],
+            "add",
+            self.env["DISPLAY"],
+            ".",
+            secrets.token_hex(16),
+        )
+        # VNC is reachable only through the authenticated WebSocket relay.
+        with (self.runtime / "display.log").open("wb") as log:
+            server = await self.spawn(
+                "Xtigervnc",
+                self.env["DISPLAY"],
+                "-geometry",
+                f"{WIDTH}x{HEIGHT}",
+                "-depth",
+                "24",
+                "-rfbport",
+                "-1",
+                "-rfbunixpath",
+                str(self.runtime / "vnc.sock"),
+                "-rfbunixmode",
+                "0660",
+                "-SecurityTypes",
+                "None",
+                "-AlwaysShared",
+                "-AcceptSetDesktopSize=0",
+                "-nolisten",
+                "tcp",
+                "-auth",
+                self.env["XAUTHORITY"],
+                "-desktop",
+                "Desktop",
+                stdout=log,
+                stderr=log,
+            )
+        self.processes.append(server)
+        for _ in range(100):
+            if server.returncode is not None:
+                raise RuntimeError((self.runtime / "display.log").read_text()[-1000:])
+            if (self.runtime / "vnc.sock").exists():
+                break
+            await asyncio.sleep(0.1)
+        else:
+            raise RuntimeError("Desktop display did not start")
+        if not shell:
+            return
+        with (self.runtime / "session.log").open("wb") as log:
+            self.processes.append(
+                await self.spawn(
+                    "dbus-run-session", "--", "startxfce4", stdout=log, stderr=log
+                )
+            )
+        await self.run(
+            "xdotool", "search", "--sync", "--onlyvisible", "--class", "xfdesktop"
+        )
+
+    async def screenshot(self):
+        path = self.runtime / "screenshot.png"
+        await self.run("scrot", "--overwrite", str(path))
+        return await asyncio.to_thread(path.read_bytes)
+
+    async def stream(self, ws):
+        reader, writer = await asyncio.open_unix_connection(
+            str(self.runtime / "vnc.sock")
+        )
+        self.peers.add(ws)
+
+        async def incoming():
+            while True:
+                writer.write(await ws.receive_bytes())
+                await writer.drain()
+
+        async def outgoing():
+            while data := await reader.read(65536):
+                await ws.send_bytes(data)
+
+        tasks = [asyncio.create_task(incoming()), asyncio.create_task(outgoing())]
+        try:
+            await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            self.peers.discard(ws)
+            writer.close()
+            with contextlib.suppress(OSError):
+                await writer.wait_closed()
+
+    async def close(self):
+        for peer in list(self.peers):
+            with contextlib.suppress(Exception):
+                await peer.close(code=1012)
+        for process in reversed(self.processes):
+            await self.stop_process(process)
+        if self.fs.username:
+            await self.run("rm", "-rf", "--", str(self.runtime))
+        else:
+            shutil.rmtree(self.runtime, ignore_errors=True)
+
+
+async def get_desktop(request, fs):
+    if not available():
+        raise HTTPException(503, "Desktop is not installed on this terminal")
+    key = (request.headers.get("x-user-id", ""), fs.home)
+    async with startup_lock:
+        desktop = desktops.get(key)
+        if desktop and all(p.returncode is None for p in desktop.processes):
+            return desktop
+        if desktop:
+            await desktop.close()
+            desktops.pop(key, None)
+        desktop = Desktop(fs)
+        try:
+            await desktop.start()
+        except BaseException:
+            await desktop.close()
+            raise
+        desktops[key] = desktop
+        return desktop
+
+
+async def shutdown():
+    await asyncio.gather(
+        *(desktop.close() for desktop in desktops.values()), return_exceptions=True
+    )
+    desktops.clear()
+
+
+@router.get("", include_in_schema=False, dependencies=[Depends(verify_api_key)])
+async def connect(request: Request, fs: UserFS = Depends(get_filesystem)):
+    await get_desktop(request, fs)
+    return {"width": WIDTH, "height": HEIGHT}
+
+
+@router.get(
+    "/screenshot",
+    operation_id="desktop_screenshot",
+    summary="See the workspace desktop",
+    dependencies=[Depends(verify_api_key)],
+)
+async def screenshot(request: Request, fs: UserFS = Depends(get_filesystem)):
+    """Return an image of the same desktop the user sees. Starts it if needed.
+    Coordinates are pixels on a 1280x800 screen. Inspect before interacting.
+    Desktop applications and files belong to this terminal workspace.
+    """
+    desktop = await get_desktop(request, fs)
+    async with desktop.actions:
+        return Response(await desktop.screenshot(), media_type="image/png")
+
+
+class Action(BaseModel):
+    action: Literal["click", "double_click", "move", "drag", "scroll", "type", "key"]
+    x: int | None = Field(default=None, ge=0, lt=WIDTH)
+    y: int | None = Field(default=None, ge=0, lt=HEIGHT)
+    to_x: int | None = Field(default=None, ge=0, lt=WIDTH)
+    to_y: int | None = Field(default=None, ge=0, lt=HEIGHT)
+    button: Literal["left", "middle", "right"] = "left"
+    direction: Literal["up", "down", "left", "right"] = "down"
+    amount: int = Field(default=3, ge=1, le=20)
+    text: str | None = Field(default=None, max_length=20000)
+    key: str | None = Field(
+        default=None,
+        pattern=r"^[A-Za-z0-9_+]+$",
+        max_length=100,
+        description="X11 key or combination, e.g. Return, ctrl+c, alt+F2, Super_L",
+    )
+
+    @model_validator(mode="after")
+    def required_fields(self):
+        if self.action in ("click", "double_click", "move", "drag") and (
+            self.x is None or self.y is None
+        ):
+            raise ValueError("This action requires x and y")
+        if (self.x is None) != (self.y is None):
+            raise ValueError("Provide both x and y")
+        if self.action == "drag" and (self.to_x is None or self.to_y is None):
+            raise ValueError("Drag requires to_x and to_y")
+        if self.action == "type" and self.text is None:
+            raise ValueError("Type requires text")
+        if self.action == "key" and not self.key:
+            raise ValueError("Key requires a key combination")
+        return self
+
+
+@router.post(
+    "/action",
+    operation_id="desktop_action",
+    summary="Interact with the workspace desktop",
+    dependencies=[Depends(verify_api_key)],
+)
+async def action(request: Request, body: Action, fs: UserFS = Depends(get_filesystem)):
+    """Click, double-click, move, drag, scroll, type text or press a key combination.
+    Returns a screenshot after the action. Use desktop_screenshot first and work
+    from its 1280x800 pixel coordinates. Shares the user's desktop and workspace.
+    Use alt+F2 to launch an application. Type pastes literal text into the focused application.
+    """
+    desktop = await get_desktop(request, fs)
+    async with desktop.actions:
+        button = str({"left": 1, "middle": 2, "right": 3}[body.button])
+        if body.x is not None:
+            await desktop.run(
+                "xdotool", "mousemove", "--sync", str(body.x), str(body.y)
+            )
+        if body.action in ("click", "double_click"):
+            await desktop.run(
+                "xdotool",
+                "click",
+                "--repeat",
+                "2" if body.action == "double_click" else "1",
+                "--delay",
+                "100",
+                button,
+            )
+        elif body.action == "drag":
+            try:
+                await desktop.run(
+                    "xdotool",
+                    "mousedown",
+                    button,
+                    "mousemove",
+                    "--sync",
+                    str(body.to_x),
+                    str(body.to_y),
+                )
+            finally:
+                await desktop.run("xdotool", "mouseup", button)
+        elif body.action == "scroll":
+            await desktop.run(
+                "xdotool",
+                "click",
+                "--repeat",
+                str(body.amount),
+                "--delay",
+                "50",
+                str({"up": 4, "down": 5, "left": 6, "right": 7}[body.direction]),
+            )
+        elif body.action == "type":
+            for selection in ("clipboard", "primary"):
+                await desktop.run(
+                    "xclip", "-selection", selection, input=body.text.encode()
+                )
+            await desktop.run("xdotool", "key", "--clearmodifiers", "shift+Insert")
+        elif body.action == "key":
+            await desktop.run("xdotool", "key", "--clearmodifiers", body.key)
+        await asyncio.sleep(0.15)
+        return Response(await desktop.screenshot(), media_type="image/png")
+
+
+@router.websocket("/stream")
+async def stream(ws: WebSocket):
+    await ws.accept()
+    try:
+        auth = await asyncio.wait_for(ws.receive_json(), 10)
+        if (
+            not isinstance(auth, dict)
+            or auth.get("type") != "auth"
+            or not matches_api_key(auth.get("token"))
+        ):
+            await ws.close(code=4001)
+            return
+        desktop = await get_desktop(ws, get_filesystem(ws))
+        await desktop.stream(ws)
+    except (WebSocketDisconnect, TimeoutError, OSError, ValueError, HTTPException):
+        pass
+    finally:
+        with contextlib.suppress(Exception):
+            await ws.close(code=1011)
