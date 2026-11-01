@@ -135,8 +135,10 @@ async def get_host(session):
             "--no-first-run",
             "--no-default-browser-check",
             "--disable-dev-shm-usage",
-            "about:blank",
         ]
+        if Path("/.dockerenv").exists():
+            args.append("--no-sandbox")
+        args.append("about:blank")
         # Chrome's pipe transport uses fd 3/4. A tiny exec shim maps subprocess stdin/stdout.
         shim = "import os,sys; os.dup2(0,3); os.dup2(1,4); os.execv(sys.argv[1],sys.argv[1:])"
         command = [sys.executable, "-c", shim, *args]
