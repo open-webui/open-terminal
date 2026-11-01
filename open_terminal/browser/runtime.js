@@ -31,8 +31,8 @@
     }
   }
 
-  function report() {
-    parent.postMessage({ type: 'terminal-browser-state', url: remoteUrl(), title: document.title }, '*');
+  function report(replace = false) {
+    parent.postMessage({ type: 'terminal-browser-state', url: remoteUrl(), title: document.title, replace: replace === true }, '*');
   }
 
   const originalPushState = history.pushState.bind(history);
@@ -50,10 +50,11 @@
     try { result = originalReplaceState(state, title, url ? proxyUrl(url) : url); }
     catch (error) { if (error.name !== 'SecurityError') throw error;
       parent.postMessage({type:'terminal-browser-navigate', url:new URL(url, remoteUrl()).href, replace:true}, '*'); return; }
-    queueMicrotask(report);
+    queueMicrotask(() => report(true));
     return result;
   };
   addEventListener('popstate', report);
+  addEventListener('pageshow', report);
   new MutationObserver(report).observe(document.querySelector('title') || document.head, {
     childList: true,
     subtree: true,
@@ -164,6 +165,7 @@
     if(event.data.command === 'forward') history.forward();
     if(event.data.command === 'reload') location.reload();
     if(event.data.command === 'navigate') location.assign(proxyUrl(event.data.url));
+    if(event.data.command === 'replace') location.replace(proxyUrl(event.data.url));
   });
   addEventListener('hashchange', report);
   report();

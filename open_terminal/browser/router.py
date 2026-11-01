@@ -321,10 +321,11 @@ async def frame(
     if request.headers.get("origin"):
         headers["origin"] = f"{scheme}://{host}"
     client = profiles[session.owner]
+    body = request.stream() if request.headers.get("content-length") or request.headers.get("transfer-encoding") else None
     try:
         upstream = await client.send(
             client.build_request(
-                request.method, url, headers=headers, content=request.stream()
+                request.method, url, headers=headers, content=body
             ),
             stream=True,
         )
