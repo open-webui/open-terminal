@@ -39,6 +39,43 @@ def find_browser():
     return next((p for p in candidates if p and Path(p).is_file()), None)
 
 
+def lock_profile(profile):
+    import fcntl
+    import socket
+
+    profile = Path(profile)
+    profile.mkdir(parents=True, exist_ok=True)
+    lease = os.open(profile / ".open-terminal.lock", os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        fcntl.flock(lease, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        managed = os.read(lease, 8) == b"managed\n"
+        singleton = profile / "SingletonLock"
+        if singleton.is_symlink():
+            hostname, pid = os.readlink(singleton).rsplit("-", 1)
+            if hostname == socket.gethostname():
+                try:
+                    os.kill(int(pid), 0)
+                except ProcessLookupError:
+                    pass
+                else:
+                    raise RuntimeError("Chrome profile is still in use")
+            elif not managed:
+                # Older launches have no lease, so another host may still own this profile.
+                raise RuntimeError("Chrome profile is locked by another host")
+        for name in ("SingletonLock", "SingletonSocket", "SingletonCookie"):
+            path = profile / name
+            if path.is_symlink():
+                path.unlink()
+        os.lseek(lease, 0, os.SEEK_SET)
+        os.write(lease, b"managed\n")
+        # Chrome keeps this lease across exec; the kernel releases it even after a crash.
+        os.set_inheritable(lease, True)
+        return lease
+    except BaseException:
+        os.close(lease)
+        raise
+
+
 class Host:
     def __init__(self, process):
         self.process = process
@@ -140,8 +177,12 @@ async def get_host(session):
             args.append("--no-sandbox")
         args.append("about:blank")
         # Chrome's pipe transport uses fd 3/4. A tiny exec shim maps subprocess stdin/stdout.
-        shim = "import os,sys; os.dup2(0,3); os.dup2(1,4); os.execv(sys.argv[1],sys.argv[1:])"
-        command = [sys.executable, "-c", shim, *args]
+        shim = (
+            "import os,sys; from open_terminal.browser.chrome import lock_profile; "
+            "os.dup2(0,3); os.dup2(1,4); lease=lock_profile(sys.argv[1]); "
+            "os.execv(sys.argv[2],sys.argv[2:])"
+        )
+        command = [sys.executable, "-c", shim, profile, *args]
         kwargs = {}
         if session.fs.username:
             import pwd
