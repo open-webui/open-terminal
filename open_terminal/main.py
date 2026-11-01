@@ -501,7 +501,6 @@ async def get_config():
             "system": ENABLE_SYSTEM_PROMPT,
             "git": shutil.which("git") is not None,
             "events": True,
-            "execute_stream": True,
         },
     }
 
