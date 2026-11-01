@@ -4,6 +4,25 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.15.0] - 2026-11-02
+
+### Added
+
+- Added support for Open WebUI's Browser tab to open websites and apps running inside Open Terminal. Choose Chrome for a full browser or Proxy for a lightweight page preview, with back, forward, reload, and page titles. Requires an updated Open WebUI.
+- Chrome browser tabs support typing, clicking, scrolling, pasting, and mobile page previews. Switching tabs keeps the other pages open. Each user's saved browser profile is reused across tabs and restarts, with automatic recovery from locks left by an interrupted browser. Chrome mode requires Chrome or Chromium on Linux or macOS; Chromium is now included in the default Docker image.
+- Local web app previews now support automatic page updates after you edit their files, along with loading their styles, images, and scripts through Open Terminal. This works with both direct terminal connections and connections through Open WebUI.
+- Added a Desktop tab for opening a Linux desktop in the terminal workspace. You can use graphical apps, including LibreOffice, and reopen the tab without closing running applications. The desktop and its required tools are included in the default Docker image. Requires an updated Open WebUI.
+- Assistants can see screenshots of that same desktop and click, drag, scroll, type text, and press keyboard shortcuts. You and the assistant work with the same open applications and workspace files.
+- Connected apps can now receive file and Git changes as they happen, including edits made from a terminal or another app. They can also update the list of available local web apps when a server starts or stops.
+- Connected apps can show background command output as it arrives and update the command list when commands start or finish. Closing the output viewer leaves the command running.
+- Added support for opening a repository's website from Open WebUI's Git panel and hiding local branch rename and delete actions for remote branches. Requires an updated Open WebUI.
+
+### Fixed
+
+- Added Chinese, Japanese, and Korean fonts to the default Docker image to address blank characters when previewing PDF and Word documents.
+- Git lookup failures now report the error instead of making an existing repository appear to be an ordinary folder.
+- Background commands now publish buffered output even when they stop producing text, and report completion only after their final output has been saved.
+
 ## [0.14.8] - 2026-11-01
 
 ### Added

@@ -215,7 +215,7 @@ async def lifespan(app):
 app = FastAPI(
     lifespan=lifespan,
     title="Open Terminal",
-    description="A remote terminal API.",
+    description="A remote computer API.",
     version=_pkg_version("open-terminal"),
 )
 app.add_middleware(NormalizeNullQueryMiddleware)
