@@ -10,7 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl wget net-tools iputils-ping dnsutils netcat-openbsd socat telnet \
     openssh-client rsync \
     # Browser tabs
-    chromium chromium-sandbox fonts-noto-cjk \
+    chromium chromium-sandbox fonts-noto-cjk fonts-noto-color-emoji \
     # Editors
     vim nano \
     # Version control
