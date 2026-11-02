@@ -461,7 +461,7 @@ class ActionRequest(BaseModel):
     actions: list[Action] = Field(
         min_length=1,
         max_length=50,
-        description="Desktop actions to execute in order, with one screenshot at the end.",
+        description="Desktop actions to execute in order, with one final screenshot.",
     )
 
 
@@ -531,13 +531,9 @@ async def perform_action(desktop, body):
 async def action(
     request: Request, body: ActionRequest, fs: UserFS = Depends(get_filesystem)
 ):
-    """Execute an actions list in order and return one screenshot after the last
-    action. Combine known steps in the same call: for example, type a terminal
-    command and press Return together, or click a field, type, and press Tab.
-    Do not split those steps into separate calls just to see intermediate images.
+    """Batch known steps in one call; stop when you need a fresh observation.
+    Executes 1–50 actions in order and returns one final screenshot.
     Each item can click, double-click, move, drag, scroll, type, or press a key.
-    Send 1 to 50 actions; use one when the next step needs a fresh observation.
-    Observe again after opening an app, navigation, or other uncertain UI changes.
     Use desktop_screenshot first and work from that image's pixel coordinates.
     Native macOS/Windows share the logged-in desktop. Type pastes literal text.
     Batches stop on failure and report completed_actions and failed_action_index

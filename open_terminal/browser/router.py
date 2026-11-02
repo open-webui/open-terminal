@@ -855,16 +855,13 @@ async def perform_action(chrome, body):
     summary="Interact with the user's Browser tab",
 )
 async def action(request: Request, body: ActionRequest):
-    """Execute an actions list in one Browser tab and return one accessibility
-    snapshot after the last action. Combine known steps in the same call: fill
-    several fields using current refs, or type a search and press Enter together.
-    Do not split those steps into separate calls just to see intermediate snapshots.
-    Send 1 to 50 actions; use one when the next step needs a fresh observation.
+    """Batch known steps in one call; stop when you need a fresh observation.
+    Executes 1–50 actions in one tab and returns one final accessibility snapshot.
+    Refs may expire after page changes.
     Each item can navigate, click, drag, scroll, type, or press a key in the
     existing Chrome browser tab using refs from browser_snapshot. Typing with a ref
     replaces that input's contents; without a ref it types into the focused element.
     Pixel coordinates from browser_screenshot are also supported for visual targets.
-    Observe again after navigation or other uncertain UI changes; refs may expire.
     Defaults to the active tab, or the last-used browser tab when hidden. Set a
     session_id from browser_tabs at the top level to target one tab for the batch.
     Batches stop on failure and report completed_actions and failed_action_index
