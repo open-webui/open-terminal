@@ -2362,6 +2362,13 @@ if ENABLE_TERMINAL:
         Report tab visibility so user-shell tools select the active or last-used shell::
 
             {"type": "activity", "active": true}
+
+        Attach a shell opened before the chat existed, without restarting it::
+
+            {"type": "chat", "chat_id": "<new_chat_id>"}
+
+        The server replies with the same type and chat_id, or an error. A shell
+        already assigned to a different chat cannot be reassigned.
         """
         session = _terminal_sessions.get(session_id)
         if session is None:
@@ -2448,6 +2455,16 @@ if ENABLE_TERMINAL:
                             _do_resize(rows, cols)
                         elif payload.get("type") == "activity" and isinstance(payload.get("active"), bool):
                             _set_terminal_active(session, payload["active"])
+                        elif payload.get("type") == "chat":
+                            chat_id = payload.get("chat_id")
+                            if not isinstance(chat_id, str) or not 1 <= len(chat_id) <= 128:
+                                await ws.send_json({"type": "chat", "error": "Invalid chat ID"})
+                            elif session["chat_id"] and session["chat_id"] != chat_id:
+                                await ws.send_json({"type": "chat", "error": "Terminal already belongs to another chat"})
+                            else:
+                                # The socket already authenticated this shell's owner. Keep the PTY alive.
+                                session["chat_id"] = chat_id
+                                await ws.send_json({"type": "chat", "chat_id": chat_id})
                     except (json.JSONDecodeError, KeyError):
                         pass
         tasks = (asyncio.create_task(_pty_reader()), asyncio.create_task(_ws_reader()))
