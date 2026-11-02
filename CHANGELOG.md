@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.16.0] - 2026-11-02
+
+### Added
+
+- You can now hear videos, music, and other app sounds from the Linux Desktop tab. Audio is compressed to keep data use low, and the default Docker image includes the required sound tools. Requires an updated Open WebUI. Sound sharing is not yet available for native Mac or Windows desktops.
+
+### Changed
+
+- Shortened the Browser and Desktop assistant instructions to favor completing known steps together, such as typing and pressing Enter, and checking the result before deciding what to do next.
+
+### Fixed
+
+- Fixed assistants missing a terminal opened before the first chat message. The existing terminal now joins the chat when you send that message, keeping its running programs, output, and settings without restarting the shell. Requires an updated Open WebUI.
+
 ## [0.15.5] - 2026-11-02
 
 ### Changed
