@@ -230,7 +230,7 @@ class Desktop:
         return self.audio_process is not None and self.audio_process.returncode is None
 
     async def start_audio(self):
-        if not all(shutil.which(name) for name in ("pulseaudio", "parec", "pactl")):
+        if not all(shutil.which(name) for name in ("pulseaudio", "ffmpeg", "pactl")):
             return
         socket = self.runtime / "audio.sock"
         self.env.update(
@@ -274,22 +274,21 @@ class Desktop:
 
     async def stream_audio(self, ws):
         process = await self.spawn(
-            "parec",
-            "--raw",
-            "--format=s16le",
-            "--rate=48000",
-            "--channels=2",
-            "--device=desktop.monitor",
-            "--latency-msec=20",
+            "ffmpeg", "-nostdin", "-loglevel", "error",
+            "-f", "pulse", "-sample_rate", "48000", "-channels", "2",
+            "-fragment_size", "3840", "-i", "desktop.monitor",
+            "-c:a", "libopus", "-b:a", "64k", "-vbr", "off",
+            "-application", "lowdelay", "-frame_duration", "20",
+            "-f", "webm", "-live", "1", "-cluster_time_limit", "100",
+            "-flush_packets", "1", "pipe:1",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
         )
         self.peers.add(ws)
 
         async def outgoing():
-            # 20 ms of stereo PCM per message. Bound slow clients' buffering.
-            while True:
-                data = await process.stdout.readexactly(3840)
+            # Forward the WebM stream unchanged; the browser handles Opus decoding.
+            while data := await process.stdout.read(4096):
                 await asyncio.wait_for(ws.send_bytes(data), 2)
 
         async def incoming():
