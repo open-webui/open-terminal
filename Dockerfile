@@ -85,6 +85,7 @@ RUN useradd -m -s /bin/bash user && echo 'user ALL=(ALL) NOPASSWD:ALL' >> /etc/s
 
 USER user
 ENV SHELL=/bin/bash
+ENV OPEN_TERMINAL_BROWSER_NO_SANDBOX=true
 ENV PATH="/home/user/.local/bin:${PATH}"
 WORKDIR /home/user
 

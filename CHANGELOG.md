@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.15.5] - 2026-11-02
+
+### Changed
+
+- Docker images now default to `OPEN_TERMINAL_BROWSER_NO_SANDBOX=true` so Chromium can start under Docker's default security restrictions. Chromium's sandbox remains enabled by default outside Docker. Container isolation is unchanged, but Chromium's protection for files and processes inside the container is disabled. Deployments that support Chromium's sandbox can restore it with `OPEN_TERMINAL_BROWSER_NO_SANDBOX=false`.
+
 ## [0.15.4] - 2026-11-02
 
 ### Changed

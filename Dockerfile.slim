@@ -126,6 +126,7 @@ RUN chmod +x /app/entrypoint-slim.sh
 # and simplify the entrypoint — but gosu handles it cleanly either way.
 #
 ENV SHELL=/bin/bash
+ENV OPEN_TERMINAL_BROWSER_NO_SANDBOX=true
 
 EXPOSE 8000
 
