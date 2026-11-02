@@ -63,7 +63,7 @@ RUN pip install --no-cache-dir \
 # Desktop sessions are started on demand and streamed through the terminal API.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     tigervnc-standalone-server xfce4 xfce4-terminal dbus-x11 \
-    xauth xdotool xclip scrot libreoffice libreoffice-gtk3 \
+    xauth xdotool xclip scrot libreoffice libreoffice-gtk3 pulseaudio pulseaudio-utils \
     && rm -rf /var/lib/apt/lists/*
 
 # Debian's launcher resets CHROMIUM_FLAGS before reading this directory.
