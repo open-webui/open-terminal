@@ -333,6 +333,8 @@ ActionType = Literal["click", "double_click", "move", "drag", "scroll", "type", 
 
 
 class Action(BaseModel):
+    model_config = {"extra": "forbid"}
+
     action: ActionType
     x: int | None = Field(default=None, ge=0, le=32767)
     y: int | None = Field(default=None, ge=0, le=32767)
@@ -366,24 +368,14 @@ class Action(BaseModel):
         return self
 
 
-class ActionRequest(Action):
-    action: ActionType | None = None
-    actions: list[Action] | None = Field(
-        default=None,
+class ActionRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    actions: list[Action] = Field(
         min_length=1,
         max_length=50,
         description="Desktop actions to execute in order, with one screenshot at the end.",
     )
-
-    @model_validator(mode="after")
-    def required_fields(self):
-        if self.actions is not None:
-            if self.model_fields_set - {"actions"}:
-                raise ValueError("Provide actions without single-action fields")
-            return self
-        if self.action is None:
-            raise ValueError("Provide an action or an actions list")
-        return super().required_fields()
 
 
 async def perform_action(desktop, body):
@@ -452,10 +444,13 @@ async def perform_action(desktop, body):
 async def action(
     request: Request, body: ActionRequest, fs: UserFS = Depends(get_filesystem)
 ):
-    """Click, double-click, move, drag, scroll, type text or press a key combination.
-    Send an actions list to execute up to 50 actions in order with one screenshot
-    at the end. A single action object is also accepted. Prefer short batches of
-    known actions; observe again after navigation or other uncertain UI changes.
+    """Execute an actions list in order and return one screenshot after the last
+    action. Combine known steps in the same call: for example, type a terminal
+    command and press Return together, or click a field, type, and press Tab.
+    Do not split those steps into separate calls just to see intermediate images.
+    Each item can click, double-click, move, drag, scroll, type, or press a key.
+    Send 1 to 50 actions; use one when the next step needs a fresh observation.
+    Observe again after opening an app, navigation, or other uncertain UI changes.
     Use desktop_screenshot first and work from that image's pixel coordinates.
     Native macOS/Windows share the logged-in desktop. Type pastes literal text.
     Batches stop on failure and report completed_actions and failed_action_index
@@ -464,7 +459,7 @@ async def action(
     desktop before retrying, and do not blindly replay the batch.
     """
     desktop = await get_desktop(request, fs)
-    actions = body.actions if body.actions is not None else [body]
+    actions = body.actions
     async with desktop.actions:
         # Reject invalid coordinates anywhere in the batch before sending input.
         for item in actions:
@@ -482,8 +477,6 @@ async def action(
                 completed += 1
             return Response(await desktop.screenshot(), media_type="image/png")
         except (HTTPException, OSError, RuntimeError, ValueError) as exc:
-            if body.actions is None:
-                raise
             raise HTTPException(
                 exc.status_code if isinstance(exc, HTTPException) else 502,
                 {

@@ -636,8 +636,9 @@ ActionType = Literal[
 
 
 class Action(BaseModel):
+    model_config = {"extra": "forbid"}
+
     action: ActionType
-    session_id: str | None = Field(default=None, max_length=128)
     ref: str | None = Field(
         default=None, pattern=r"^@?e[0-9]+$", max_length=64,
         description="Element ref from browser_snapshot, e.g. @e1",
@@ -679,26 +680,15 @@ class Action(BaseModel):
         return self
 
 
-class ActionRequest(Action):
-    action: ActionType | None = None
-    actions: list[Action] | None = Field(
-        default=None,
+class ActionRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    session_id: str | None = Field(default=None, max_length=128)
+    actions: list[Action] = Field(
         min_length=1,
         max_length=50,
         description="Actions to run in order in one tab, with one final accessibility snapshot.",
     )
-
-    @model_validator(mode="after")
-    def required_fields(self):
-        if self.actions is not None:
-            if self.model_fields_set - {"actions", "session_id"}:
-                raise ValueError("Provide actions without single-action fields")
-            if any(item.session_id is not None for item in self.actions):
-                raise ValueError("Set session_id only at the top level of a batch")
-            return self
-        if self.action is None:
-            raise ValueError("Provide an action or an actions list")
-        return super().required_fields()
 
 
 def key_event(value):
@@ -865,13 +855,15 @@ async def perform_action(chrome, body):
     summary="Interact with the user's Browser tab",
 )
 async def action(request: Request, body: ActionRequest):
-    """Navigate, click, drag, scroll, type literal text, or press a key in the
+    """Execute an actions list in one Browser tab and return one accessibility
+    snapshot after the last action. Combine known steps in the same call: fill
+    several fields using current refs, or type a search and press Enter together.
+    Do not split those steps into separate calls just to see intermediate snapshots.
+    Send 1 to 50 actions; use one when the next step needs a fresh observation.
+    Each item can navigate, click, drag, scroll, type, or press a key in the
     existing Chrome browser tab using refs from browser_snapshot. Typing with a ref
     replaces that input's contents; without a ref it types into the focused element.
     Pixel coordinates from browser_screenshot are also supported for visual targets.
-    Send an actions list to run up to 50 actions in order with one accessibility
-    snapshot at the end. A single action object is also accepted. Prefer short
-    batches of known actions, such as filling fields from the current snapshot.
     Observe again after navigation or other uncertain UI changes; refs may expire.
     Defaults to the active tab, or the last-used browser tab when hidden. Set a
     session_id from browser_tabs at the top level to target one tab for the batch.
@@ -880,7 +872,7 @@ async def action(request: Request, body: ActionRequest):
     not rolled back; the failed action may also have taken effect. Inspect the
     page before retrying, and do not blindly replay the batch.
     """
-    actions = body.actions if body.actions is not None else [body]
+    actions = body.actions
     async with browser_page(request, body.session_id) as chrome:
         # Reject invalid input anywhere in the batch before acting on the page.
         for item in actions:
@@ -898,8 +890,6 @@ async def action(request: Request, body: ActionRequest):
                 completed += 1
             return await chrome.snapshot()
         except (HTTPException, OSError, RuntimeError, ValueError) as exc:
-            if body.actions is None:
-                raise
             raise HTTPException(
                 exc.status_code if isinstance(exc, HTTPException) else 502,
                 {

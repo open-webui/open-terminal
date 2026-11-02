@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.15.4] - 2026-11-02
+
+### Changed
+
+- Desktop and Browser now require an actions list for every request, even for a single step. Their tool instructions tell assistants to combine steps such as typing a command and pressing Enter in one call, with one result after the last step. Clients using the old single-action format must update, and cached tool definitions must be refreshed.
+
 ## [0.15.3] - 2026-11-02
 
 ### Added
