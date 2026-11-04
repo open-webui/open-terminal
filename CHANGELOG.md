@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.16.1] - 2026-11-04
+
+### Fixed
+
+- Fixed Open Terminal becoming unresponsive when opening a large folder outside a Git repository, such as `/`. Watching that folder for changes no longer scans every subfolder.
+- Added the missing font for emoji and country flags to display correctly in the Browser tab when using the default Docker image.
+
 ## [0.16.0] - 2026-11-02
 
 ### Added

@@ -1,6 +1,6 @@
 [project]
 name = "open-terminal"
-version = "0.16.0"
+version = "0.16.1"
 description = "A remote computer API."
 license = "MIT"
 readme = "README.md"
