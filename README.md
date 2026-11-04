@@ -234,19 +234,22 @@ and advertise them as disabled in `/api/config`. Values `false`, `0`, and `no`
 (case-insensitive) disable the feature. Restart the server after changing these settings.
 Desktop support still requires its platform dependencies to be available.
 
-Chromium's sandbox is enabled by default outside Docker. All published Docker image
-variants set `OPEN_TERMINAL_BROWSER_NO_SANDBOX=true` so Browser can start under
-Docker's default security restrictions when Chromium is installed. This applies to
-both managed Browser tabs and Chromium launched from the Linux Desktop in the full
-Docker image. Container isolation remains unchanged, but Chromium's own sandbox
-no longer protects files and processes inside the container from a browser exploit.
+Chromium's sandbox is enabled by default outside Docker, except that managed Browser
+tabs add `--no-sandbox` when Open Terminal runs as root in single-user mode, because
+Chromium refuses to start as root without it. All published Docker image variants set
+`OPEN_TERMINAL_BROWSER_NO_SANDBOX=true` so Browser can start under Docker's default
+security restrictions when Chromium is installed. This applies to both managed Browser
+tabs and Chromium launched from the Linux Desktop in the full Docker image. Container
+isolation remains unchanged, but Chromium's own sandbox no longer protects files and
+processes inside the container from a browser exploit.
 
 To enable Chromium's sandbox in Docker, pass
 `-e OPEN_TERMINAL_BROWSER_NO_SANDBOX=false` when creating the container; the runtime
-must permit Chromium's sandbox operations. Outside Docker, set the variable to
-`true` only if your deployment cannot support the sandbox. Values `true`, `1`, and
-`yes` (case-insensitive) disable the sandbox. Restart or recreate Open Terminal
-after changing this setting.
+must permit Chromium's sandbox operations. Setting `OPEN_TERMINAL_BROWSER_NO_SANDBOX`
+explicitly disables the automatic flag, so `false` keeps the sandbox but Chromium
+cannot start as root. Outside Docker, set the variable to `true` only if your
+deployment cannot support the sandbox. Values `true`, `1`, and `yes` (case-insensitive)
+disable the sandbox. Restart or recreate Open Terminal after changing this setting.
 
 > [!TIP]
 > Use the system config at `/etc/open-terminal/config.toml` to set site-wide defaults for host and port, and the user config for personal settings like the API key — this keeps the key out of `ps` / `htop`.

@@ -17,7 +17,11 @@ import sys
 import websockets
 
 from fastapi import WebSocket, WebSocketDisconnect
-from open_terminal.env import BROWSER_NO_SANDBOX, sanitized_environ
+from open_terminal.env import (
+    BROWSER_NO_SANDBOX,
+    BROWSER_NO_SANDBOX_SET,
+    sanitized_environ,
+)
 from .rewrite import target_url
 
 log = logging.getLogger(__name__)
@@ -253,6 +257,16 @@ async def get_host(session):
             "--disable-dev-shm-usage",
         ]
         if BROWSER_NO_SANDBOX:
+            args.append("--no-sandbox")
+        elif (
+            os.name != "nt"
+            and os.getuid() == 0
+            and not session.fs.username
+            and not BROWSER_NO_SANDBOX_SET
+        ):
+            log.warning(
+                "Chromium cannot run as root with its sandbox; adding --no-sandbox"
+            )
             args.append("--no-sandbox")
         if os.name == "nt":
             host = await windows_host(args, profile, session.fs.home)
