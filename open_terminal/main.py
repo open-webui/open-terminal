@@ -2415,6 +2415,12 @@ if ENABLE_TERMINAL:
 
         The server replies with the same type and chat_id, or an error. A shell
         already assigned to a different chat cannot be reassigned.
+
+        With ``resume`` and ``flow_control`` set to true in auth, the server
+        confirms ``{"type": "flow_control"}``. Acknowledge consumed output with
+        ``{"type": "ack", "cursor": <output end>}`` to release more data.
+        Reads pause when the attached viewer falls behind; detached shells keep
+        running with bounded history.
         """
         session = _terminal_sessions.get(session_id)
         if session is None:

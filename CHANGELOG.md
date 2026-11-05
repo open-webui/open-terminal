@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.16.5] - 2026-11-05
+
+### Changed
+
+- Reduced pauses between screen updates in the Browser tab and when sharing a Mac or Windows desktop over connections with noticeable delay, helping scrolling and animations stay smoother. Requires an updated Open WebUI. Browser views using the built-in Linux desktop keep their existing streaming behavior.
+
+### Fixed
+
+- Commands that print large amounts of text now slow down when the connected terminal cannot display it fast enough, preventing unread output from being discarded while the viewer catches up. Requires an updated Open WebUI.
+- Fixed terminal output getting stuck when a large paste was waiting for the running program to accept it. Output can now continue while the paste waits.
+
 ## [0.16.4] - 2026-11-05
 
 ### Fixed
