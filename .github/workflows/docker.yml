@@ -24,6 +24,11 @@ jobs:
             file: Dockerfile
             suffix: ""
             short_tag: "latest"
+          - name: agents
+            file: Dockerfile
+            target: agents
+            suffix: "-agents"
+            short_tag: "agents"
           - name: slim
             file: Dockerfile.slim
             suffix: "-slim"
@@ -64,6 +69,8 @@ jobs:
         with:
           context: .
           file: ${{ matrix.variant.file }}
+          target: ${{ matrix.variant.target }}
+          no-cache-filters: ${{ matrix.variant.target }}
           platforms: ${{ matrix.platform }}
           labels: ${{ steps.meta.outputs.labels }}
           outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=${{ github.event_name != 'pull_request' }}
@@ -95,6 +102,9 @@ jobs:
           - name: default
             suffix: ""
             short_tag: "latest"
+          - name: agents
+            suffix: "-agents"
+            short_tag: "agents"
           - name: slim
             suffix: "-slim"
             short_tag: "slim"

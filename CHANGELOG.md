@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.16.7] - 2026-11-06
+
+### Added
+
+- Added an `agents` Docker image with the latest Codex and Claude Code releases installed at build time alongside the full Open Terminal toolkit, with authentication configured per user at runtime. Includes AMD64 and ARM64 publishing and versioned `-agents` tags.
+
 ## [0.16.6] - 2026-11-05
 
 ### Fixed

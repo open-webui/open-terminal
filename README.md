@@ -26,14 +26,14 @@ That's it — you're up and running at `http://localhost:8000`.
 
 #### Image Variants
 
-| | `latest` | `slim` | `alpine` | `openshift` |
-|---|---|---|---|---|
-| **Best for** | AI agent sandboxes | Production / hardened | Edge / CI / minimal footprint | OpenShift restricted SCC |
-| **Size** | ~4 GB | ~430 MB | ~230 MB | ~430 MB |
-| **Bundled tooling** | Node.js, gcc, ffmpeg, LibreOffice, LaTeX, Docker CLI, data science libs | git, curl, jq | git, curl, jq | git, curl, jq |
-| **Install packages at runtime** | ✔ (has `sudo`) | ✘ | ✘ | ✘ |
-| **Multi-user mode** | ✔ | ✘ | ✘ | ✘ |
-| **Egress firewall** | ✔ | ✔ | ✔ | ✘ |
+| | `latest` | `agents` | `slim` | `alpine` | `openshift` |
+|---|---|---|---|---|---|
+| **Best for** | AI agent sandboxes | Running coding agents | Production / hardened | Edge / CI / minimal footprint | OpenShift restricted SCC |
+| **Size** | ~4 GB | Full image + agent CLIs | ~430 MB | ~230 MB | ~430 MB |
+| **Bundled tooling** | Node.js, gcc, ffmpeg, LibreOffice, LaTeX, Docker CLI, data science libs | Everything in `latest`, plus Codex and Claude Code | git, curl, jq | git, curl, jq | git, curl, jq |
+| **Install packages at runtime** | ✔ (has `sudo`) | ✔ (has `sudo`) | ✘ | ✘ | ✘ |
+| **Multi-user mode** | ✔ | ✔ | ✘ | ✘ | ✘ |
+| **Egress firewall** | ✔ | ✔ | ✔ | ✔ | ✘ |
 
 **`slim`** and **`alpine`** have the same feature set. Slim uses Debian (glibc) for broader binary compatibility; Alpine uses musl libc and is smaller, but some C-extension pip packages may need to compile from source.
 
@@ -51,6 +51,47 @@ docker run -d -p 8000:8000 -e OPEN_TERMINAL_API_KEY=secret ghcr.io/open-webui/op
 
 > [!NOTE]
 > The OpenShift image is for restricted non-root pod policies. It does not support runtime package installs, Docker socket access, the iptables egress firewall, or `OPEN_TERMINAL_MULTI_USER=true`. Build a custom image ahead of time when OpenShift users need extra tools.
+
+#### Coding agents
+
+The **`agents`** image includes everything in `latest`, plus the **Codex** (`codex`)
+and **Claude Code** (`claude`) CLIs. It supports AMD64 and ARM64, runtime package
+installs, and multi-user mode just like the full image.
+
+```bash
+docker run -d --name open-terminal --restart unless-stopped -p 8000:8000 \
+  -v open-terminal:/home/user \
+  -e OPEN_TERMINAL_API_KEY=your-secret-key \
+  ghcr.io/open-webui/open-terminal:agents
+
+docker exec -it open-terminal bash
+```
+
+Inside the container, run `codex login --device-auth` to sign in to Codex, then
+`codex` from your project directory. Device login must be enabled in your ChatGPT
+account or workspace. Run `claude` and follow its login prompts to use Claude Code.
+For API-key authentication, provide the provider key at runtime: Codex supports
+`printenv OPENAI_API_KEY | codex login --with-api-key`, and Claude Code accepts
+`ANTHROPIC_API_KEY`. See the official [Codex authentication guide](https://developers.openai.com/codex/auth)
+and [Claude Code setup guide](https://code.claude.com/docs/en/setup#authenticate).
+
+The CLIs are installed globally outside `/home/user`, so mounting a home directory
+does not hide them. Persist each user's home to retain their agent configuration
+and file-based credentials; the volume above covers single-user mode. In multi-user
+mode, sign in from each user's own terminal and persist their homes separately.
+
+Each published build installs the latest CLI releases; Claude Code background
+updates are disabled. Pull a newer image to receive bundled CLI updates. Publishing follows
+the existing image conventions: `agents`, `latest-agents`, and
+`<version>-agents` (including `<major>.<minor>-agents`). To build locally:
+
+```bash
+docker build --target agents --no-cache-filter agents -t open-terminal:agents .
+```
+
+The cache filter refreshes the agent installs while reusing the full image's cached
+layers. The container starts the Open Terminal server; launch the agents from a
+terminal or through the command API when needed.
 
 #### Updating
 
