@@ -426,6 +426,7 @@ class Chrome:
         self.peer = None
         self.frame = asyncio.Queue(maxsize=1)
         self.state_changed = asyncio.Event()
+        self.capture_changed = False
         self.width, self.height = 1024, 768
         self.mobile = False
         self.capture_lock = asyncio.Lock()
@@ -601,6 +602,7 @@ class Chrome:
                 self.refs.clear()
             if method == "Page.loadEventFired":
                 self.error = ""
+                self.capture_changed = True
             self.state_changed.set()
 
     async def state(self):
@@ -775,6 +777,10 @@ class Chrome:
                 while True:
                     await self.state_changed.wait()
                     self.state_changed.clear()
+                    if self.capture_changed and viewport_ready.is_set():
+                        self.capture_changed = False
+                        # Navigation can leave native Chrome capture stalled until it is restarted.
+                        await self.capture()
                     if state := await self.state():
                         await ws.send_json(state)
 
