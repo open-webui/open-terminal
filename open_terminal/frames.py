@@ -1,9 +1,38 @@
 """Bounded binary image updates shared by native desktops and Chrome."""
 
+import asyncio
 import io
 import struct
 
 from PIL import Image, ImageChops
+
+
+class FrameWindow:
+    """Start with one frame until a viewer opts into ordered pipelining."""
+
+    def __init__(self):
+        self.limit = 1
+        self.pending = 0
+        self.ready = asyncio.Event()
+        self.ready.set()
+
+    async def wait(self):
+        await self.ready.wait()
+
+    def sent(self):
+        self.pending += 1
+        if self.pending >= self.limit:
+            self.ready.clear()
+
+    def ack(self, window=1):
+        if type(window) is not int or not 1 <= window <= 3:
+            raise ValueError("Invalid frame window")
+        self.limit = window
+        self.pending = max(0, self.pending - 1)
+        if self.pending < self.limit:
+            self.ready.set()
+        else:
+            self.ready.clear()
 
 
 class Frames:

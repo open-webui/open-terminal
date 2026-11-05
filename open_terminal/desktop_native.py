@@ -12,11 +12,12 @@ from PIL import Image
 from pydantic import BaseModel, Field
 from typing import Literal
 
-from open_terminal.frames import Frames
+from open_terminal.frames import Frames, FrameWindow
 
 
 class Input(BaseModel):
     type: Literal["mouse", "key", "paste", "release", "frameAck"]
+    window: int = Field(default=1, ge=1, le=3)
     x: int = Field(default=0, ge=0, le=32767)
     y: int = Field(default=0, ge=0, le=32767)
     buttons: int = Field(default=0, ge=0, le=7)
@@ -255,8 +256,7 @@ class NativeDesktop:
 
     async def stream(self, ws):
         self.peers.add(ws)
-        ready = asyncio.Event()
-        ready.set()
+        ready = FrameWindow()
         keys, buttons = set(), set()
         encoder = Frames()
 
@@ -266,7 +266,7 @@ class NativeDesktop:
                 start = time.monotonic()
                 packet = await self.work(lambda: encoder.encode(self.grab()))
                 if packet is not None:
-                    ready.clear()
+                    ready.sent()
                     await ws.send_bytes(packet)
                 await asyncio.sleep(max(0, 1 / 30 - (time.monotonic() - start)))
 
@@ -274,7 +274,7 @@ class NativeDesktop:
             while True:
                 message = Input.model_validate(await ws.receive_json())
                 if message.type == "frameAck":
-                    ready.set()
+                    ready.ack(message.window)
                 else:
                     async with self.actions:
                         await asyncio.to_thread(self.handle, message, keys, buttons)

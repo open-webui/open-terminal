@@ -22,6 +22,7 @@ import websockets
 from PIL import Image
 
 from fastapi import WebSocket, WebSocketDisconnect
+from open_terminal.frames import FrameWindow
 from open_terminal.env import (
     BROWSER_CDP_URL, BROWSER_MODE, BROWSER_NO_SANDBOX, BROWSER_USER_DATA_DIR,
     sanitized_environ,
@@ -714,8 +715,7 @@ class Chrome:
         tasks = []
         binary_frames = False
         viewport_ready = asyncio.Event()
-        ready = asyncio.Event()
-        ready.set()
+        ready = FrameWindow()
         pending_mouse = {}
         mouse_changed = asyncio.Event()
         try:
@@ -750,7 +750,7 @@ class Chrome:
                             encoder.jpeg, data, self.quality
                         )
                         if packet is not None:
-                            ready.clear()
+                            ready.sent()
                             await ws.send_bytes(packet)
                     else:
                         await ws.send_json(
@@ -790,7 +790,7 @@ class Chrome:
                         if viewport_ready.is_set():
                             await self.capture()
                     elif kind == "frameAck":
-                        ready.set()
+                        ready.ack(msg.get("window", 1))
                     elif kind == "navigate":
                         pending_mouse.clear()
                         self.navigate(str(msg.get("url", "")))

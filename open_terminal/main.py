@@ -2238,6 +2238,7 @@ if ENABLE_TERMINAL:
             input_lock=asyncio.Lock(),
             output_offset=0,
             output_changed=asyncio.Event(),
+            output_consumed=asyncio.Event(),
             reader_done=False,
             detached_at=time.monotonic(),
         )
@@ -2253,6 +2254,11 @@ if ENABLE_TERMINAL:
         """Drain the PTY even while no viewer is attached."""
         try:
             while True:
+                # Stop the producer before unread output can leave the retained history.
+                while (session.get("viewer_ack") is not None
+                       and session["output_offset"] - session["viewer_ack"] >= 512 * 1024):
+                    session["output_consumed"].clear()
+                    await session["output_consumed"].wait()
                 if session["backend"] == "pty":
                     data = await read_pty(session["master_fd"])
                 else:
@@ -2463,34 +2469,73 @@ if ENABLE_TERMINAL:
             await ws.close(code=4000, reason="Invalid output cursor")
             return
 
+        flow_control = resume and payload.get("flow_control") is True
+        acknowledged = max(cursor, session["output_offset"] - len(session["output"]))
+        if flow_control:
+            session["viewer_ack"] = acknowledged
+
         async def _pty_reader():
             nonlocal cursor
+            if flow_control:
+                await ws.send_json({"type": "flow_control"})
             while not stop_event.is_set():
+                while flow_control and cursor - acknowledged >= 256 * 1024:
+                    session["output_consumed"].clear()
+                    await session["output_consumed"].wait()
                 session["output_changed"].clear()
-                end = session["output_offset"]
-                oldest = end - len(session["output"])
+                oldest = session["output_offset"] - len(session["output"])
                 start = max(cursor, oldest)
+                end = min(session["output_offset"], start + 64 * 1024)
+                if flow_control:
+                    end = min(end, acknowledged + 256 * 1024)
                 if end > cursor:
-                    data = bytes(session["output"][start - oldest:])
-                    if resume:
-                        await ws.send_json({"type": "output", "start": start, "end": end, "truncated": cursor < oldest})
-                    await ws.send_bytes(data)
+                    data = bytes(session["output"][start - oldest:end - oldest])
+                    truncated = cursor < oldest
                     cursor = end
+                    if resume:
+                        await ws.send_json({"type": "output", "start": start, "end": end, "truncated": truncated})
+                    await ws.send_bytes(data)
+                    continue
                 if session["reader_done"]:
                     return
                 await session["output_changed"].wait()
 
+        input_queue = asyncio.Queue(maxsize=64)
+        input_bytes = 0
+
+        async def _input_writer():
+            nonlocal input_bytes
+            while True:
+                data = await input_queue.get()
+                await _write_terminal(session, data)
+                input_bytes -= len(data)
+
         async def _ws_reader():
+            nonlocal acknowledged, input_bytes
             while True:
                 msg = await ws.receive()
                 if msg["type"] == "websocket.disconnect":
                     break
                 elif "bytes" in msg and msg["bytes"]:
-                    await _write_terminal(session, msg["bytes"])
+                    data = msg["bytes"]
+                    if input_queue.full() or input_bytes + len(data) > 1024 * 1024:
+                        await ws.close(code=4000, reason="Terminal input backlog exceeded")
+                        return
+                    input_bytes += len(data)
+                    # A blocked paste must not prevent reading output acknowledgements.
+                    input_queue.put_nowait(data)
                 elif "text" in msg and msg["text"]:
                     try:
                         payload = json.loads(msg["text"])
-                        if payload.get("type") == "resize":
+                        if payload.get("type") == "ack" and flow_control:
+                            consumed = payload.get("cursor")
+                            if type(consumed) is not int or not acknowledged <= consumed <= cursor:
+                                await ws.close(code=4000, reason="Invalid output acknowledgement")
+                                return
+                            acknowledged = consumed
+                            session["viewer_ack"] = consumed
+                            session["output_consumed"].set()
+                        elif payload.get("type") == "resize":
                             cols = payload.get("cols", 80)
                             rows = payload.get("rows", 24)
                             _do_resize(rows, cols)
@@ -2508,7 +2553,8 @@ if ENABLE_TERMINAL:
                                 await ws.send_json({"type": "chat", "chat_id": chat_id})
                     except (json.JSONDecodeError, KeyError):
                         pass
-        tasks = (asyncio.create_task(_pty_reader()), asyncio.create_task(_ws_reader()))
+        tasks = (asyncio.create_task(_pty_reader()), asyncio.create_task(_ws_reader()),
+                 asyncio.create_task(_input_writer()))
         session["viewer_tasks"] = tasks
         try:
             await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
@@ -2519,6 +2565,8 @@ if ENABLE_TERMINAL:
             for task in tasks:
                 task.cancel()
             session["connected"] = False
+            session.pop("viewer_ack", None)
+            session["output_consumed"].set()
             session["detached_at"] = time.monotonic()
             session["viewer_tasks"] = ()
             try:
