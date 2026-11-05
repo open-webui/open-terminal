@@ -1,4 +1,4 @@
-"""Chrome tabs using private CDP pipes on POSIX and loopback CDP on Windows."""
+"""Managed Chrome tabs or attachments to an existing Chrome over CDP."""
 
 from __future__ import annotations
 
@@ -11,13 +11,19 @@ import json
 import logging
 import os
 from pathlib import Path
+import re
 import shutil
 import sys
+from urllib.parse import urlsplit
 
+import httpx
 import websockets
 
 from fastapi import WebSocket, WebSocketDisconnect
-from open_terminal.env import BROWSER_NO_SANDBOX, sanitized_environ
+from open_terminal.env import (
+    BROWSER_CDP_URL, BROWSER_MODE, BROWSER_NO_SANDBOX, BROWSER_USER_DATA_DIR,
+    sanitized_environ,
+)
 from .rewrite import target_url
 
 log = logging.getLogger(__name__)
@@ -54,6 +60,42 @@ def find_browser():
         "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
     ]
     return next((p for p in candidates if p and Path(p).is_file()), None)
+
+
+async def personal_endpoint():
+    if BROWSER_CDP_URL:
+        endpoint = BROWSER_CDP_URL.strip()
+        parsed = urlsplit(endpoint)
+        if parsed.scheme in ("http", "https") and parsed.hostname:
+            async with httpx.AsyncClient(timeout=10, trust_env=False) as client:
+                response = await client.get(endpoint.rstrip("/") + "/json/version")
+                response.raise_for_status()
+                endpoint = response.json().get("webSocketDebuggerUrl", "")
+            parsed = urlsplit(endpoint)
+        if parsed.scheme not in ("ws", "wss") or not parsed.hostname:
+            raise ValueError("Chrome CDP URL must be an HTTP address or a WebSocket endpoint")
+        return endpoint
+
+    if BROWSER_USER_DATA_DIR:
+        directory = Path(BROWSER_USER_DATA_DIR).expanduser()
+    elif sys.platform == "darwin":
+        directory = Path.home() / "Library/Application Support/Google/Chrome"
+    elif os.name == "nt":
+        directory = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData/Local")) / "Google/Chrome/User Data"
+    else:
+        directory = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "google-chrome"
+    path = directory / "DevToolsActivePort"
+    try:
+        lines = (await asyncio.to_thread(path.read_text, encoding="utf-8")).splitlines()
+        port = int(lines[0])
+        if not 0 < port < 65536 or not re.fullmatch(r"/devtools/browser(?:/[\w-]+)?", lines[1]):
+            raise ValueError("Invalid debugging endpoint")
+    except (OSError, ValueError, IndexError) as exc:
+        raise RuntimeError(
+            f"Cannot discover Chrome from {path}. Start Chrome and enable debugging at "
+            "chrome://inspect/#remote-debugging, or set OPEN_TERMINAL_BROWSER_CDP_URL."
+        ) from exc
+    return f"ws://127.0.0.1:{port}{lines[1]}"
 
 
 def lock_profile(profile):
@@ -94,7 +136,7 @@ def lock_profile(profile):
 
 
 class Host:
-    def __init__(self, process, display=None, channel=None):
+    def __init__(self, process=None, display=None, channel=None):
         self.process = process
         self.channel = channel
         self.display = display
@@ -104,12 +146,13 @@ class Host:
         self.sequence = 0
         self.pending = {}
         self.handlers = {}
+        self.targets = {}
         self.stderr = b""
         self.stderr_reader = asyncio.create_task(self.read_stderr())
         self.reader = asyncio.create_task(self.read())
 
     async def read_stderr(self):
-        if self.process.stderr is not None:
+        if self.process is not None and self.process.stderr is not None:
             while chunk := await self.process.stderr.read(4096):
                 self.stderr = (self.stderr + chunk)[-4096:]
 
@@ -131,6 +174,9 @@ class Host:
                             )
                         else:
                             future.set_result(message.get("result", {}))
+                elif message.get("method") == "Target.detachedFromTarget":
+                    if handler := self.handlers.get(message.get("params", {}).get("sessionId")):
+                        handler("Inspector.detached", {"reason": "Chrome tab detached"})
                 elif handler := self.handlers.get(message.get("sessionId")):
                     # Handlers never wait on CDP, so its reader remains available for responses.
                     handler(message.get("method"), message.get("params", {}))
@@ -141,6 +187,8 @@ class Host:
                 if not future.done():
                     future.set_exception(RuntimeError("Chrome disconnected"))
             self.pending.clear()
+            for handler in list(self.handlers.values()):
+                handler("Inspector.detached", {"reason": "Chrome disconnected"})
 
     async def send(self, method, params=None, session=None):
         if self.reader.done():
@@ -162,20 +210,23 @@ class Host:
                 return await asyncio.wait_for(future, 15)
             except TimeoutError as exc:
                 raise RuntimeError(f"Chrome did not respond to {method}") from exc
+        except (OSError, websockets.ConnectionClosed) as exc:
+            raise RuntimeError("Chrome disconnected. Reopen this browser tab.") from exc
         finally:
             self.pending.pop(number, None)
 
     async def close(self):
-        with contextlib.suppress(Exception):
-            await asyncio.wait_for(self.send("Browser.close"), 2)
-        if self.process.returncode is None:
-            with contextlib.suppress(ProcessLookupError):
-                self.process.terminate()
-            try:
-                await asyncio.wait_for(self.process.wait(), 5)
-            except TimeoutError:
-                self.process.kill()
-                await self.process.wait()
+        if self.process is not None:
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(self.send("Browser.close"), 2)
+            if self.process.returncode is None:
+                with contextlib.suppress(ProcessLookupError):
+                    self.process.terminate()
+                try:
+                    await asyncio.wait_for(self.process.wait(), 5)
+                except TimeoutError:
+                    self.process.kill()
+                    await self.process.wait()
         self.reader.cancel()
         await asyncio.gather(self.reader, return_exceptions=True)
         with contextlib.suppress(TimeoutError):
@@ -230,11 +281,35 @@ async def windows_host(args, profile, home):
 
 async def get_host(session):
     async with host_lock:
-        key = (session.owner, session.fs.home)
-        if key in hosts and hosts[key].process.returncode is None:
+        if BROWSER_MODE == "personal" and session.fs.username:
+            raise RuntimeError("Personal Chrome requires single-user mode")
+        key = (session.owner, "personal" if BROWSER_MODE == "personal" else session.fs.home)
+        if key in hosts and not hosts[key].reader.done() and (
+            hosts[key].process is None or hosts[key].process.returncode is None
+        ):
             return hosts[key]
         if key in hosts:
             await hosts.pop(key).close()
+        if BROWSER_MODE == "personal":
+            host = None
+            try:
+                channel = await websockets.connect(
+                    await personal_endpoint(), max_size=16 * 1024 * 1024,
+                    open_timeout=20, close_timeout=2,
+                )
+                host = Host(channel=channel)
+                await host.send("Browser.getVersion")
+            except BaseException as exc:
+                if host:
+                    await host.close()
+                if isinstance(exc, asyncio.CancelledError):
+                    raise
+                raise RuntimeError(
+                    f"Could not connect to personal Chrome: {exc}. "
+                    "Enable debugging at chrome://inspect/#remote-debugging and approve the connection in Chrome."
+                ) from exc
+            hosts[key] = host
+            return host
         binary = find_browser()
         if not binary:
             raise RuntimeError(
@@ -357,46 +432,75 @@ class Chrome:
         self.vnc_peer = None
         self.acks = set()
         self.refs = {}
+        self.owns_target = host.process is not None
+        self.detached = False
+        self.closed = False
         host.handlers[cdp_session] = self.event
 
     @classmethod
-    async def create(cls, session):
+    async def create(cls, session, target_id=None):
+        if BROWSER_MODE == "personal" and not target_id:
+            raise ValueError("Select a Chrome tab from /browser/targets and supply target_id")
+        if BROWSER_MODE == "managed" and target_id:
+            raise ValueError("target_id requires personal browser mode")
         host = await get_host(session)
         chrome = None
-        target = (
-            await host.send(
-                "Target.createTarget",
-                {"url": "about:blank", "background": bool(host.display)},
-            )
-        )["targetId"]
+        attached = None
+        if host.process is None:
+            target = target_id
+            if target in host.targets:
+                raise ValueError("This Chrome tab is already attached. Release its Browser session first.")
+            host.targets[target] = session
+        else:
+            target = (
+                await host.send(
+                    "Target.createTarget",
+                    {"url": "about:blank", "background": bool(host.display)},
+                )
+            )["targetId"]
         try:
+            if host.process is None:
+                info = (await host.send("Target.getTargetInfo", {"targetId": target}))["targetInfo"]
+                if info.get("type") != "page" or not info.get("url", "").startswith(("http://", "https://")):
+                    raise ValueError("Select an HTTP or HTTPS Chrome tab")
             attached = await host.send(
                 "Target.attachToTarget", {"targetId": target, "flatten": True}
             )
             chrome = cls(session, host, target, attached["sessionId"])
             await chrome.send("Page.enable")
             await chrome.send("Runtime.enable")
-            await chrome.send(
-                "Page.addScriptToEvaluateOnNewDocument",
-                {
-                    "source": """
+            if chrome.owns_target:
+                await chrome.send(
+                    "Page.addScriptToEvaluateOnNewDocument",
+                    {
+                        "source": """
                 window.open = url => { if (url) location.assign(url); return null; };
                 addEventListener('click', e => {const a=e.target.closest?.('a[target]');
                   if(a && a.target !== '_self'){e.preventDefault(); location.assign(a.href);}},true);
             """
-                },
-            )
-            if session.url:
-                chrome.navigate(session.url)
+                    },
+                )
+                if session.url:
+                    chrome.navigate(session.url)
+            else:
+                await chrome.state()
             return chrome
         except BaseException:
             if chrome:
-                host.handlers.pop(chrome.cdp_session, None)
-            with contextlib.suppress(Exception):
-                await host.send("Target.closeTarget", {"targetId": target})
+                await chrome.close()
+            else:
+                if host.targets.get(target) is session:
+                    host.targets.pop(target)
+                with contextlib.suppress(Exception):
+                    if host.process is not None:
+                        await host.send("Target.closeTarget", {"targetId": target})
+                    elif attached:
+                        await host.send("Target.detachFromTarget", {"sessionId": attached["sessionId"]})
             raise
 
     async def send(self, method, params=None):
+        if self.detached or self.closed:
+            raise RuntimeError("Chrome tab disconnected. Reattach it from /browser/targets.")
         return await self.host.send(method, params, self.cdp_session)
 
     async def snapshot(self):
@@ -481,7 +585,13 @@ class Chrome:
         self.navigation = asyncio.create_task(load())
 
     def event(self, method, params):
-        if method == "Page.screencastFrame":
+        if method == "Inspector.detached":
+            self.detached = True
+            self.refs.clear()
+            if self.host.targets.get(self.target) is self.session:
+                self.host.targets.pop(self.target)
+            self.state_changed.set()
+        elif method == "Page.screencastFrame":
             # A slow viewer must not block Chrome; retain only its newest full frame.
             task = asyncio.create_task(
                 self.send("Page.screencastFrameAck", {"sessionId": params["sessionId"]})
@@ -501,6 +611,7 @@ class Chrome:
             "Page.frameNavigated",
             "Page.navigatedWithinDocument",
             "Page.loadEventFired",
+            "Page.frameResized",
         ):
             if method == "Page.frameNavigated" and not params.get("frame", {}).get("parentId"):
                 self.refs.clear()
@@ -516,6 +627,8 @@ class Chrome:
             if str(exc) == "Not attached to an active page":
                 return None
             raise
+        if not self.owns_target:
+            await self.update_viewport()
         entries, index = history["entries"], history["currentIndex"]
         entry = entries[index] if entries else {}
         url = entry.get("url", "")
@@ -530,7 +643,15 @@ class Chrome:
             "canGoBack": index > 0,
             "canGoForward": index < len(entries) - 1,
             "transport": "vnc" if self.host.display else "frames",
+            "width": self.width,
+            "height": self.height,
         }
+
+    async def update_viewport(self):
+        metrics = await self.send("Page.getLayoutMetrics")
+        viewport = metrics["cssVisualViewport"]
+        self.width = max(1, round(viewport["clientWidth"]))
+        self.height = max(1, round(viewport["clientHeight"]))
 
     async def capture(self):
         if self.host.display:
@@ -538,14 +659,14 @@ class Chrome:
         await self.send("Page.stopScreencast")
         if not self.visible:
             return
-        await self.send("Page.bringToFront")
+        if self.owns_target:
+            await self.send("Page.bringToFront")
         await self.send(
             "Page.startScreencast",
             {
                 "format": "jpeg",
                 "quality": self.quality,
-                "maxWidth": self.width,
-                "maxHeight": self.height,
+                **({"maxWidth": self.width, "maxHeight": self.height} if self.owns_target else {}),
                 "everyNthFrame": 1,
             },
         )
@@ -686,6 +807,9 @@ class Chrome:
                         self.visible = msg.get("visible") is True
                         await self.capture()
                     elif kind == "viewport":
+                        if not self.owns_target:
+                            self.state_changed.set()
+                            continue
                         self.width = max(240, min(2560, int(msg.get("width", 1024))))
                         self.height = max(200, min(2160, int(msg.get("height", 768))))
                         mobile = msg.get("mobile") is True
@@ -803,6 +927,9 @@ class Chrome:
                     await self.send("Page.stopScreencast")
 
     async def close(self):
+        if self.closed:
+            return
+        self.closed = True
         for task in list(self.acks):
             task.cancel()
         await asyncio.gather(*self.acks, return_exceptions=True)
@@ -816,5 +943,10 @@ class Chrome:
             with contextlib.suppress(Exception):
                 await self.vnc_peer.close(code=4004)
         self.host.handlers.pop(self.cdp_session, None)
+        if self.host.targets.get(self.target) is self.session:
+            self.host.targets.pop(self.target)
         with contextlib.suppress(Exception):
-            await self.host.send("Target.closeTarget", {"targetId": self.target})
+            if self.owns_target:
+                await self.host.send("Target.closeTarget", {"targetId": self.target})
+            elif not self.detached:
+                await self.host.send("Target.detachFromTarget", {"sessionId": self.cdp_session})

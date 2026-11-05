@@ -153,6 +153,18 @@ BROWSER_NO_SANDBOX = os.environ.get(
     "OPEN_TERMINAL_BROWSER_NO_SANDBOX", "false"
 ).lower() in ("true", "1", "yes")
 
+BROWSER_MODE = os.environ.get(
+    "OPEN_TERMINAL_BROWSER_MODE", config.get("browser_mode", "managed")
+).lower()
+if BROWSER_MODE not in ("managed", "personal"):
+    raise ValueError("OPEN_TERMINAL_BROWSER_MODE must be 'managed' or 'personal'")
+BROWSER_CDP_URL = os.environ.get(
+    "OPEN_TERMINAL_BROWSER_CDP_URL", config.get("browser_cdp_url", "")
+)
+BROWSER_USER_DATA_DIR = os.environ.get(
+    "OPEN_TERMINAL_BROWSER_USER_DATA_DIR", config.get("browser_user_data_dir", "")
+)
+
 ENABLE_DESKTOP = os.environ.get(
     "OPEN_TERMINAL_ENABLE_DESKTOP",
     str(config.get("enable_desktop", True)),
