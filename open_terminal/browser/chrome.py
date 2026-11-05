@@ -6,6 +6,7 @@ import asyncio
 import base64
 import contextlib
 import hashlib
+import io
 from itertools import count
 import json
 import logging
@@ -18,6 +19,7 @@ from urllib.parse import urlsplit
 
 import httpx
 import websockets
+from PIL import Image
 
 from fastapi import WebSocket, WebSocketDisconnect
 from open_terminal.env import (
@@ -424,6 +426,8 @@ class Chrome:
         self.frame = asyncio.Queue(maxsize=1)
         self.state_changed = asyncio.Event()
         self.width, self.height = 1024, 768
+        self.mobile = False
+        self.capture_lock = asyncio.Lock()
         self.quality = 65
         self.visible = True
         self.navigation = None
@@ -622,23 +626,34 @@ class Chrome:
             "transport": "vnc" if self.host.display else "frames",
         }
 
+    async def set_viewport(self):
+        await self.send(
+            "Emulation.setDeviceMetricsOverride",
+            {
+                "width": self.width, "height": self.height,
+                "deviceScaleFactor": 1, "mobile": self.mobile,
+            },
+        )
+
     async def capture(self):
         if self.host.display:
             return
-        await self.send("Page.stopScreencast")
-        if not self.visible:
-            return
-        await self.send("Page.bringToFront")
-        await self.send(
-            "Page.startScreencast",
-            {
-                "format": "jpeg",
-                "quality": self.quality,
-                "maxWidth": self.width,
-                "maxHeight": self.height,
-                "everyNthFrame": 1,
-            },
-        )
+        async with self.capture_lock:
+            await self.send("Page.stopScreencast")
+            if not self.visible:
+                return
+            await self.send("Page.bringToFront")
+            await self.set_viewport()
+            await self.send(
+                "Page.startScreencast",
+                {
+                    "format": "jpeg",
+                    "quality": self.quality,
+                    "maxWidth": self.width,
+                    "maxHeight": self.height,
+                    "everyNthFrame": 1,
+                },
+            )
 
     async def resize_display(self):
         display = self.host.display
@@ -698,6 +713,7 @@ class Chrome:
         self.peer = ws
         tasks = []
         binary_frames = False
+        viewport_ready = asyncio.Event()
         ready = asyncio.Event()
         ready.set()
         pending_mouse = {}
@@ -705,18 +721,33 @@ class Chrome:
         try:
             if state := await self.state():
                 await ws.send_json(state)
-            await self.capture()
+            if self.host.process is not None:
+                await self.capture()
 
             async def frames():
                 from open_terminal.frames import Frames
 
                 encoder = Frames()
+                repaired_viewport = None
+                await viewport_ready.wait()
                 while True:
                     await ready.wait()
                     frame = await self.frame.get()
+                    data = base64.b64decode(frame["data"])
+                    with Image.open(io.BytesIO(data)) as image:
+                        width, height = image.size
+                    # Native Chrome can restore its window surface after applying emulation.
+                    # Reapply once after observing the mismatch, not on an arbitrary timer.
+                    if abs(width * self.height - height * self.width) > 2 * max(self.width, self.height):
+                        viewport = (self.width, self.height, self.mobile)
+                        if repaired_viewport != viewport:
+                            repaired_viewport = viewport
+                            await self.capture()
+                        continue
+                    repaired_viewport = None
                     if binary_frames:
                         packet = await asyncio.to_thread(
-                            encoder.jpeg, base64.b64decode(frame["data"]), self.quality
+                            encoder.jpeg, data, self.quality
                         )
                         if packet is not None:
                             ready.clear()
@@ -756,7 +787,8 @@ class Chrome:
                     kind = msg.get("type")
                     if kind == "frames":
                         binary_frames = True
-                        await self.capture()
+                        if viewport_ready.is_set():
+                            await self.capture()
                     elif kind == "frameAck":
                         ready.set()
                     elif kind == "navigate":
@@ -774,20 +806,14 @@ class Chrome:
                         await self.send("Page.reload")
                     elif kind == "visibility":
                         self.visible = msg.get("visible") is True
-                        await self.capture()
+                        if viewport_ready.is_set():
+                            await self.capture()
                     elif kind == "viewport":
                         self.width = max(240, min(2560, int(msg.get("width", 1024))))
                         self.height = max(200, min(2160, int(msg.get("height", 768))))
-                        mobile = msg.get("mobile") is True
-                        await self.send(
-                            "Emulation.setDeviceMetricsOverride",
-                            {
-                                "width": self.width,
-                                "height": self.height,
-                                "deviceScaleFactor": 1,
-                                "mobile": mobile,
-                            },
-                        )
+                        mobile = self.mobile = msg.get("mobile") is True
+                        if self.host.display:
+                            await self.set_viewport()
                         await self.send(
                             "Emulation.setTouchEmulationEnabled", {"enabled": mobile}
                         )
@@ -805,12 +831,18 @@ class Chrome:
                             async with self.host.view_lock:
                                 if self.host.viewer is self:
                                     await self.resize_display()
+                        # A reconnect can retain frames from the previous viewer's viewport.
+                        if not viewport_ready.is_set():
+                            while not self.frame.empty():
+                                self.frame.get_nowait()
                         await self.capture()
+                        viewport_ready.set()
                     elif kind == "quality":
                         self.quality = {"low": 40, "balanced": 65, "crisp": 90}.get(
                             msg.get("quality"), 65
                         )
-                        await self.capture()
+                        if viewport_ready.is_set():
+                            await self.capture()
                     elif kind == "mouse":
                         event = {
                             k: msg[k]
