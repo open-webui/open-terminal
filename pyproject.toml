@@ -23,8 +23,6 @@ dependencies = [
     "python-pptx>=1.0.0",
     "striprtf>=0.0.26",
     "xlrd>=2.0.0",
-    "nbclient>=0.10.0",
-    "ipykernel>=6.0.0",
     "pywinpty>=2.0.0; sys_platform == 'win32'",
     "pillow>=10.0.0",
     "mss>=10.0.0; sys_platform == 'darwin' or sys_platform == 'win32'",
@@ -33,6 +31,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+notebooks = ["nbclient>=0.10.0", "ipykernel>=6.0.0"]
 mcp = ["fastmcp>=4.0.0"]
 
 [project.scripts]

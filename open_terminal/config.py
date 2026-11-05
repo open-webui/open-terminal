@@ -27,7 +27,7 @@ def _default_user_config_path() -> Path:
 _SYSTEM_CONFIG_PATH = Path("/etc/open-terminal/config.toml")
 
 
-def load_config(explicit_path: str | None = None) -> dict:
+def load_config(explicit_path: str | None = None, *, isolated: bool = False) -> dict:
     """Load and merge TOML configuration files.
 
     Parameters
@@ -45,7 +45,7 @@ def load_config(explicit_path: str | None = None) -> dict:
     merged: dict = {}
 
     # 1. System config (lowest priority of the two files)
-    if _SYSTEM_CONFIG_PATH.is_file():
+    if not isolated and _SYSTEM_CONFIG_PATH.is_file():
         try:
             merged.update(tomllib.loads(_SYSTEM_CONFIG_PATH.read_text("utf-8")))
         except Exception as exc:
@@ -56,7 +56,7 @@ def load_config(explicit_path: str | None = None) -> dict:
 
     # 2. User / explicit config (overrides system)
     user_path = Path(explicit_path) if explicit_path else _default_user_config_path()
-    if user_path.is_file():
+    if (explicit_path or not isolated) and user_path.is_file():
         try:
             merged.update(tomllib.loads(user_path.read_text("utf-8")))
         except Exception as exc:
@@ -75,14 +75,14 @@ def load_config(explicit_path: str | None = None) -> dict:
 _config: dict = {}
 
 
-def init(explicit_path: str | None = None) -> dict:
+def init(explicit_path: str | None = None, *, isolated: bool = False) -> dict:
     """Load config files and cache the result module-wide.
 
     This should be called once, early in startup (e.g. from the CLI
     entry-point), *before* ``env.py`` constants are evaluated.
     """
     global _config
-    _config = load_config(explicit_path)
+    _config = load_config(explicit_path, isolated=isolated or os.environ.get('OPEN_TERMINAL_ISOLATED', '').lower() in ('true', '1'))
     return _config
 
 

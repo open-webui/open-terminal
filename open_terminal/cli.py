@@ -54,6 +54,7 @@ BANNER = r"""
     "--cftunnel", is_flag=True,
     help="Publish a temporary public HTTPS URL using Cloudflare. Requires a configured API key; offers to download cloudflared if needed.",
 )
+@click.option("--isolated", is_flag=True, help="Ignore system and user configuration files.")
 @click.option("--yes", is_flag=True, help="Approve the pinned cloudflared download (requires --cftunnel).")
 def run(
     host: str | None,
@@ -64,6 +65,7 @@ def run(
     cors_allowed_origins: str,
     cftunnel: bool,
     yes: bool,
+    isolated: bool,
 ):
     """Start the sandbox API server."""
     import secrets
@@ -75,7 +77,7 @@ def run(
         raise click.UsageError("--yes requires --cftunnel.")
 
     # Load config files before resolving other settings.
-    cfg = config.init(config_path)
+    cfg = config.init(config_path, isolated=isolated)
 
     # Resolve host/port: CLI flag > config file > built-in default
     host = host or cfg.get("host", "127.0.0.1" if cftunnel else "0.0.0.0")

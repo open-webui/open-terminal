@@ -139,6 +139,11 @@ ENABLE_NOTEBOOKS = os.environ.get(
     str(config.get("enable_notebooks", True)),
 ).lower() not in ("false", "0", "no")
 
+# Notebook support is optional; the base package must start without Jupyter.
+if ENABLE_NOTEBOOKS:
+    from importlib.util import find_spec
+    ENABLE_NOTEBOOKS = all(find_spec(module) is not None for module in ("nbclient", "ipykernel"))
+
 ENABLE_BROWSER = os.environ.get(
     "OPEN_TERMINAL_ENABLE_BROWSER",
     str(config.get("enable_browser", True)),
