@@ -237,7 +237,7 @@ Desktop support still requires its platform dependencies to be available.
 ### Use your running Chrome
 
 Browser defaults to `managed`: Open Terminal launches a separate Chrome profile.
-To use your existing Chrome tabs and signed-in sessions, select `personal`:
+To open tabs in your running Chrome with its signed-in sessions, select `personal`:
 
 ```sh
 export OPEN_TERMINAL_BROWSER_MODE=personal
@@ -259,18 +259,10 @@ instance is unavailable, Open Terminal returns an error rather than launching or
 choosing another browser. The equivalent TOML keys are `browser_mode`,
 `browser_user_data_dir`, and `browser_cdp_url`. Restart Open Terminal after changes.
 
-Clients can list available HTTP/HTTPS tabs with authenticated `GET /browser/targets`,
-then attach one with `POST /browser/sessions` and `{"target_id":"<id>"}`. An existing
-proxy session can attach using `PATCH /browser/sessions/{id}` with
-`{"mode":"chrome","target_id":"<id>"}`. The same browser tools and viewer stream work
-on the attachment. Session responses and `/api/config` report `browser_mode`.
-Clients should use the stream state's `width` and `height` for personal-tab input
-coordinates; viewport and mobile-emulation requests do not resize the real page.
-
-Closing an attachment or stopping Open Terminal leaves personal Chrome and its
-tabs open. Personal mode requires single-user operation. It does not automatically
-focus background tabs; a tab may need to be brought forward in Chrome for live
-viewing. WebUI's tab-selection UI must support these attachment endpoints.
+Use Chrome mode in WebUI as usual. Open Terminal creates a tab in the configured
+browser using the same session API, tools, and viewer. No WebUI changes are needed.
+Closing the session or stopping Open Terminal closes the tabs it created, leaving
+your browser and other tabs open. Personal mode requires single-user operation.
 
 Chromium's sandbox is enabled by default outside Docker. All published Docker image
 variants set `OPEN_TERMINAL_BROWSER_NO_SANDBOX=true` so Browser can start under

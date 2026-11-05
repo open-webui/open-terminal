@@ -146,7 +146,6 @@ class Host:
         self.sequence = 0
         self.pending = {}
         self.handlers = {}
-        self.targets = {}
         self.stderr = b""
         self.stderr_reader = asyncio.create_task(self.read_stderr())
         self.reader = asyncio.create_task(self.read())
@@ -432,75 +431,57 @@ class Chrome:
         self.vnc_peer = None
         self.acks = set()
         self.refs = {}
-        self.owns_target = host.process is not None
         self.detached = False
         self.closed = False
         host.handlers[cdp_session] = self.event
 
     @classmethod
-    async def create(cls, session, target_id=None):
-        if BROWSER_MODE == "personal" and not target_id:
-            raise ValueError("Select a Chrome tab from /browser/targets and supply target_id")
-        if BROWSER_MODE == "managed" and target_id:
-            raise ValueError("target_id requires personal browser mode")
+    async def create(cls, session):
         host = await get_host(session)
         chrome = None
-        attached = None
-        if host.process is None:
-            target = target_id
-            if target in host.targets:
-                raise ValueError("This Chrome tab is already attached. Release its Browser session first.")
-            host.targets[target] = session
-        else:
-            target = (
-                await host.send(
-                    "Target.createTarget",
-                    {"url": "about:blank", "background": bool(host.display)},
-                )
-            )["targetId"]
+        target = (
+            await host.send(
+                "Target.createTarget",
+                {"url": "about:blank", "background": bool(host.display)},
+            )
+        )["targetId"]
         try:
-            if host.process is None:
-                info = (await host.send("Target.getTargetInfo", {"targetId": target}))["targetInfo"]
-                if info.get("type") != "page" or not info.get("url", "").startswith(("http://", "https://")):
-                    raise ValueError("Select an HTTP or HTTPS Chrome tab")
             attached = await host.send(
                 "Target.attachToTarget", {"targetId": target, "flatten": True}
             )
             chrome = cls(session, host, target, attached["sessionId"])
             await chrome.send("Page.enable")
             await chrome.send("Runtime.enable")
-            if chrome.owns_target:
+            if host.process is None:
+                # Match viewer coordinates before its first viewport message, even on Retina displays.
                 await chrome.send(
-                    "Page.addScriptToEvaluateOnNewDocument",
-                    {
-                        "source": """
+                    "Emulation.setDeviceMetricsOverride",
+                    {"width": chrome.width, "height": chrome.height, "deviceScaleFactor": 1, "mobile": False},
+                )
+            await chrome.send(
+                "Page.addScriptToEvaluateOnNewDocument",
+                {
+                    "source": """
                 window.open = url => { if (url) location.assign(url); return null; };
                 addEventListener('click', e => {const a=e.target.closest?.('a[target]');
                   if(a && a.target !== '_self'){e.preventDefault(); location.assign(a.href);}},true);
             """
-                    },
-                )
-                if session.url:
-                    chrome.navigate(session.url)
-            else:
-                await chrome.state()
+                },
+            )
+            if session.url:
+                chrome.navigate(session.url)
             return chrome
         except BaseException:
             if chrome:
                 await chrome.close()
             else:
-                if host.targets.get(target) is session:
-                    host.targets.pop(target)
                 with contextlib.suppress(Exception):
-                    if host.process is not None:
-                        await host.send("Target.closeTarget", {"targetId": target})
-                    elif attached:
-                        await host.send("Target.detachFromTarget", {"sessionId": attached["sessionId"]})
+                    await host.send("Target.closeTarget", {"targetId": target})
             raise
 
     async def send(self, method, params=None):
         if self.detached or self.closed:
-            raise RuntimeError("Chrome tab disconnected. Reattach it from /browser/targets.")
+            raise RuntimeError("Chrome tab disconnected. Reopen this browser tab.")
         return await self.host.send(method, params, self.cdp_session)
 
     async def snapshot(self):
@@ -588,8 +569,6 @@ class Chrome:
         if method == "Inspector.detached":
             self.detached = True
             self.refs.clear()
-            if self.host.targets.get(self.target) is self.session:
-                self.host.targets.pop(self.target)
             self.state_changed.set()
         elif method == "Page.screencastFrame":
             # A slow viewer must not block Chrome; retain only its newest full frame.
@@ -627,8 +606,6 @@ class Chrome:
             if str(exc) == "Not attached to an active page":
                 return None
             raise
-        if not self.owns_target:
-            await self.update_viewport()
         entries, index = history["entries"], history["currentIndex"]
         entry = entries[index] if entries else {}
         url = entry.get("url", "")
@@ -643,15 +620,7 @@ class Chrome:
             "canGoBack": index > 0,
             "canGoForward": index < len(entries) - 1,
             "transport": "vnc" if self.host.display else "frames",
-            "width": self.width,
-            "height": self.height,
         }
-
-    async def update_viewport(self):
-        metrics = await self.send("Page.getLayoutMetrics")
-        viewport = metrics["cssVisualViewport"]
-        self.width = max(1, round(viewport["clientWidth"]))
-        self.height = max(1, round(viewport["clientHeight"]))
 
     async def capture(self):
         if self.host.display:
@@ -659,14 +628,14 @@ class Chrome:
         await self.send("Page.stopScreencast")
         if not self.visible:
             return
-        if self.owns_target:
-            await self.send("Page.bringToFront")
+        await self.send("Page.bringToFront")
         await self.send(
             "Page.startScreencast",
             {
                 "format": "jpeg",
                 "quality": self.quality,
-                **({"maxWidth": self.width, "maxHeight": self.height} if self.owns_target else {}),
+                "maxWidth": self.width,
+                "maxHeight": self.height,
                 "everyNthFrame": 1,
             },
         )
@@ -807,9 +776,6 @@ class Chrome:
                         self.visible = msg.get("visible") is True
                         await self.capture()
                     elif kind == "viewport":
-                        if not self.owns_target:
-                            self.state_changed.set()
-                            continue
                         self.width = max(240, min(2560, int(msg.get("width", 1024))))
                         self.height = max(200, min(2160, int(msg.get("height", 768))))
                         mobile = msg.get("mobile") is True
@@ -943,10 +909,5 @@ class Chrome:
             with contextlib.suppress(Exception):
                 await self.vnc_peer.close(code=4004)
         self.host.handlers.pop(self.cdp_session, None)
-        if self.host.targets.get(self.target) is self.session:
-            self.host.targets.pop(self.target)
         with contextlib.suppress(Exception):
-            if self.owns_target:
-                await self.host.send("Target.closeTarget", {"targetId": self.target})
-            elif not self.detached:
-                await self.host.send("Target.detachFromTarget", {"sessionId": self.cdp_session})
+            await self.host.send("Target.closeTarget", {"targetId": self.target})

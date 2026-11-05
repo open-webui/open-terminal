@@ -154,7 +154,6 @@ def payload(session):
 
 class CreateSession(BaseModel):
     url: str = Field(default="", max_length=16384)
-    target_id: str | None = Field(default=None, min_length=1, max_length=128)
 
 
 class UpdateSession(BaseModel):
@@ -163,7 +162,6 @@ class UpdateSession(BaseModel):
     mode: str | None = None
     active: bool | None = None
     chat_id: str | None = Field(default=None, min_length=1, max_length=128)
-    target_id: str | None = Field(default=None, min_length=1, max_length=128)
 
 
 def valid_url(url):
@@ -171,26 +169,6 @@ def valid_url(url):
         return target_url(url)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
-
-
-@router.get("/targets", include_in_schema=False, dependencies=[Depends(verify_api_key)])
-async def targets(request: Request, fs: UserFS = Depends(get_filesystem)):
-    """Discover personal Chrome tabs; model tools only see attached chat sessions."""
-    if BROWSER_MODE != "personal":
-        raise HTTPException(409, "Tab discovery requires personal browser mode")
-    from .chrome import get_host
-
-    try:
-        host = await get_host(Session("", "", owner(request), "", fs))
-        result = await host.send("Target.getTargets")
-    except (RuntimeError, ValueError) as exc:
-        raise HTTPException(409, str(exc)) from exc
-    return {"targets": [
-        {"id": target["targetId"], "title": target.get("title", ""), "url": target["url"]}
-        for target in result["targetInfos"]
-        if target["type"] == "page" and target.get("url", "").startswith(("http://", "https://"))
-        and target["targetId"] not in host.targets
-    ]}
 
 
 @router.post("/sessions", include_in_schema=False, dependencies=[Depends(verify_api_key)])
@@ -212,14 +190,6 @@ async def create(
         fs,
         url=body.url,
     )
-    if body.target_id:
-        from .chrome import Chrome
-
-        try:
-            session.chrome = await Chrome.create(session, body.target_id)
-        except (RuntimeError, ValueError) as exc:
-            raise HTTPException(409, str(exc)) from exc
-        session.mode = "chrome"
     sessions[session.id] = session
     if session.owner not in profiles:
         profiles[session.owner] = httpx.AsyncClient(
@@ -238,8 +208,6 @@ async def update(request: Request, sid: str, body: UpdateSession):
     session = owned(request, sid)
     if body.mode not in (None, "proxy", "chrome"):
         raise HTTPException(400, "Invalid browser mode")
-    if body.target_id and (body.mode != "chrome" or session.chrome is not None):
-        raise HTTPException(409, "Supply target_id when attaching an unconnected session in Chrome mode")
     if body.url:
         valid_url(body.url)
     async with session.lock:
@@ -265,7 +233,7 @@ async def update(request: Request, sid: str, body: UpdateSession):
             from .chrome import Chrome
 
             try:
-                session.chrome = await Chrome.create(session, body.target_id)
+                session.chrome = await Chrome.create(session)
             except Exception as exc:
                 raise HTTPException(409, str(exc)) from exc
         elif body.mode == "proxy" and session.chrome is not None:
@@ -567,10 +535,8 @@ async def browser_page(request, session_id=None):
             )
         chrome = session.chrome
         if chrome.detached or chrome.host.reader.done():
-            raise HTTPException(409, "Chrome tab disconnected. Reattach it from /browser/targets.")
+            raise HTTPException(409, "Chrome tab disconnected. Reopen this browser tab.")
         async with chrome.host.view_lock:
-            if not chrome.owns_target:
-                await chrome.update_viewport()
             # Headed Chrome cannot reliably capture background pages.
             if chrome.host.display:
                 await chrome.send("Page.bringToFront")
@@ -589,21 +555,7 @@ async def image(chrome):
     result = await chrome.send(
         "Page.captureScreenshot", {"format": "png", "captureBeyondViewport": False}
     )
-    data = base64.b64decode(result["data"])
-    if not chrome.owns_target:
-        # CDP screenshots use device pixels; browser_action coordinates use CSS pixels.
-        def resize():
-            import io
-            from PIL import Image
-
-            with Image.open(io.BytesIO(data)) as screenshot:
-                if screenshot.size == (chrome.width, chrome.height):
-                    return data
-                output = io.BytesIO()
-                screenshot.resize((chrome.width, chrome.height), Image.Resampling.LANCZOS).save(output, "PNG")
-                return output.getvalue()
-        data = await asyncio.to_thread(resize)
-    return Response(data, media_type="image/png")
+    return Response(base64.b64decode(result["data"]), media_type="image/png")
 
 
 @router.get(
