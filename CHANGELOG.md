@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.16.2] - 2026-11-05
+
+### Added
+
+- Added `open-terminal run --isolated` and `OPEN_TERMINAL_ISOLATED=true` to start without loading saved system or user settings. Environment settings and a file explicitly selected with `--config` still apply.
+
+### Changed
+
+- Notebook support is now an optional install. Use `pip install 'open-terminal[notebooks]'` to include it. Open Terminal can start without the notebook packages, with notebook features disabled. The default Docker image still includes them.
+
+### Fixed
+
+- Terminal connections can now drop and reconnect without immediately stopping the shell or its running programs. Output continues to be collected while disconnected, with up to 1 MiB kept for reconnection. Connected apps can resume from where they left off; terminals left disconnected for more than five minutes are closed during the next cleanup.
+- Failed uploads no longer overwrite an existing file with incomplete content. The original file is replaced only after the upload has been fully written.
+
 ## [0.16.1] - 2026-11-04
 
 ### Fixed
