@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.16.6] - 2026-11-05
+
+### Fixed
+
+- Fixed the Browser tab stopping its live updates after opening a page or following a link in Chrome. The page view now resumes automatically once the new page loads, including when it finishes loading before the Browser panel is ready.
+
 ## [0.16.5] - 2026-11-05
 
 ### Changed
