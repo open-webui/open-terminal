@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.16.4] - 2026-11-05
+
+### Fixed
+
+- Fixed pages using your running Chrome reverting to the Chrome window's size instead of the size selected in the Browser tab. Opening or resizing the tab, switching mobile preview, and changing display quality now keep the requested page size. Update Open WebUI as well for the related fix for pages appearing too small with empty space around them.
+- Reconnecting to a Browser tab now waits for its current size before showing the page and discards images left over from the previous connection, preventing a brief view of the page at the old size.
+
 ## [0.16.3] - 2026-11-05
 
 ### Added
