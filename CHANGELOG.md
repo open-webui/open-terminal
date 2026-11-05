@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.16.3] - 2026-11-05
+
+### Added
+
+- The Browser tab can now open pages in your running Chrome using your existing website logins. Set `OPEN_TERMINAL_BROWSER_MODE=personal`, enable debugging in Chrome at `chrome://inspect/#remote-debugging`, restart Open Terminal, and approve the connection when Chrome asks. This requires single-user mode and works with Open WebUI's existing Chrome controls, without a WebUI update. See [setup instructions](README.md#use-your-running-chrome).
+- When using your Chrome, Open Terminal opens its own tabs. Closing a Browser session or stopping Open Terminal closes those tabs while leaving Chrome and your other tabs open. If it cannot connect to the Chrome instance you selected, it reports the problem instead of opening a different browser.
+
+### Fixed
+
+- After Chrome closes, a tab closes, or the browser connection drops, attempts to control that tab now report that it disconnected and ask you to reopen it.
+
 ## [0.16.2] - 2026-11-05
 
 ### Added
