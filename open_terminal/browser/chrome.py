@@ -843,6 +843,8 @@ class Chrome:
                                 self.frame.get_nowait()
                         await self.capture()
                         viewport_ready.set()
+                        if self.capture_changed:
+                            self.state_changed.set()
                     elif kind == "quality":
                         self.quality = {"low": 40, "balanced": 65, "crisp": 90}.get(
                             msg.get("quality"), 65
