@@ -319,8 +319,25 @@ class GitRepository:
             code, _, _ = await self.run("rev-parse", "--verify", "HEAD", check=False)
             args = ["rm", "--cached", "--", *pathspecs] if code else ["reset", "HEAD", "--", *pathspecs]
         elif action == "discard":
-            # Restore tracked working-tree changes; never delete untracked files.
-            args = ["restore", "--worktree", "--", *pathspecs]
+            status = await self.status()
+            changed = {}
+            for file in status["files"]:
+                changed[file["path"]] = file["status"] != "untracked"
+                if file.get("original_path"):
+                    changed[file["original_path"]] = True
+            if any(path not in changed for path in paths):
+                raise HTTPException(400, "Select changed files first")
+            tracked = [spec for path, spec in zip(paths, pathspecs) if changed[path]]
+            untracked = [spec for path, spec in zip(paths, pathspecs) if not changed[path]]
+            if tracked:
+                code, _, _ = await self.run("rev-parse", "--verify", "HEAD", check=False)
+                if code:
+                    await self.run("rm", "-f", "--", *tracked)
+                else:
+                    await self.run("restore", "--source=HEAD", "--staged", "--worktree", "--", *tracked)
+            if untracked:
+                await self.run("clean", "-f", "--", *untracked)
+            return {"message": ""}
         elif action == "commit":
             if not message.strip():
                 raise HTTPException(400, "Enter a commit message")
