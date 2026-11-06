@@ -191,6 +191,11 @@ setup_egress_firewall() {
         iptables -A OUTPUT -m set --match-set allowed dst -j ACCEPT
     fi
     iptables -A OUTPUT -j DROP
+    # The allowed set holds IPv4 addresses only
+    ip6tables -F OUTPUT
+    ip6tables -A OUTPUT -o lo -j ACCEPT
+    ip6tables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+    ip6tables -A OUTPUT -j DROP
 
     echo "Egress firewall active — dropping CAP_NET_ADMIN permanently"
 }
