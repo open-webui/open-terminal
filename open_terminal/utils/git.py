@@ -322,11 +322,15 @@ class GitRepository:
             status = await self.status()
             changed = {}
             for file in status["files"]:
-                changed[file["path"]] = file["status"] != "untracked"
+                # A recreated path can appear as both tracked and untracked.
+                changed[file["path"]] = changed.get(file["path"], False) or file["status"] != "untracked"
                 if file.get("original_path"):
                     changed[file["original_path"]] = True
             if any(path not in changed for path in paths):
                 raise HTTPException(400, "Select changed files first")
+            # With --untracked-files=all, untracked directories are nested repositories.
+            if any(not changed[path] and path.endswith("/") for path in paths):
+                raise HTTPException(400, "Cannot discard a nested Git repository; remove it separately")
             tracked = [spec for path, spec in zip(paths, pathspecs) if changed[path]]
             untracked = [spec for path, spec in zip(paths, pathspecs) if not changed[path]]
             if tracked:
