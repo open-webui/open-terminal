@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.17.2] - 2026-11-06
+
+### Fixed
+
+- Fixed Discard in the Git panel leaving changes that were already marked for the next commit. Discard now returns selected existing files to their last committed version, including restoring deleted files and undoing renames. Changes to other files are kept. An updated Open WebUI is required to show Discard for every changed file.
+- Discard can now delete selected new files, whether or not they were marked for the next commit, including in projects with no commits yet. This permanently removes those files. Previously, Discard could not remove new files.
+- Fixed Discard leaving a file missing when its deletion or rename was marked for commit and another file was created with the original name. The last committed version is now restored.
+- Discard now reports a clear error when a selected folder contains its own Git repository, before changing any selected files. Previously, it reported success while leaving that folder on disk.
+
 ## [0.17.1] - 2026-11-06
 
 ### Added
