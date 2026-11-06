@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.17.0] - 2026-11-06
+
+### Added
+
+- Added support for chatting with Codex, Claude Code, Cursor, Grok, OpenCode, Cline, Gemini CLI, and Pi through Open WebUI. Select your terminal in chat to see the models offered by its installed agents in the model selector. Requires an Open WebUI version with agent support. Install and sign in to each agent from the terminal first; the `agents` Docker image already includes Codex and Claude Code.
+- Agent chats work in the terminal's current folder. You can attach files, watch replies and tool activity as they happen, answer the agent's approval requests, stop a running reply, and continue the conversation with a follow-up message. Available approval prompts depend on the agent. Branching or regenerating an agent conversation requires a new chat.
+- Agent connections can recover from a brief interruption, catch up on unread output, and avoid sending the same input twice. Disconnecting does not immediately stop the agent; sessions left disconnected for more than an hour are closed during cleanup.
+- Added support for running local agents through Tether's saved Open WebUI connections. Your hosted Open WebUI can reach the agents on your computer through Tether without a public address for your computer. Requires Tether and Open WebUI versions with agent support; agent logins stay in the terminal environment.
+
+### Changed
+
+- Shortened the README around installation and connecting to Open WebUI. Moved detailed instructions for settings, Docker images, agent login, storage, multi-user setup, and temporary public access into linked guides, keeping the existing command examples.
+
 ## [0.16.7] - 2026-11-06
 
 ### Added
