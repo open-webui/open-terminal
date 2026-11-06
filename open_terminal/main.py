@@ -31,6 +31,8 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.formparsers import MultiPartParser, MultiPartException, parse_options_header
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 
+from open_terminal.agents import discovery as agent_discovery, sessions as agent_sessions
+from open_terminal.agents.router import router as agent_router
 from open_terminal.dependencies import get_filesystem, matches_api_key, verify_api_key
 from open_terminal.env import API_KEY, BINARY_FILE_MIME_PREFIXES, CORS_ALLOWED_ORIGINS, ENABLE_BROWSER, ENABLE_DESKTOP, ENABLE_NOTEBOOKS, ENABLE_SYSTEM_PROMPT, ENABLE_TERMINAL, EXECUTE_DESCRIPTION, EXECUTE_TIMEOUT, FILE_BROWSER_ROOT, LOG_DIR, MAX_TERMINAL_SESSIONS, MULTI_USER, OPEN_TERMINAL_INFO, PROCESS_LOG_RETENTION, SESSION_CWD_TTL, SYSTEM_PROMPT, TERMINAL_TERM
 from open_terminal.env import sanitized_environ
@@ -192,6 +194,8 @@ async def lifespan(app):
     finally:
         maintenance.cancel()
         await asyncio.gather(maintenance, return_exceptions=True)
+        await agent_sessions.shutdown()
+        agent_discovery.catalogs.clear()
         for process in list(_processes.values()):
             if process.finished_at is None:
                 process.runner.kill(force=True)
@@ -220,6 +224,7 @@ app = FastAPI(
     description="A remote computer API.",
     version=_pkg_version("open-terminal"),
 )
+app.include_router(agent_router)
 app.add_middleware(NormalizeNullQueryMiddleware)
 app.add_middleware(
     BrowserCORSMiddleware,
@@ -448,6 +453,7 @@ def _cleanup_log_files(active_paths):
 
 async def _maintenance_loop():
     while True:
+        await agent_sessions.maintain()
         _cleanup_expired()
         _expire_session_cwds()
         if ENABLE_TERMINAL:
@@ -508,6 +514,7 @@ async def get_config():
             "system": ENABLE_SYSTEM_PROMPT,
             "git": shutil.which("git") is not None,
             "events": True,
+            "agents": True,
             "browser": ENABLE_BROWSER,
             "desktop": ENABLE_DESKTOP and desktop_available(),
         },
