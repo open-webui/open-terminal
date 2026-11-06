@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.17.1] - 2026-11-06
+
+### Added
+
+- Added support for showing Codex's reasoning effort and service tier options in Open WebUI's model controls, so you can choose how much effort it spends thinking and which service tier to use. Available choices and defaults come from your installed Codex version; options it does not report stay hidden. Requires an updated Open WebUI.
+
+### Fixed
+
+- Fixed repeated pauses before agent replies when checking which models are available. Previously, sending a Codex message could wait for another agent's slow startup or login check after the model list expired. Known models now remain available while the list refreshes in the background. With an updated Open WebUI, sending a message checks only the selected agent, so other agents cannot hold it up even on the first check.
+
 ## [0.17.0] - 2026-11-06
 
 ### Added
