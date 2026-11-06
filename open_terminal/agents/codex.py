@@ -25,7 +25,20 @@ async def discover(send, response, cwd=None):
         await send({"id": 2, "method": "model/list", "params": {"cursor": cursor}})
         result = (await response("id", 2)).get("result", {})
         models += [
-            {"id": m["model"], "name": m.get("displayName") or m["model"]}
+            {
+                "id": m["model"],
+                "name": m.get("displayName") or m["model"],
+                **{
+                    key: m[key]
+                    for key in (
+                        "supportedReasoningEfforts",
+                        "defaultReasoningEffort",
+                        "serviceTiers",
+                        "defaultServiceTier",
+                    )
+                    if key in m
+                },
+            }
             for m in result.get("data", [])
         ]
         cursor = result.get("nextCursor")
