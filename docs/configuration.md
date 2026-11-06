@@ -84,6 +84,17 @@ must permit Chromium's sandbox operations. Outside Docker, set the variable to
 `yes` (case-insensitive) disable the sandbox. Restart or recreate Open Terminal
 after changing this setting.
 
+## Memory management
+
+File and command-output responses stream from disk, uploads are copied in chunks,
+and generated ZIP/PDF files are removed after sending or cancellation. Log rotation
+retains the newest half without loading the entire log into memory. Search listings
+and ranking use temporary disk storage while preserving full matches.
+
+Process, terminal, notebook, and document-worker cleanup releases readers, file
+handles, and child processes on completion, cancellation, or server shutdown.
+Command-log retention and the notebook idle timeout still apply.
+
 ## File Browser Root
 
 Open Terminal reports file-browser root metadata from `GET /files/cwd` so clients can hide parent navigation above a friendly starting point.

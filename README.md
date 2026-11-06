@@ -1,6 +1,6 @@
 # Open Terminal
 
-**A computer for your AI agents.** Run commands, manage files, execute code, and work with browsers and desktops through a self-hosted API. Connect it to [Open WebUI](https://github.com/open-webui/open-webui), or use it with your own tools.
+**A computer for your AI agents.** Run commands, search and manage files, execute code, and work with browsers and desktops through a self-hosted REST API. Connect it to [Open WebUI](https://github.com/open-webui/open-webui), or use it with your own tools.
 
 [Documentation](https://docs.openwebui.com/features/open-terminal/) · [Changelog](CHANGELOG.md) · [Report an issue](https://github.com/open-webui/open-terminal/issues)
 
@@ -56,7 +56,7 @@ If no API key is configured, one is generated and printed at startup. For Docker
 2. Add a URL reachable from the Open WebUI server and your API key.
 3. Enable the connection and select the terminal in chat.
 
-Use the dedicated **Open Terminal** section to get the file browser and terminal panel. See the [connection guide](https://docs.openwebui.com/features/open-terminal/setup/connecting/) for Docker networking and personal connections.
+Use the dedicated **Open Terminal** section to get the file browser and terminal panel. Compare [connection modes](docs/deployment.md#connecting-to-open-webui), or see the [connection guide](https://docs.openwebui.com/features/open-terminal/setup/connecting/) for Docker networking and personal connections.
 
 ## Configuration
 
