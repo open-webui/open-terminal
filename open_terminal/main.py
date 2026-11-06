@@ -194,8 +194,8 @@ async def lifespan(app):
     finally:
         maintenance.cancel()
         await asyncio.gather(maintenance, return_exceptions=True)
+        await agent_discovery.shutdown()
         await agent_sessions.shutdown()
-        agent_discovery.catalogs.clear()
         for process in list(_processes.values()):
             if process.finished_at is None:
                 process.runner.kill(force=True)

@@ -10,6 +10,7 @@ from open_terminal.dependencies import get_filesystem
 from . import sessions
 
 catalogs: dict[tuple, tuple[float, dict]] = {}
+refreshes: dict[tuple, asyncio.Task] = {}
 
 
 async def probe(provider, fs, cwd=None):
@@ -51,12 +52,13 @@ async def probe(provider, fs, cwd=None):
         await asyncio.gather(stderr, return_exceptions=True)
 
 
-async def discover(request: Request, cwd: str | None = None):
+async def discover(
+    request: Request, cwd: str | None = None, provider: str | None = None
+):
+    if provider is not None and provider not in sessions.PROVIDERS:
+        raise HTTPException(400, "Unknown agent provider")
     fs = get_filesystem(request)
-    key = (request.headers.get("x-user-id", "single"), fs.home, cwd)
-    cached = catalogs.get(key)
-    if cached and time.monotonic() - cached[0] < 30:
-        return cached[1]
+    scope = (request.headers.get("x-user-id", "single"), fs.home, cwd)
 
     async def detect(provider, name):
         try:
@@ -75,11 +77,43 @@ async def discover(request: Request, cwd: str | None = None):
                 else "Agent discovery failed; check installation and login in this terminal",
             }
 
-    result = {
+    async def refresh(key, provider, name):
+        try:
+            entry = await detect(provider, name)
+            catalogs[key] = (time.monotonic(), entry)
+            return entry
+        finally:
+            refreshes.pop(key, None)
+
+    async def entry(provider, adapter):
+        key = (*scope, provider)
+        cached = catalogs.get(key)
+        if not cached or time.monotonic() - cached[0] >= 30:
+            if key not in refreshes:
+                refreshes[key] = asyncio.create_task(
+                    refresh(key, provider, adapter.NAME)
+                )
+            if not cached:
+                return await asyncio.shield(refreshes[key])
+        # A known model must not wait for a slow discovery/login probe on every turn.
+        return cached[1]
+
+    return {
         "protocol_version": 1,
         "agents": await asyncio.gather(
-            *(detect(p, adapter.NAME) for p, adapter in sessions.PROVIDERS.items())
+            *(
+                entry(p, adapter)
+                for p, adapter in sessions.PROVIDERS.items()
+                if provider is None or p == provider
+            )
         ),
     }
-    catalogs[key] = (time.monotonic(), result)
-    return result
+
+
+async def shutdown():
+    pending = list(refreshes.values())
+    for task in pending:
+        task.cancel()
+    await asyncio.gather(*pending, return_exceptions=True)
+    refreshes.clear()
+    catalogs.clear()
