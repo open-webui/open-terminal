@@ -28,6 +28,7 @@ The API is available at `http://localhost:8000`, with interactive docs at [/docs
 | --- | --- |
 | `latest` | Full toolkit: Python, Node.js, build tools, browser, desktop, and document tools |
 | `agents` | Everything in `latest`, plus the latest Codex and Claude Code CLIs |
+| `cuda` | Full environment with CUDA toolkit and GPU-enabled PyTorch |
 | `slim` | Minimal Debian environment with git, curl, and jq |
 | `alpine` | Minimal Alpine environment with git, curl, and jq |
 | `openshift` | Minimal image for OpenShift restricted non-root policies |

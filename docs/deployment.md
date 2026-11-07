@@ -13,6 +13,7 @@ Python requirements are met.
 | --- | --- | --- | --- | --- |
 | `latest` | Full Debian environment | Yes | Yes | Yes |
 | `agents` | Full environment + Codex and Claude Code | Yes | Yes | Yes |
+| `cuda` | Full environment + CUDA toolkit and PyTorch | Yes | Yes | Yes |
 | `slim` | Debian | No | No | Yes |
 | `alpine` | Alpine | No | No | Yes |
 | `openshift` | Debian, restricted non-root policies | No | No | No |
@@ -24,7 +25,8 @@ git, curl, and jq. Slim and Alpine have the same feature set: Slim uses Debian's
 glibc for broader binary compatibility; Alpine uses musl for a smaller footprint,
 but some C-extension pip packages may need to compile from source.
 
-Use `latest` for AI agent sandboxes, `agents` for coding agents, `slim` for minimal
+Use `latest` for AI agent sandboxes, `agents` for coding agents, `cuda` for NVIDIA GPU
+workloads, `slim` for minimal
 or hardened production setups, `alpine` for edge/CI deployments, and `openshift`
 for OpenShift restricted SCC. The previous README estimated sizes of ~4 GB for
 `latest`, ~430 MB for `slim` and `openshift`, and ~230 MB for `alpine`; `agents`

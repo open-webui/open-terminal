@@ -29,6 +29,11 @@ jobs:
             target: agents
             suffix: "-agents"
             short_tag: "agents"
+          - name: cuda
+            file: Dockerfile
+            target: cuda
+            suffix: "-cuda"
+            short_tag: "cuda"
           - name: slim
             file: Dockerfile.slim
             suffix: "-slim"
@@ -105,6 +110,9 @@ jobs:
           - name: agents
             suffix: "-agents"
             short_tag: "agents"
+          - name: cuda
+            suffix: "-cuda"
+            short_tag: "cuda"
           - name: slim
             suffix: "-slim"
             short_tag: "slim"
