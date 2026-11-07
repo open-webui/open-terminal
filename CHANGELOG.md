@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.17.4] - 2026-11-07
+
+### Added
+
+- Added support for the System info window in Open WebUI's terminal menu. Open it beside a terminal connection to check CPU and memory use, used and free disk space, how long the machine has been running, network addresses, and the programs using the most CPU or memory. Requires an updated Open WebUI.
+- System info uses detected container CPU and memory limits when available. Disk space is measured on the drive containing the terminal's current folder. In multi-user mode, the program list shows only the current user's processes.
+
 ## [0.17.3] - 2026-11-07
 
 ### Added
