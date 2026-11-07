@@ -14,7 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # Editors
     vim nano \
     # Version control
-    git \
+    git gh \
     # Build tools
     build-essential cmake make \
     # Scripting & languages
