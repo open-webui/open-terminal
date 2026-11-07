@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.17.3] - 2026-11-07
+
+### Added
+
+- Added support for Tether to run Open Terminal without opening a directly accessible HTTP address. Your connected Open WebUI can still use the terminal through Tether. Direct HTTP access can be enabled for just your computer or for other computers on your network, and still requires an API key. Requires an updated Tether.
+- Other desktop apps can use the same connection mode through `--ipc`. See the [local connection setup](README.md#private-local-ipc).
+
+### Changed
+
+- The Linux Desktop now uses the Open WebUI homepage image as its default wallpaper in the full and agents Docker images. The image is bundled with Open Terminal. Update or rebuild your Docker image to get it.
+
+### Fixed
+
+- Fixed Docker's allowed-site restrictions being bypassed through IPv6 connections. When allowed-site restrictions or the block-all setting are enabled, new outgoing IPv6 connections are now blocked, including connections to allowed sites. Allowed sites remain reachable over IPv4.
+
 ## [0.17.2] - 2026-11-06
 
 ### Fixed
