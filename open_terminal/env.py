@@ -6,6 +6,9 @@ from open_terminal import config
 def sanitized_environ(extra: dict[str, str] | None = None) -> dict[str, str]:
     """Exclude inherited server settings; explicit command overrides still win."""
     env = {key: value for key, value in os.environ.items() if not key.startswith("OPEN_TERMINAL_")}
+    if BROWSER_NO_SANDBOX:
+        # The Docker image's Chromium launcher reads this to add --no-sandbox.
+        env["OPEN_TERMINAL_BROWSER_NO_SANDBOX"] = "true"
     if extra:
         env.update(extra)
     return env
