@@ -12,6 +12,7 @@ dependencies = [
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.34.0",
     "watchfiles>=1.1.1",
+    "psutil>=7.2.2",
     "click>=8.1.0",
     "httpx>=0.27.0",
     "websockets>=14.0",

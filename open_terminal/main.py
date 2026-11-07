@@ -41,6 +41,7 @@ from open_terminal.utils.fs import UserFS, FullFileResponse as FileResponse, Tem
 from open_terminal.utils.limits import (CHUNK_SIZE, NormalizeNullQueryMiddleware, run_io, run_worker)
 from open_terminal.utils.file_compare import CompareRequest, run_comparison
 from open_terminal.utils.git import GitRepository
+from open_terminal.utils.system import collect_system_info
 from open_terminal.utils.events import system_events
 from open_terminal.utils.search import search_entries, matching_files, ranked_page
 from open_terminal.utils.skills import join_skill_path, list_skill_resources, parse_skill_frontmatter
@@ -519,6 +520,13 @@ async def get_config():
             "desktop": ENABLE_DESKTOP and desktop_available(),
         },
     }
+
+
+@app.get("/system/info", dependencies=[Depends(verify_api_key)], include_in_schema=False)
+async def system_info(http_request: Request, fs: UserFS = Depends(get_filesystem)):
+    directory = _get_session_cwd(http_request.headers.get("x-session-id"), fs) or fs.home
+    fs._check_path(os.path.realpath(directory))
+    return JSONResponse(await run_io(collect_system_info, directory, fs.username), headers={"Cache-Control": "no-store"})
 
 
 if ENABLE_SYSTEM_PROMPT:
