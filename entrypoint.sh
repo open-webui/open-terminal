@@ -171,6 +171,11 @@ if [ "${OPEN_TERMINAL_ALLOWED_DOMAINS+set}" = "set" ]; then
         sudo iptables -A OUTPUT -m set --match-set allowed dst -j ACCEPT
     fi
     sudo iptables -A OUTPUT -j DROP
+    # The allowed set holds IPv4 addresses only
+    sudo ip6tables -F OUTPUT
+    sudo ip6tables -A OUTPUT -o lo -j ACCEPT
+    sudo ip6tables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+    sudo ip6tables -A OUTPUT -j DROP
 
     echo "Egress firewall active — dropping CAP_NET_ADMIN permanently"
     exec sudo -E PATH="$PATH" capsh --drop=cap_net_admin --user=user -- -c 'exec open-terminal "$@"' -- "$@"
