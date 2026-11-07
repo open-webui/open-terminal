@@ -219,7 +219,7 @@ class UserFS:
             )
             await asyncio.to_thread(
                 subprocess.run,
-                ["sudo", "chmod", "g+w", path],
+                ["sudo", "chmod", "g+rw", path],
                 check=True, capture_output=True,
             )
 
