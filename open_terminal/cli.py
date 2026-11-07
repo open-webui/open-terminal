@@ -23,8 +23,9 @@ BANNER = r"""
 
 
 @main.command()
-@click.option("--host", default=None, help="Bind host (default: 127.0.0.1 with --cftunnel, otherwise 0.0.0.0)")
-@click.option("--port", default=None, type=int, help="Bind port (default: 8000)")
+@click.option("--host", default=None, help="Bind host (default: 127.0.0.1 with --ipc or --cftunnel, otherwise 0.0.0.0)")
+@click.option("--port", default=None, type=click.IntRange(0, 65535), help="Bind port (default: 8000; with --ipc, explicitly enables TCP)")
+@click.option("--ipc", default=None, help="Serve over a Unix socket or Windows named pipe instead of TCP.")
 @click.option(
     "--config",
     "config_path",
@@ -66,6 +67,7 @@ def run(
     cftunnel: bool,
     yes: bool,
     isolated: bool,
+    ipc: str | None,
 ):
     """Start the sandbox API server."""
     import secrets
@@ -75,12 +77,21 @@ def run(
 
     if yes and not cftunnel:
         raise click.UsageError("--yes requires --cftunnel.")
+    if ipc and cftunnel:
+        raise click.UsageError("--ipc cannot be combined with --cftunnel.")
+    if ipc and host is not None and port is None:
+        raise click.UsageError("--host requires --port when using --ipc.")
+    if ipc and os.name == "nt" and not ipc.startswith("\\\\.\\pipe\\"):
+        raise click.UsageError("--ipc must be a local Windows named pipe path.")
+    if ipc and os.name != "nt" and not os.path.isabs(ipc):
+        raise click.UsageError("--ipc must be an absolute Unix socket path.")
 
     # Load config files before resolving other settings.
     cfg = config.init(config_path, isolated=isolated)
 
     # Resolve host/port: CLI flag > config file > built-in default
-    host = host or cfg.get("host", "127.0.0.1" if cftunnel else "0.0.0.0")
+    ipc_port = port  # Only an explicit --port opts IPC mode into TCP listening.
+    host = host or ("127.0.0.1" if ipc else cfg.get("host", "127.0.0.1" if cftunnel else "0.0.0.0"))
     port = port if port is not None else cfg.get("port", 8000)
     if cftunnel and (type(port) is not int or not 1 <= port <= 65535):
         raise click.UsageError("--cftunnel requires a port between 1 and 65535.")
@@ -129,8 +140,8 @@ def run(
     if cftunnel:
         local_url = origin_url(host, port)
 
-    click.echo(f"  {click.style('Local:', bold=True)}    {click.style(local_url, fg='cyan')}")
-    if host == "0.0.0.0":
+    click.echo(f"  {click.style('Local:', bold=True)}    {click.style('IPC: ' + ipc if ipc else local_url, fg='cyan')}")
+    if not ipc and host == "0.0.0.0":
         import socket
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -146,7 +157,7 @@ def run(
         click.echo(f"  {click.style('API Key:', bold=True)}  {api_key}")
         click.echo()
 
-    if host in ("0.0.0.0", "::"):
+    if not ipc and host in ("0.0.0.0", "::"):
         click.echo(click.style("  Warning: Listening on all network interfaces.", fg="yellow"))
         click.echo(click.style("  Use --host 127.0.0.1 to restrict to this machine.", dim=True))
         click.echo()
@@ -166,6 +177,10 @@ def run(
     uvicorn_options = {}
     if UVICORN_TIMEOUT_KEEP_ALIVE is not None:
         uvicorn_options["timeout_keep_alive"] = UVICORN_TIMEOUT_KEEP_ALIVE
+    if ipc:
+        from open_terminal.ipc import run_server as run_ipc_server
+        run_ipc_server(ipc, ipc_port, host, **uvicorn_options)
+        return
     if cftunnel:
         run_server(binary, host, port, loop=UVICORN_LOOP, **uvicorn_options)
         return

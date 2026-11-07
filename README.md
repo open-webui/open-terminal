@@ -50,6 +50,22 @@ If no API key is configured, one is generated and printed at startup. For Docker
 > [!CAUTION]
 > The API key grants command and file access. On bare metal, commands run with your user's permissions. Give access only to people and agents you trust.
 
+### Private local IPC
+
+Desktop clients can use the existing HTTP/WebSocket API without opening a TCP listener:
+
+```bash
+# macOS/Linux: use a socket inside a directory owned by the current user (mode 0700).
+open-terminal run --isolated --ipc /path/to/private-directory/api.sock
+```
+
+On Windows, use a local named pipe, for example
+`open-terminal run --isolated --ipc \\.\pipe\open-terminal-private`.
+API-key authentication still applies. `--port 8000` adds a TCP listener;
+it binds to `127.0.0.1` unless `--host 0.0.0.0` is explicitly supplied.
+Use port `0` to select an available port. The bind address and port are logged at startup.
+With `--ipc`, `--host` requires an explicit `--port`; `--cftunnel` is not supported.
+
 ## Connect to Open WebUI
 
 1. Open **Settings → Admin → Integrations → Open Terminal**.

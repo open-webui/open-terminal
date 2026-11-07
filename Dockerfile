@@ -66,6 +66,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     xauth xdotool xclip scrot libreoffice libreoffice-gtk3 pulseaudio pulseaudio-utils \
     && rm -rf /var/lib/apt/lists/*
 
+# Xfce's default backdrop, converted to PNG for its image loader.
+COPY assets/home.webp /tmp/wallpaper.webp
+RUN convert /tmp/wallpaper.webp /usr/share/backgrounds/xfce/open-webui.png \
+    && ln -sf open-webui.png /usr/share/backgrounds/xfce/xfce-x.svg \
+    && rm /tmp/wallpaper.webp
+
 # Debian's launcher resets CHROMIUM_FLAGS before reading this directory.
 RUN printf '%s\n' \
     'case "${OPEN_TERMINAL_BROWSER_NO_SANDBOX:-false}" in' \
