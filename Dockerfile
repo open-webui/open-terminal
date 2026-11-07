@@ -50,6 +50,7 @@ RUN curl -fsSL https://get.docker.com | sh
 WORKDIR /app
 
 RUN pip install --no-cache-dir \
+    uv \
     numpy pandas scipy scikit-learn \
     matplotlib seaborn plotly \
     jupyter ipython \
