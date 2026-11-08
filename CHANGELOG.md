@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.17.6] - 2026-11-09
+
+### Fixed
+
+- Fixed HTML previews showing "File not found" on Windows even when the assistant could read the same file. Pages stored on Windows drives now load from the correct location, along with their linked stylesheets and images. If you use Tether, update its Open Terminal installation to get this fix.
+
 ## [0.17.5] - 2026-11-08
 
 ### Added
