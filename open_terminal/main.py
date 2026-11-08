@@ -1801,7 +1801,16 @@ async def execute(
     session_cwd = _get_session_cwd(session_id, fs) if session_id else None
     cwd = fs.resolve_path(request.cwd, cwd=session_cwd) if request.cwd else (session_cwd or fs.home)
 
-    runner = await create_runner(request.command, cwd, request.env, run_as_user=fs.username)
+    env = request.env
+    if ENABLE_DESKTOP:
+        from open_terminal.desktop import Desktop, desktops
+
+        desktop = desktops.get((http_request.headers.get("x-user-id", ""), fs.home))
+        if isinstance(desktop, Desktop):
+            # Lets windows opened by commands appear on the user's running desktop.
+            env = {"DISPLAY": desktop.env["DISPLAY"], "XAUTHORITY": desktop.env["XAUTHORITY"], **(request.env or {})}
+
+    runner = await create_runner(request.command, cwd, env, run_as_user=fs.username)
 
     process_id = time.strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:6]
     log_path = os.path.join(LOG_DIR, "processes", f"{process_id}.jsonl")
