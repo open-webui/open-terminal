@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.17.5] - 2026-11-08
+
+### Added
+
+- Added a `cuda` Docker image with the full Open Terminal toolkit, CUDA development tools, and GPU-enabled PyTorch. You can compile GPU programs and run PyTorch workloads on a compatible NVIDIA GPU when Docker has access to it.
+- The full, agents, and cuda Docker images now include GitHub CLI (`gh`) for working with repositories, issues, and pull requests, plus `uv` and `uvx` for installing Python packages and running Python tools. Rebuild or update your image to get them.
+- Apps launched by assistant commands can now open windows on your running Linux Desktop. For example, asking the assistant to launch a browser can show its window in the Desktop tab. Open the desktop first; running a command does not start it automatically.
+
+### Fixed
+
+- Fixed Chromium closing immediately when launched from a command in the Docker image, even though it worked from the Desktop. Commands, notebooks, and coding agents now honor the same browser setting already used by the Desktop.
+
 ## [0.17.4] - 2026-11-07
 
 ### Added
