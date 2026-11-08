@@ -1379,15 +1379,18 @@ async def search_files(
                 lower = name.lower()
                 if query_lower and query_lower not in lower:
                     continue
-                rank = 0 if lower == query_lower else 1 if lower.startswith(query_lower) else 2
+                rank = (0 if lower == query_lower else 1 if lower.startswith(query_lower) else 2) if query_lower else 0
                 try:
                     info = os.stat(full_path)
                 except OSError:
                     continue
-                yield (rank, len(name), os.path.relpath(full_path, target).lower(), {
+                rel_path = os.path.relpath(full_path, target)
+                depth = rel_path.count(os.sep)
+                sort_key = (rank, depth, len(name) if query_lower else 0, rel_path.lower())
+                yield (sort_key, {
                     "path": full_path, "name": name, "type": entry_type, "size": info.st_size, "modified": info.st_mtime,
                 })
-        return [item[3] for item in heapq.nsmallest(limit, candidates(), key=lambda item: item[:3])]
+        return [item[1] for item in heapq.nsmallest(limit, candidates(), key=lambda item: item[0])]
 
     return {"results": await run_io(_search_sync)}
 
