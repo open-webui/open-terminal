@@ -1,6 +1,6 @@
 # Pin to a specific patch version for reproducible builds.
 # To pick up security patches, bump this version and rebuild.
-FROM python:3.12.13 AS base
+FROM python:3.12.16 AS base
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     # Core utilities
