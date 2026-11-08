@@ -998,7 +998,9 @@ async def view_file(
 )
 async def serve_file(path: str, fs: UserFS = Depends(get_filesystem)):
     """Path-based alias for view_file — enables relative URL resolution in iframes."""
-    return await view_file(path=f"/{path}", preview=False, fs=fs)
+    if not path.startswith("/") and not os.path.isabs(path):
+        path = f"/{path}"
+    return await view_file(path=path, preview=False, fs=fs)
 
 
 @app.post(
