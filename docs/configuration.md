@@ -73,9 +73,10 @@ your browser and other tabs open. Personal mode requires single-user operation.
 Chromium's sandbox is enabled by default outside Docker. All published Docker image
 variants set `OPEN_TERMINAL_BROWSER_NO_SANDBOX=true` so Browser can start under
 Docker's default security restrictions when Chromium is installed. This applies to
-both managed Browser tabs and Chromium launched from the Linux Desktop in the full
-Docker image. Container isolation remains unchanged, but Chromium's own sandbox
-no longer protects files and processes inside the container from a browser exploit.
+managed Browser tabs, and in the full Docker image also to Chromium launched from
+the Linux Desktop or from commands. Container isolation remains unchanged, but
+Chromium's own sandbox no longer protects files and processes inside the container
+from a browser exploit.
 
 To enable Chromium's sandbox in Docker, pass
 `-e OPEN_TERMINAL_BROWSER_NO_SANDBOX=false` when creating the container; the runtime
