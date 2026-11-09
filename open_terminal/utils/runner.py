@@ -95,6 +95,14 @@ class ProcessRunner(ABC):
         """PID of the child process."""
 
 
+def _acquire_ctty(fd: int) -> None:
+    import fcntl, termios
+    try:
+        fcntl.ioctl(fd, termios.TIOCSCTTY, 0)
+    except OSError:
+        pass
+
+
 class PtyRunner(ProcessRunner):
     """Spawn a command under a pseudo-terminal (Unix)."""
 
@@ -117,6 +125,7 @@ class PtyRunner(ProcessRunner):
                 cwd=cwd,
                 env=sanitized_environ(env),
                 start_new_session=True,
+                preexec_fn=lambda: _acquire_ctty(slave_fd),
             )
         except Exception:
             os.close(slave_fd)

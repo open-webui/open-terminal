@@ -2155,6 +2155,14 @@ if ENABLE_TERMINAL:
                 pty_proc.terminate()
 
 
+    def _acquire_ctty(fd: int) -> None:
+        import fcntl, termios
+        try:
+            fcntl.ioctl(fd, termios.TIOCSCTTY, 0)
+        except OSError:
+            pass
+
+
     @app.post("/api/terminals", dependencies=[Depends(verify_api_key)], include_in_schema=False)
     async def create_terminal(request: Request):
         """Create a new terminal session and return its ID."""
@@ -2219,6 +2227,7 @@ if ENABLE_TERMINAL:
                     cwd=cwd,
                     env=spawn_env,
                     start_new_session=True,
+                    preexec_fn=lambda: _acquire_ctty(slave_fd),
                 )
             except Exception:
                 os.close(slave_fd)
