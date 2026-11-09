@@ -2219,6 +2219,8 @@ if ENABLE_TERMINAL:
                     cwd=cwd,
                     env=spawn_env,
                     start_new_session=True,
+                    # after setsid, so the pty becomes the controlling terminal
+                    preexec_fn=lambda: fcntl.ioctl(slave_fd, termios.TIOCSCTTY, 0),
                 )
             except Exception:
                 os.close(slave_fd)
