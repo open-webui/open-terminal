@@ -42,6 +42,14 @@ class Start(BaseModel):
     instructions: str = Field(default="", max_length=65536)
 
 
+def _system_sudo():
+    """Absolute path of sudo, resolved on the system default PATH only."""
+    return shutil.which("sudo", path=os.defpath) or "/usr/bin/sudo"
+
+
+SUDO = _system_sudo()
+
+
 def identity(fs):
     env = sanitized_environ()
     env.pop("CLAUDECODE", None)
@@ -76,7 +84,10 @@ def identity(fs):
         if os.getuid() == 0:
             kwargs.update(user=account.pw_uid, group=account.pw_gid, extra_groups=[])
         else:
-            prefix = ["sudo", "-H", "-n", "-u", fs.username, "--"]
+            # The spawn env puts the target user's bin directories first on
+            # PATH (to find their agent binary), so the launcher itself must
+            # not be looked up through it.
+            prefix = [SUDO, "-H", "-n", "-u", fs.username, "--"]
     env["PATH"] = os.pathsep.join(
         [
             *(
