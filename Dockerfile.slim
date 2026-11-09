@@ -25,7 +25,7 @@
 #  Compiles Python dependencies in an isolated prefix so we can copy only
 #  the final result into the slim runtime image — no compilers shipped.
 # --------------------------------------------------------------------------
-FROM python:3.12.13-slim AS builder
+FROM python:3.12.16-slim AS builder
 
 WORKDIR /src
 
@@ -51,7 +51,7 @@ RUN pip install --no-cache-dir --prefix=/install .
 #  Stage 2: Runtime
 #  The actual image that ships. No compilers, no build tools, no sudo.
 # --------------------------------------------------------------------------
-FROM python:3.12.13-slim
+FROM python:3.12.16-slim
 
 # ── Runtime system packages ────────────────────────────────────────────────
 #
