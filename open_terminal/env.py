@@ -216,6 +216,19 @@ FILE_BROWSER_ROOT = os.environ.get(
     config.get("file_browser_root", "home"),
 ).strip()
 
+# Where every session, shell, and command starts unless a request names a directory.
+# "~", "~/path", or a path relative to home; folders outside home are ignored.
+START_DIR = os.environ.get(
+    "OPEN_TERMINAL_START_DIR",
+    config.get("start_dir", ""),
+).strip()
+
+# Shell script run in START_DIR each time the server starts, before it accepts requests.
+SETUP_SCRIPT = os.environ.get(
+    "OPEN_TERMINAL_SETUP_SCRIPT",
+    config.get("setup_script", ""),
+)
+
 # How long (in seconds) to keep per-session cwd entries in memory.
 # Sliding window — refreshed on every access.
 SESSION_CWD_TTL: float = float(

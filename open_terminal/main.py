@@ -45,6 +45,7 @@ from open_terminal.utils.system import collect_system_info
 from open_terminal.utils.events import system_events
 from open_terminal.utils.search import search_entries, matching_files, ranked_page
 from open_terminal.utils.skills import join_skill_path, list_skill_resources, parse_skill_frontmatter
+from open_terminal.utils.setup import setup_status, start_directory
 
 MATCH_PAGE_SIZE = 100
 MAX_CONTENT_MATCHES_PER_FILE = 3
@@ -405,14 +406,14 @@ def _expire_session_cwds():
 
 
 def _get_session_cwd(session_id: str | None, fs: "UserFS") -> str:
-    """Return the tracked cwd for *session_id*, or ``fs.home`` as default."""
+    """Return the tracked cwd for *session_id*, or the start directory as default."""
     _expire_session_cwds()
     key = (fs.home, session_id)
     if session_id and key in _session_cwds:
         cwd, _ = _session_cwds[key]
         _session_cwds[key] = (cwd, time.time())  # refresh TTL
         return cwd
-    return fs.home
+    return start_directory(fs.home)
 
 
 def _set_session_cwd(session_id: str | None, path: str, fs: "UserFS"):
@@ -526,7 +527,11 @@ async def get_config():
 async def system_info(http_request: Request, fs: UserFS = Depends(get_filesystem)):
     directory = _get_session_cwd(http_request.headers.get("x-session-id"), fs) or fs.home
     fs._check_path(os.path.realpath(directory))
-    return JSONResponse(await run_io(collect_system_info, directory, fs.username), headers={"Cache-Control": "no-store"})
+    info = await run_io(collect_system_info, directory, fs.username)
+    setup = await run_io(setup_status, fs.home)
+    if setup:
+        info["setup"] = setup
+    return JSONResponse(info, headers={"Cache-Control": "no-store"})
 
 
 if ENABLE_SYSTEM_PROMPT:
@@ -1801,7 +1806,11 @@ async def execute(
     fs = get_filesystem(http_request)
     session_id = http_request.headers.get("x-session-id")
     session_cwd = _get_session_cwd(session_id, fs) if session_id else None
-    cwd = fs.resolve_path(request.cwd, cwd=session_cwd) if request.cwd else (session_cwd or fs.home)
+    cwd = (
+        fs.resolve_path(request.cwd, cwd=session_cwd)
+        if request.cwd
+        else (session_cwd or start_directory(fs.home))
+    )
 
     env = request.env
     if ENABLE_DESKTOP:
@@ -2204,10 +2213,10 @@ if ENABLE_TERMINAL:
                         f"sudo -i -u {fs.username}",
                         "/dev/null",
                     ]
-                    cwd = session_cwd or fs.home
+                    cwd = session_cwd or start_directory(fs.home)
                 else:
                     shell_cmd = [os.environ.get("SHELL", "/bin/sh")]
-                    cwd = session_cwd or os.getcwd()
+                    cwd = session_cwd or start_directory(fs.home)
 
                 spawn_env = sanitized_environ()
                 spawn_env.setdefault("TERM", TERMINAL_TERM)

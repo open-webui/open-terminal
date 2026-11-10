@@ -172,7 +172,23 @@ def run(
         click.echo(click.style("  └─────────────────────────────────────────────────────────────┘", fg="yellow"))
         click.echo()
 
-    from open_terminal.env import UVICORN_LOOP, UVICORN_TIMEOUT_KEEP_ALIVE
+    from open_terminal.env import MULTI_USER, SETUP_SCRIPT, START_DIR, UVICORN_LOOP, UVICORN_TIMEOUT_KEEP_ALIVE
+
+    # Multi-user servers have a home per user, so there is no single place to set up.
+    if not MULTI_USER and (START_DIR or SETUP_SCRIPT.strip()):
+        from open_terminal.utils.setup import run_setup
+
+        setup = run_setup(os.getcwd())
+        if setup:
+            click.echo(
+                click.style("  Setup script finished.", dim=True)
+                if setup["status"] == "ok"
+                else click.style(
+                    f"  Setup script failed (exit {setup['exit_code']}). See ~/.open-terminal/setup.log",
+                    fg="yellow",
+                )
+            )
+            click.echo()
 
     uvicorn_options = {}
     if UVICORN_TIMEOUT_KEEP_ALIVE is not None:

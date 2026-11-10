@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.17.7] - 2026-11-10
+
+### Added
+
+- You can set where every session starts with `OPEN_TERMINAL_START_DIR`, such as `~/app`. New shells and commands open there, and so does the file browser, unless a client picks another folder for the session. The folder must be inside home, and it's created at startup if it's missing.
+- You can run a setup script each time the terminal starts with `OPEN_TERMINAL_SETUP_SCRIPT`, for example to clone a repository and install its dependencies. It runs in the start directory before the server accepts requests. If it fails, the terminal still starts, and system info shows the exit code and the end of `~/.open-terminal/setup.log`.
+
 ## [0.17.6] - 2026-11-09
 
 ### Fixed
