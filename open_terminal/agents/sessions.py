@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import errno
 import json
 import os
 import shutil
@@ -39,7 +40,7 @@ class Start(BaseModel):
     cwd: str | None = None
     model: str | None = Field(default=None, max_length=256)
     resume: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9_-]{1,128}$")
-    instructions: str = Field(default="", max_length=65536)
+    instructions: str = ""
 
 
 def identity(fs):
@@ -109,17 +110,23 @@ async def spawn(provider, fs, options):
     if not await fs.isdir(cwd):
         raise HTTPException(400, "Agent working directory does not exist")
     args, env, kwargs = command(provider, fs, options)
-    return await asyncio.create_subprocess_exec(
-        *args,
-        cwd=cwd,
-        env=env,
-        **kwargs,
-        start_new_session=os.name != "nt",
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        limit=LIMIT,
-    ), cwd
+    try:
+        return await asyncio.create_subprocess_exec(
+            *args,
+            cwd=cwd,
+            env=env,
+            **kwargs,
+            start_new_session=os.name != "nt",
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            limit=LIMIT,
+        ), cwd
+    except OSError as exc:
+        # Claude Code and Pi get the instructions as one argument, which the OS caps.
+        if exc.errno == errno.E2BIG:
+            raise HTTPException(413, "Agent instructions are too long") from exc
+        raise
 
 
 async def stop_process(proc):
