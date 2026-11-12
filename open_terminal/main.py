@@ -826,6 +826,27 @@ async def git_pull_request_action(http_request: Request, action: str, payload: P
     return await GitRepository(fs, payload.root, cwd).pull_request_action(action, method=payload.strategy, **fields)
 
 
+@app.get("/git/issue/{view}", dependencies=[Depends(verify_api_key)], include_in_schema=False)
+async def git_issues(http_request: Request, view: str, root: str = ".", number: int = 0,
+                     state: str = "open", fs: UserFS = Depends(get_filesystem)):
+    cwd = _get_session_cwd(http_request.headers.get("x-session-id"), fs)
+    return await GitRepository(fs, root, cwd).issues(view, number, state)
+
+
+class IssueAction(BaseModel):
+    root: str = "."
+    number: int = 0
+    title: str = ""
+    body: str = ""
+    reason: str = "completed"
+
+
+@app.post("/git/issue/{action}", dependencies=[Depends(verify_api_key)], include_in_schema=False)
+async def git_issue_action(http_request: Request, action: str, payload: IssueAction, fs: UserFS = Depends(get_filesystem)):
+    cwd = _get_session_cwd(http_request.headers.get("x-session-id"), fs)
+    return await GitRepository(fs, payload.root, cwd).issue_action(action, **payload.model_dump(exclude={"root"}))
+
+
 class GitActionRequest(BaseModel):
     root: str = "."
     files: list[str] = Field(default_factory=list)

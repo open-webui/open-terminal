@@ -250,9 +250,13 @@ class GitRepository:
                 code, _, _ = await self.run("--version", program="gh", check=False)
                 if code:
                     return {"available": False}
-                code, output, _ = await self.run("repo", "view", "--json", "nameWithOwner,defaultBranchRef", program="gh", check=False)
+                code, output, _ = await self.run("repo", "view", "--json", "nameWithOwner,defaultBranchRef,hasIssuesEnabled", program="gh", check=False)
                 repo = json.loads(output) if code == 0 else {}
-                return {"available": code == 0, "default_branch": (repo.get("defaultBranchRef") or {}).get("name", "main")}
+                return {
+                    "available": code == 0,
+                    "default_branch": (repo.get("defaultBranchRef") or {}).get("name", "main"),
+                    "issues": code == 0 and repo.get("hasIssuesEnabled", True),
+                }
             except HTTPException:
                 return {"available": False}
         fields = "number,title,state,isDraft,author,headRefName,baseRefName,url,body,mergeable,reviewDecision"
@@ -303,6 +307,53 @@ class GitRepository:
             args = ["pr", "merge", str(number), "--" + method]
         else:
             raise HTTPException(400, "Unknown pull request action")
+        _, output, _ = await self.run(*args, program="gh")
+        return {"message": output.strip()}
+
+    async def issues(self, view="list", number=0, state="open"):
+        if not await self.detect():
+            raise HTTPException(400, "Not a Git repository")
+        fields = "number,title,state,stateReason,author,labels,assignees,url,updatedAt"
+        if view == "list":
+            if state not in ("open", "closed", "all"):
+                raise HTTPException(400, "Invalid issue state")
+            args = ["issue", "list", "--state", state, "--limit", "50", "--json", fields]
+        elif number <= 0:
+            raise HTTPException(400, "Select an issue")
+        elif view == "view":
+            args = ["issue", "view", str(number), "--json", fields + ",body,comments,createdAt"]
+        else:
+            raise HTTPException(400, "Unknown issue view")
+        _, output, _ = await self.run(*args, program="gh")
+        return {"items": json.loads(output)} if view == "list" else json.loads(output)
+
+    async def issue_action(self, action, number=0, title="", body="", reason="completed"):
+        if not await self.detect():
+            raise HTTPException(400, "Not a Git repository")
+        if action == "create":
+            if not title.strip():
+                raise HTTPException(400, "Enter a title")
+            args = ["issue", "create", "--title", title, "--body", body]
+        elif number <= 0:
+            raise HTTPException(400, "Select an issue")
+        elif action == "edit":
+            if not title.strip():
+                raise HTTPException(400, "Enter a title")
+            args = ["issue", "edit", str(number), "--title", title, "--body", body]
+        elif action == "comment":
+            if not body.strip():
+                raise HTTPException(400, "Enter a comment")
+            args = ["issue", "comment", str(number), "--body", body]
+        elif action == "close":
+            if reason not in ("completed", "not planned"):
+                raise HTTPException(400, "Invalid close reason")
+            args = ["issue", "close", str(number), "--reason", reason]
+        elif action == "reopen":
+            args = ["issue", "reopen", str(number)]
+        else:
+            raise HTTPException(400, "Unknown issue action")
+        if action in ("close", "reopen") and body.strip():
+            args += ["--comment", body]
         _, output, _ = await self.run(*args, program="gh")
         return {"message": output.strip()}
 
