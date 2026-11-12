@@ -6,8 +6,8 @@ import shutil
 import threading
 
 import anyio
+import watchfiles
 from fastapi import HTTPException, WebSocket, WebSocketDisconnect
-from watchfiles import awatch
 
 from open_terminal.utils.git import GitRepository
 
@@ -27,15 +27,81 @@ async def watch_paths(fs, path, cwd):
     return sorted(paths), recursive
 
 
+_watchers: dict[tuple[tuple[str, ...], bool], "SharedWatcher"] = {}
+
+
+class SharedWatcher:
+    """Watches one set of paths for every client subscribed to them."""
+
+    def __init__(self, key: tuple[tuple[str, ...], bool]):
+        self.key: tuple[tuple[str, ...], bool] = key
+        self.queues: set[asyncio.Queue] = set()
+        self.ready: bool = False
+        self.stop: threading.Event = threading.Event()
+        self.loop: asyncio.AbstractEventLoop = asyncio.get_running_loop()
+        threading.Thread(target=self.run, name="fs-watcher", daemon=True).start()
+
+    def run(self) -> None:
+        paths, recursive = self.key
+        try:
+            # The first yield happens after the native watcher is installed. Refreshing
+            # then closes the race between the initial status request and subscribing.
+            for changes in watchfiles.watch(
+                *paths, watch_filter=None, debounce=250, step=50,
+                force_polling=False, yield_on_timeout=True, rust_timeout=1000,
+                stop_event=self.stop, recursive=recursive,
+            ):
+                self.loop.call_soon_threadsafe(self.publish, changes)
+        except (OSError, RuntimeError):
+            if not self.loop.is_closed():
+                self.loop.call_soon_threadsafe(self.fail)
+
+    def publish(self, changes: set[tuple[watchfiles.Change, str]]) -> None:
+        if not self.ready:
+            self.ready = True
+            message = {"type": "fs:ready"}
+        elif changes:
+            # No filenames are exposed; clients only need to invalidate status.
+            message = {"type": "fs:change"}
+        else:
+            return
+        for queue in self.queues:
+            # Any pending message already makes the client refresh.
+            if not queue.full():
+                queue.put_nowait(message)
+
+    def fail(self) -> None:
+        self.deregister()
+        for queue in self.queues:
+            if queue.full():
+                queue.get_nowait()
+            queue.put_nowait(None)
+
+    def subscribe(self) -> asyncio.Queue:
+        queue = asyncio.Queue(maxsize=1)
+        if self.ready:
+            queue.put_nowait({"type": "fs:ready"})
+        self.queues.add(queue)
+        return queue
+
+    def unsubscribe(self, queue: asyncio.Queue) -> None:
+        self.queues.discard(queue)
+        if not self.queues:
+            self.stop.set()
+            self.deregister()
+
+    def deregister(self) -> None:
+        if _watchers.get(self.key) is self:
+            del _watchers[self.key]
+
+
 async def system_events(ws: WebSocket, fs, cwd, ports):
     task = None
     port_task = None
-    stop = threading.Event()
 
     async def stop_watcher():
         if task:
-            stop.set()
-            # ASGI servers can cancel the handler while its native watcher is exiting.
+            # ASGI servers can cancel the handler before its cleanup has finished.
             with anyio.CancelScope(shield=True):
                 task.cancel()
                 await asyncio.gather(task, return_exceptions=True)
@@ -48,23 +114,17 @@ async def system_events(ws: WebSocket, fs, cwd, ports):
             await ws.close(code=1011, reason="Port discovery unavailable")
 
     async def send_changes(paths, recursive):
-        ready = False
+        key = (tuple(paths), recursive)
+        if key not in _watchers:
+            _watchers[key] = SharedWatcher(key)
+        watcher = _watchers[key]
+        queue = watcher.subscribe()
         try:
-            # The first yield happens after the native watcher is installed. Refreshing
-            # then closes the race between the initial status request and subscribing.
-            async for changes in awatch(
-                *paths, watch_filter=None, debounce=250, step=50,
-                force_polling=False, yield_on_timeout=True, rust_timeout=1000,
-                stop_event=stop, recursive=recursive,
-            ):
-                if not ready:
-                    ready = True
-                    await ws.send_json({"type": "fs:ready"})
-                elif changes:
-                    # No filenames are exposed; clients only need to invalidate status.
-                    await ws.send_json({"type": "fs:change"})
-        except (OSError, RuntimeError):
+            while (message := await queue.get()) is not None:
+                await ws.send_json(message)
             await ws.close(code=1011, reason="Filesystem watcher unavailable")
+        finally:
+            watcher.unsubscribe(queue)
 
     try:
         while True:
@@ -81,7 +141,6 @@ async def system_events(ws: WebSocket, fs, cwd, ports):
             watch = await watch_paths(fs, path, cwd) if path is not None else None
             await stop_watcher()
             task = None
-            stop = threading.Event()
             if watch is not None:
                 task = asyncio.create_task(send_changes(*watch))
             if port_task:
