@@ -250,12 +250,15 @@ class GitRepository:
                 code, _, _ = await self.run("--version", program="gh", check=False)
                 if code:
                     return {"available": False}
-                code, output, _ = await self.run("repo", "view", "--json", "nameWithOwner,defaultBranchRef,hasIssuesEnabled", program="gh", check=False)
+                code, output, _ = await self.run("repo", "view", "--json", "nameWithOwner,defaultBranchRef,hasIssuesEnabled,pullRequests,issues", program="gh", check=False)
                 repo = json.loads(output) if code == 0 else {}
                 return {
                     "available": code == 0,
                     "default_branch": (repo.get("defaultBranchRef") or {}).get("name", "main"),
                     "issues": code == 0 and repo.get("hasIssuesEnabled", True),
+                    # Exact open counts; `gh repo view` counts open pull requests and issues only.
+                    "open_pull_requests": (repo.get("pullRequests") or {}).get("totalCount"),
+                    "open_issues": (repo.get("issues") or {}).get("totalCount"),
                 }
             except HTTPException:
                 return {"available": False}
