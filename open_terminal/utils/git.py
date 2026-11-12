@@ -263,7 +263,7 @@ class GitRepository:
         if view == "list":
             if state not in ("open", "closed", "merged", "all"):
                 raise HTTPException(400, "Invalid pull request state")
-            args = ["pr", "list", "--state", state, "--limit", "50", "--json", fields]
+            args = ["pr", "list", "--state", state, "--limit", "50", "--json", fields + ",statusCheckRollup,updatedAt,labels"]
         elif number <= 0:
             raise HTTPException(400, "Select a pull request")
         elif view == "view":
