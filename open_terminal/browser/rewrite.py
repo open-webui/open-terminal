@@ -8,6 +8,7 @@ from urllib.parse import quote, urljoin, urlsplit, urlunsplit
 
 _URL_ATTRIBUTES = {"href", "src", "action", "poster", "data", "formaction"}
 _SKIP_SCHEMES = ("data:", "javascript:", "mailto:", "tel:", "about:", "blob:")
+_SRCSET_URL = re.compile(r"[\s,]*([^\s,]\S*)")
 
 
 def proxy_path(prefix: str, url: str) -> str:
@@ -60,13 +61,32 @@ def rewrite_url(value: str, base_url: str, prefix: str) -> str:
 
 
 def _rewrite_srcset(value: str, base_url: str, prefix: str) -> str:
+    # A URL ends at whitespace, so it may hold commas (w_400,c_fill). Only a
+    # comma after the URL or after its descriptor starts the next candidate.
     parts = []
-    for item in value.split(","):
-        if not item.strip():
-            continue
-        url, *descriptor = item.strip().split(maxsplit=1)
-        parts.append(" ".join([rewrite_url(url, base_url, prefix), *descriptor]))
+    position = 0
+    while match := _SRCSET_URL.match(value, position):
+        url, position = match.group(1), match.end()
+        descriptor = ""
+        if url.endswith(","):
+            url = url.rstrip(",")
+        else:
+            end = value.find(",", position)
+            end = len(value) if end < 0 else end
+            descriptor = value[position:end].strip()
+            position = end
+        parts.append(
+            " ".join(filter(None, [rewrite_url(url, base_url, prefix), descriptor]))
+        )
     return ", ".join(parts)
+
+
+def _refresh_url(value: str) -> str:
+    # A quoted refresh URL ends at its closing quote (HTML refresh parsing).
+    value = value.strip()
+    if value[:1] in ("'", '"'):
+        value = value[1:].split(value[0], 1)[0]
+    return value
 
 
 class _HtmlRewriter(HTMLParser):
@@ -113,7 +133,7 @@ class _HtmlRewriter(HTMLParser):
                     lambda match: (
                         match.group(1)
                         + rewrite_url(
-                            match.group(2).strip(), self.base_url, self.prefix
+                            _refresh_url(match.group(2)), self.base_url, self.prefix
                         )
                     ),
                     value,
