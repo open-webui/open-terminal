@@ -798,9 +798,9 @@ async def git_worktrees(http_request: Request, root: str = ".", fs: UserFS = Dep
 
 @app.get("/git/pr/{view}", dependencies=[Depends(verify_api_key)], include_in_schema=False)
 async def git_pull_requests(http_request: Request, view: str, root: str = ".", number: int = 0,
-                            state: str = "open", fs: UserFS = Depends(get_filesystem)):
+                            state: str = "open", search: str = "", fs: UserFS = Depends(get_filesystem)):
     cwd = _get_session_cwd(http_request.headers.get("x-session-id"), fs)
-    return await GitRepository(fs, root, cwd).pull_requests(view, number, state)
+    return await GitRepository(fs, root, cwd).pull_requests(view, number, state, search)
 
 
 class PullRequestAction(BaseModel):
@@ -828,9 +828,9 @@ async def git_pull_request_action(http_request: Request, action: str, payload: P
 
 @app.get("/git/issue/{view}", dependencies=[Depends(verify_api_key)], include_in_schema=False)
 async def git_issues(http_request: Request, view: str, root: str = ".", number: int = 0,
-                     state: str = "open", fs: UserFS = Depends(get_filesystem)):
+                     state: str = "open", search: str = "", fs: UserFS = Depends(get_filesystem)):
     cwd = _get_session_cwd(http_request.headers.get("x-session-id"), fs)
-    return await GitRepository(fs, root, cwd).issues(view, number, state)
+    return await GitRepository(fs, root, cwd).issues(view, number, state, search)
 
 
 class IssueAction(BaseModel):

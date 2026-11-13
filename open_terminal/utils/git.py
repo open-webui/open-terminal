@@ -242,7 +242,7 @@ class GitRepository:
                 tree["branch"] = "(detached)"
         return trees
 
-    async def pull_requests(self, view="list", number=0, state="open"):
+    async def pull_requests(self, view="list", number=0, state="open", search=""):
         if not await self.detect():
             return {"available": False} if view == "capabilities" else []
         if view == "capabilities":
@@ -267,6 +267,8 @@ class GitRepository:
             if state not in ("open", "closed", "merged", "all"):
                 raise HTTPException(400, "Invalid pull request state")
             args = ["pr", "list", "--state", state, "--limit", "50", "--json", fields + ",statusCheckRollup,updatedAt,labels"]
+            if search.strip():
+                args += ["--search", search.strip()]
         elif number <= 0:
             raise HTTPException(400, "Select a pull request")
         elif view == "view":
@@ -281,7 +283,10 @@ class GitRepository:
         else:
             raise HTTPException(400, "Unknown pull request view")
         _, output, _ = await self.run(*args, program="gh")
-        return {"diff": output} if view == "diff" else {"items": json.loads(output)} if view == "list" else json.loads(output)
+        if view == "list":
+            # `search` tells the client these items were already searched by GitHub.
+            return {"items": json.loads(output), "search": search.strip()}
+        return {"diff": output} if view == "diff" else json.loads(output)
 
     async def pull_request_action(self, action, number=0, title="", body="", base="", head="", draft=False, method="squash"):
         if not await self.detect():
@@ -313,7 +318,7 @@ class GitRepository:
         _, output, _ = await self.run(*args, program="gh")
         return {"message": output.strip()}
 
-    async def issues(self, view="list", number=0, state="open"):
+    async def issues(self, view="list", number=0, state="open", search=""):
         if not await self.detect():
             raise HTTPException(400, "Not a Git repository")
         fields = "number,title,state,stateReason,author,labels,assignees,url,updatedAt"
@@ -321,6 +326,8 @@ class GitRepository:
             if state not in ("open", "closed", "all"):
                 raise HTTPException(400, "Invalid issue state")
             args = ["issue", "list", "--state", state, "--limit", "50", "--json", fields]
+            if search.strip():
+                args += ["--search", search.strip()]
         elif number <= 0:
             raise HTTPException(400, "Select an issue")
         elif view == "view":
@@ -328,7 +335,8 @@ class GitRepository:
         else:
             raise HTTPException(400, "Unknown issue view")
         _, output, _ = await self.run(*args, program="gh")
-        return {"items": json.loads(output)} if view == "list" else json.loads(output)
+        # `search` tells the client these items were already searched by GitHub.
+        return {"items": json.loads(output), "search": search.strip()} if view == "list" else json.loads(output)
 
     async def issue_action(self, action, number=0, title="", body="", reason="completed"):
         if not await self.detect():
