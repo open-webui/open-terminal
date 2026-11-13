@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.17.8] - 2026-11-13
+
+### Added
+
+- Added support for managing GitHub issues from Open WebUI's Git panel. You can browse and search issues, read their comments, create or edit an issue, add a comment, close it as completed or not planned, and reopen it. Requires an updated Open WebUI and GitHub CLI signed in to an account with access to the repository.
+- Pull-request and issue searches now search GitHub, including matches outside the first 50 items shown. The Git panel can show the repository's total open issue and pull-request counts, and pull-request lists can show labels, last-updated times, and check results. Requires an updated Open WebUI.
+- Terminal tab titles can now show the running program, such as Python or Node, and return to the shell name when it exits, even when the program does not set its own title. Available on Mac and Linux with an updated Open WebUI.
+
+### Fixed
+
+- Fixed coding-agent chats refusing system prompts longer than 65,536 characters. Open Terminal no longer imposes that limit. Claude Code and Pi still have a system-dependent limit; when it is exceeded, the error now says "Agent instructions are too long" instead of "Internal Server Error".
+
 ## [0.17.7] - 2026-11-10
 
 ### Added
