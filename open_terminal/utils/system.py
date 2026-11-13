@@ -16,6 +16,31 @@ _previous = None
 _sampled_at = 0.0
 
 
+def foreground_process(master_fd: int) -> dict | None:
+    try:
+        process = psutil.Process(os.tcgetpgrp(master_fd))
+        terminal = process.terminal()
+        # script/sudo can put the user's shell on a nested PTY.
+        for child in reversed(process.children(recursive=True)):
+            try:
+                child_terminal = child.terminal()
+                if not child_terminal or child_terminal == terminal:
+                    continue
+                fd = os.open(child_terminal, os.O_RDONLY | os.O_NOCTTY | os.O_NONBLOCK)
+                try:
+                    foreground = os.tcgetpgrp(fd)
+                finally:
+                    os.close(fd)
+                if foreground == child.pid:
+                    process = child
+                    break
+            except (psutil.Error, OSError):
+                continue
+        return {"pid": process.pid, "name": process.name()}
+    except (psutil.Error, OSError, ValueError):
+        return None
+
+
 def _read(path):
     try:
         return Path(path).read_text().strip()

@@ -41,7 +41,7 @@ from open_terminal.utils.fs import UserFS, FullFileResponse as FileResponse, Tem
 from open_terminal.utils.limits import (CHUNK_SIZE, NormalizeNullQueryMiddleware, run_io, run_worker)
 from open_terminal.utils.file_compare import CompareRequest, run_comparison
 from open_terminal.utils.git import GitRepository
-from open_terminal.utils.system import collect_system_info
+from open_terminal.utils.system import collect_system_info, foreground_process
 from open_terminal.utils.events import system_events
 from open_terminal.utils.search import search_entries, matching_files, ranked_page
 from open_terminal.utils.skills import join_skill_path, list_skill_resources, parse_skill_frontmatter
@@ -2479,6 +2479,9 @@ if ENABLE_TERMINAL:
         ``{"type": "ack", "cursor": <output end>}`` to release more data.
         Reads pause when the attached viewer falls behind; detached shells keep
         running with bounded history.
+
+        Set ``process_info`` to true in auth to receive foreground process
+        changes as ``{"type": "process", "pid": ..., "name": ...}`` on Unix.
         """
         session = _terminal_sessions.get(session_id)
         if session is None:
@@ -2540,6 +2543,13 @@ if ENABLE_TERMINAL:
 
         async def _pty_reader():
             nonlocal cursor
+            # shortcut: winpty needs separate console foreground detection for Windows.
+            process_info = payload.get("process_info") is True and backend == "pty"
+            # Reset stale titles from retained output before following the live process.
+            replay_end = session["output_offset"]
+            last_process = None
+            last_group = None
+            sampled_at = 0.0
             if flow_control:
                 await ws.send_json({"type": "flow_control"})
             while not stop_event.is_set():
@@ -2547,6 +2557,18 @@ if ENABLE_TERMINAL:
                     session["output_consumed"].clear()
                     await session["output_consumed"].wait()
                 session["output_changed"].clear()
+                if process_info and cursor >= replay_end:
+                    try:
+                        group = os.tcgetpgrp(master_fd)
+                    except OSError:
+                        group = None
+                    now = time.monotonic()
+                    if group != last_group or now - sampled_at >= 0.5:
+                        current = await asyncio.to_thread(foreground_process, master_fd)
+                        last_group, sampled_at = group, now
+                        if current is not None and current != last_process:
+                            await ws.send_json({"type": "process", **current})
+                            last_process = current
                 oldest = session["output_offset"] - len(session["output"])
                 start = max(cursor, oldest)
                 end = min(session["output_offset"], start + 64 * 1024)
@@ -2562,7 +2584,13 @@ if ENABLE_TERMINAL:
                     continue
                 if session["reader_done"]:
                     return
-                await session["output_changed"].wait()
+                if process_info:
+                    try:
+                        await asyncio.wait_for(session["output_changed"].wait(), timeout=0.5)
+                    except asyncio.TimeoutError:
+                        pass
+                else:
+                    await session["output_changed"].wait()
 
         input_queue = asyncio.Queue(maxsize=64)
         input_bytes = 0
