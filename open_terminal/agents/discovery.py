@@ -25,7 +25,7 @@ async def probe(provider, fs, cwd=None):
             process.stdin.write((json.dumps(message) + "\n").encode())
             await process.stdin.drain()
 
-        async def response(key, value, *, on_notification=None):
+        async def response(key, value, *, handle=None):
             while line := await process.stdout.readline():
                 message = json.loads(line)
                 if "method" in message and "id" in message:
@@ -42,8 +42,8 @@ async def probe(provider, fs, cwd=None):
                     continue
                 if message.get(key) == value:
                     return message
-                if on_notification:
-                    on_notification(message)
+                if handle:
+                    handle(message)
             raise RuntimeError("Agent exited during discovery")
 
         async with asyncio.timeout(20):

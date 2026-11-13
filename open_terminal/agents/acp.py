@@ -5,7 +5,7 @@ async def discover(send, response, cwd, auth_method=None):
     sequence = 0
     config_options = []
 
-    def notification(message):
+    def handle(message):
         nonlocal config_options
         if message.get("method") == "session/update":
             update = message.get("params", {}).get("update", {})
@@ -18,7 +18,7 @@ async def discover(send, response, cwd, auth_method=None):
         await send(
             {"jsonrpc": "2.0", "id": sequence, "method": method, "params": params}
         )
-        reply = await response("id", sequence, on_notification=notification)
+        reply = await response("id", sequence, handle=handle)
         if "error" in reply:
             raise RuntimeError(reply["error"].get("message", "Agent request failed"))
         result = reply.get("result", {})
