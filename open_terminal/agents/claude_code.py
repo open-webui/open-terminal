@@ -39,6 +39,10 @@ async def discover(send, response, cwd=None):
         {
             "id": m.get("resolvedModel") or m["value"],
             "name": m.get("displayName") or m["value"],
+            "supportedReasoningEfforts": [
+                {"reasoningEffort": level}
+                for level in (m.get("supportedEffortLevels") or [])
+            ],
         }
         for m in result.get("response", {}).get("models", [])
     ]

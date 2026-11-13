@@ -22,6 +22,25 @@ async def discover(send, response, cwd):
     if not reply.get("success"):
         raise RuntimeError(reply.get("error", "Pi model discovery failed"))
     return [
-        {"id": f"{m['provider']}/{m['id']}", "name": m.get("name") or m["id"]}
+        {
+            "id": f"{m['provider']}/{m['id']}",
+            "name": m.get("name") or m["id"],
+            "supportedReasoningEfforts": [
+                {"reasoningEffort": level} for level in thinking_levels(m)
+            ],
+        }
         for m in reply.get("data", {}).get("models", [])
+    ]
+
+
+def thinking_levels(model):
+    if not model.get("reasoning"):
+        return []
+    # Match Pi's getSupportedThinkingLevels without changing the user's model/settings.
+    mapping = model.get("thinkingLevelMap") or {}
+    return [
+        level
+        for level in ("off", "minimal", "low", "medium", "high", "xhigh", "max")
+        if mapping.get(level, True) is not None
+        and (level not in {"xhigh", "max"} or level in mapping)
     ]
