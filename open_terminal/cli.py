@@ -258,7 +258,10 @@ def mcp(
         )
         raise SystemExit(1)
 
-    mcp_server.run(transport=transport, host=host, port=port)
+    if transport == "stdio":
+        mcp_server.run(transport="stdio")
+    else:
+        mcp_server.run(transport=transport, host=host, port=port)
 
 
 if __name__ == "__main__":
