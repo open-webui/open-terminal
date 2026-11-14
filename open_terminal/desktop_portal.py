@@ -334,7 +334,7 @@ class PortalDesktop(NativeDesktop):
         try:
             await asyncio.wait_for(self.first_frame.wait(), 15)
         except TimeoutError as exc:
-            raise RuntimeError("PipeWire capture produced no screen frame within 15 seconds. Check that the shared desktop is unlocked and PipeWire is running." + self.capture_error()) from exc
+            raise RuntimeError("PipeWire capture produced no screen frame within 15 seconds." + self.capture_error()) from exc
         self.grab()
 
     async def read_stderr(self, process):

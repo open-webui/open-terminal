@@ -31,6 +31,7 @@ class WaylandDesktop(PortalDesktop):
         self.owner = None
         self.stream_path = None
         self.node_ready = asyncio.Event()
+        self.services = {}
         self.width = self.screen_width = WIDTH
         self.height = self.screen_height = HEIGHT
         self.failure = "The virtual GNOME Wayland desktop has stopped. Reconnect to start a new session."
@@ -67,6 +68,7 @@ class WaylandDesktop(PortalDesktop):
                 start_new_session=True, stdout=output, stderr=output,
             )
         self.processes.append(process)
+        self.services[name] = process
         return process
 
     async def wait_socket(self, name, process):
@@ -112,7 +114,8 @@ class WaylandDesktop(PortalDesktop):
             await self.wait_socket("bus", daemon)
             pipewire = await self.launch("pipewire", "pipewire")
             await self.wait_socket("pipewire-0", pipewire)
-            await self.launch("wireplumber", "wireplumber")
+            # Only link our screen stream; leave physical devices to the host.
+            await self.launch("wireplumber", "wireplumber", "--profile=policy")
             compositor = await self.launch(
                 "gnome", "gnome-shell", "--headless", "--wayland",
                 f"--virtual-monitor={WIDTH}x{HEIGHT}", "--wayland-display=wayland-0",
@@ -161,10 +164,12 @@ class WaylandDesktop(PortalDesktop):
             await self.start_capture(env=self.env)
         except Exception as exc:
             details = []
-            for name in ("gnome", "pipewire", "dbus"):
+            for name in ("wireplumber", "gnome", "pipewire", "dbus"):
                 path = self.runtime / f"{name}.log"
                 if path.exists():
-                    details.append(f"{name}: {path.read_text(errors='replace')[-1500:]}")
+                    process = self.services.get(name)
+                    status = f" (exit {process.returncode})" if process and process.returncode is not None else ""
+                    details.append(f"{name}{status}: {path.read_text(errors='replace')[-1500:]}")
             raise RuntimeError(f"Could not start virtual GNOME Wayland: {exc}\n" + "\n".join(details)) from exc
 
     async def notify(self, member, signature, *body):
