@@ -208,9 +208,8 @@ class PortalDesktop(NativeDesktop):
             # SSH may lack DISPLAY and DBUS_SESSION_BUS_ADDRESS. Connect only to
             # this OS user's existing bus, never launch a graphical/login session.
             address, capture_env = host_session()
-            self.bus = await asyncio.wait_for(
-                MessageBus(bus_address=address, negotiate_unix_fd=True).connect(), 10
-            )
+            self.bus = MessageBus(bus_address=address, negotiate_unix_fd=True)
+            await asyncio.wait_for(self.bus.connect(), 10)
             self.bus.add_message_handler(self.on_message)
             stage = "subscribing to desktop portal responses"
             for interface in (REQUEST, SESSION):

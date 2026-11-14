@@ -104,6 +104,12 @@ to the graphical desktop and approve the dialog there. Host mode never starts
 a new desktop as a fallback. Wayland text input sends Unicode key events; audio
 sharing is currently available only in VNC virtual sessions.
 
+SSH host mode uses the same OS user's desktop bus at `/run/user/<uid>/bus`,
+even if the SSH shell has a private D-Bus address. Startup errors identify the
+failed portal request or PipeWire capture stage and include GStreamer errors.
+A permission timeout means you should check the sharing dialog on the unlocked
+Ubuntu desktop; it will not appear in the SSH terminal.
+
 The equivalent environment variables are `OPEN_TERMINAL_DESKTOP_MODE`
 (`virtual` or `host`) and `OPEN_TERMINAL_DESKTOP_ENVIRONMENT`
 (`auto`, `gnome`, or `xfce`); TOML keys are `desktop_mode` and

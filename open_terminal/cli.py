@@ -8,7 +8,7 @@ import uvicorn
 @click.group()
 @click.version_option(package_name="open-terminal")
 def main():
-    """open-terminal — terminal interaction API"""
+    """Open Terminal provides a remote computer API."""
     pass
 
 
