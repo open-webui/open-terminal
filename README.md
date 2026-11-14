@@ -40,11 +40,13 @@ Use `:agents` to run `codex` or `claude` from a terminal, signing in with your o
 Requires Python 3.11+.
 
 ```bash
+# uv (replace your-secret-key)
+uvx open-terminal@latest run --host 0.0.0.0 --port 8000 --api-key your-secret-key
+
+# Or pip
 pip install open-terminal
 open-terminal run --host 0.0.0.0 --port 8000
 ```
-
-Or run without installing: `uvx open-terminal run --host 0.0.0.0 --port 8000`.
 
 If no API key is configured, one is generated and printed at startup. For Docker, find it with `docker logs open-terminal`.
 
