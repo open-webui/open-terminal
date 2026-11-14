@@ -53,18 +53,31 @@ open-terminal run --desktop-environment gnome
 On **Ubuntu 26.04 and other Wayland-only GNOME installations**, install:
 
 ```sh
-sudo apt install gnome-shell dbus-daemon pipewire wireplumber gstreamer1.0-tools gstreamer1.0-pipewire gstreamer1.0-plugins-base libgl1-mesa-dri
+sudo apt install gnome-shell dbus-daemon pipewire wireplumber gstreamer1.0-tools gstreamer1.0-pipewire gstreamer1.0-plugins-base libgl1-mesa-dri x11vnc
 open-terminal run --desktop-mode virtual --desktop-environment gnome
 ```
 
 Open Terminal starts a headless GNOME Shell with its own virtual monitor, D-Bus
 session, and PipeWire services. It works over SSH without a graphical login or
-an on-screen permission prompt. It uses the same viewer, screenshots, and input
-tools as other desktops. Commands launched through the API inherit this virtual
+an on-screen permission prompt. It uses noVNC, like XFCE. Existing GNOME Wayland
+installations need `sudo apt install x11vnc` after upgrading. Commands launched through the API inherit this virtual
 desktop's display and bus so Wayland apps open there. The logged-in host desktop
 is not used. This backend currently requires single-user mode and does not stream
 audio; multi-user deployments keep the XFCE fallback when GNOME is Wayland-only.
 It is tested with Ubuntu 26.04/GNOME 50.
+
+GNOME still runs on Wayland: PipeWire supplies frames to
+[`x11vnc`'s raw-framebuffer mode](https://github.com/LibVNC/x11vnc/blob/master/x11vnc.1),
+and input goes back through the owned Mutter session. LibVNCServer handles the
+VNC protocol. Each authenticated viewer gets a private socket pair; no VNC TCP
+port is opened. Browser paste requires an updated Open WebUI and types text into
+the desktop; clipboard synchronization and audio are not provided by this backend.
+
+Upstream [GNOME Remote Desktop](https://github.com/GNOME/gnome-remote-desktop/blob/50.2/README.md)
+also supports headless VNC, but Ubuntu 26.04 builds it without VNC support.
+[TigerVNC's `w0vncserver`](https://tigervnc.org/doc/w0vncserver.html) shares an
+existing Wayland session through the remote-desktop portal; it does not create
+the separate desktop. [`wayvnc`](https://github.com/any1/wayvnc) does not support GNOME.
 
 For **XFCE or older GNOME installations with an X11 session**, install the VNC tools:
 

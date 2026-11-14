@@ -48,7 +48,7 @@ pip install open-terminal
 open-terminal run --host 0.0.0.0 --port 8000
 ```
 
-Linux defaults to a separate desktop, preferring GNOME and falling back to XFCE. GNOME supports Wayland-only systems, including Ubuntu 26.04; XFCE and older GNOME X11 sessions use VNC. See [desktop setup](docs/configuration.md#desktop) for the required packages. Keep your existing display manager if prompted during installation. Docker `latest` includes XFCE and its dependencies. Sharing your actual logged-in desktop requires `--desktop-mode host`.
+Linux defaults to a separate desktop, preferring GNOME and falling back to XFCE. Both use the noVNC viewer, including GNOME on Wayland-only systems such as Ubuntu 26.04. GNOME Wayland additionally requires `x11vnc` for its VNC transport; see [desktop setup](docs/configuration.md#desktop) for all required packages. Keep your existing display manager if prompted during installation. Docker `latest` includes XFCE and its dependencies. Sharing your actual logged-in desktop requires `--desktop-mode host`.
 
 If no API key is configured, one is generated and printed at startup. For Docker, find it with `docker logs open-terminal`.
 

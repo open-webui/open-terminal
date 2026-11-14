@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.17.13] - 2026-11-15
+
+### Changed
+
+- Separate GNOME Wayland desktops now use the noVNC viewer through LibVNCServer's raw-framebuffer backend. Install `x11vnc` in addition to the existing GNOME Wayland dependencies. Browser paste requires an updated Open WebUI. The VNC transport uses private sockets and opens no network listening port.
+- Desktop implementation modules now live together in `open_terminal/desktop/`.
+
 ## [0.17.12] - 2026-11-15
 
 ### Fixed
