@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.17.12] - 2026-11-15
+
+### Fixed
+
+- Fixed separate GNOME Wayland desktops getting stuck on "Connecting" when Open Terminal is started over SSH. The virtual desktop now excludes the inherited SSH connection marker that could deadlock GNOME's audio initialization on Xwayland.
+
 ## [0.17.11] - 2026-11-15
 
 ### Added
