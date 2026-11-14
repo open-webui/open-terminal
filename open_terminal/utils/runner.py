@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import re
 import shlex
 import signal
 import subprocess
@@ -95,6 +96,23 @@ class ProcessRunner(ABC):
         """PID of the child process."""
 
 
+_ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def forwarded_env_args(env: dict | None) -> str:
+    """Render *env* as ``env K=V ... `` arguments for the far side of ``sudo -u``.
+
+    Only POSIX variable names are kept, so no entry can be read as an option of
+    ``env``.  Returns an empty string when there is nothing to forward.
+    """
+    pairs = [
+        shlex.quote(f"{key}={value}")
+        for key, value in (env or {}).items()
+        if _ENV_NAME.fullmatch(str(key))
+    ]
+    return f"env {' '.join(pairs)} " if pairs else ""
+
+
 class PtyRunner(ProcessRunner):
     """Spawn a command under a pseudo-terminal (Unix)."""
 
@@ -102,8 +120,13 @@ class PtyRunner(ProcessRunner):
         if run_as_user:
             # Build the inner command: optionally cd first, then run the command.
             inner = f"cd {shlex.quote(cwd)} && {command}" if cwd else command
-            command = f"sudo -u {shlex.quote(run_as_user)} -- bash -c {shlex.quote(inner)}"
+            # sudo resets the environment, so the request env is handed to the
+            # target user's process with `env` after the switch.  The launching
+            # shell keeps the server's own environment.
+            forwarded = forwarded_env_args(env)
+            command = f"sudo -u {shlex.quote(run_as_user)} -- {forwarded}bash -c {shlex.quote(inner)}"
             cwd = None  # Popen runs as parent user — can't chdir into chmod 700 dirs
+            env = None
         master_fd, slave_fd = pty.openpty()
         try:
             # Set a reasonable default window size (80x24).
