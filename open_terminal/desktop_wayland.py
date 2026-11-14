@@ -147,6 +147,14 @@ class WaylandDesktop(PortalDesktop):
                 SCREENCAST, cast, SCREENCAST + ".Session", "RecordMonitor", "sa{sv}",
                 ["", {"cursor-mode": Variant("u", 1)}],
             ))[0]
+            parameters = (await self.invoke(
+                SCREENCAST, self.stream_path, PROPERTIES, "Get", "ss",
+                [SCREENCAST + ".Stream", "Parameters"],
+            ))[0].value
+            size = parameters["size"].value
+            if len(size) != 2 or any(n <= 0 or n > 32767 for n in size):
+                raise RuntimeError("GNOME returned an invalid monitor size")
+            self.screen_width, self.screen_height = size
             self.input = PortalInput(self)
             await self.invoke(REMOTE, self.session, REMOTE + ".Session", "Start")
             await asyncio.wait_for(self.node_ready.wait(), 15)

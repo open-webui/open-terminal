@@ -353,10 +353,12 @@ class PortalDesktop(NativeDesktop):
                 await asyncio.gather(self.reader_task, return_exceptions=True)
             with contextlib.suppress(Exception):
                 await self.stop_session()
+            if self.bus:
+                self.bus.disconnect()
+                with contextlib.suppress(Exception):
+                    await self.bus.wait_for_disconnect()
             for process in reversed(self.processes):
                 await self.stop_process(process)
             if self.stderr_task:
                 self.stderr_task.cancel()
                 await asyncio.gather(self.stderr_task, return_exceptions=True)
-            if self.bus:
-                self.bus.disconnect()

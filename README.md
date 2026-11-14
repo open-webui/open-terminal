@@ -48,7 +48,7 @@ pip install open-terminal
 open-terminal run --host 0.0.0.0 --port 8000
 ```
 
-Linux defaults to a separate VNC desktop, preferring an installed GNOME X11 session and falling back to XFCE. On Ubuntu/Debian, install `sudo apt install tigervnc-standalone-server dbus-x11 x11-utils xauth xdotool scrot xclip` plus a supported desktop session (`gnome-session` or `xfce4 xfce4-terminal`), then restart Open Terminal. Keep your existing display manager if prompted. Docker `latest` includes XFCE and its dependencies. Sharing your actual logged-in desktop requires `--desktop-mode host`; see [desktop setup](docs/configuration.md#desktop) for dependencies and Wayland support.
+Linux defaults to a separate desktop, preferring GNOME and falling back to XFCE. GNOME supports Wayland-only systems, including Ubuntu 26.04; XFCE and older GNOME X11 sessions use VNC. See [desktop setup](docs/configuration.md#desktop) for the required packages. Keep your existing display manager if prompted during installation. Docker `latest` includes XFCE and its dependencies. Sharing your actual logged-in desktop requires `--desktop-mode host`.
 
 If no API key is configured, one is generated and printed at startup. For Docker, find it with `docker logs open-terminal`.
 

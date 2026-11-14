@@ -42,8 +42,8 @@ open-terminal run --config /path/to/my-config.toml
 
 ## Desktop
 
-Linux defaults to a **separate virtual desktop over VNC**. It prefers an installed
-GNOME X11 session (including Ubuntu's GNOME session), otherwise uses XFCE. Docker
+Linux defaults to a **separate virtual desktop**. It prefers installed GNOME,
+otherwise uses XFCE. Docker
 `latest` includes XFCE. To choose explicitly:
 
 ```sh
@@ -51,7 +51,22 @@ open-terminal run --desktop-environment gnome
 # Or: open-terminal run --desktop-environment xfce
 ```
 
-On bare-metal Ubuntu/Debian, install the VNC tools:
+On **Ubuntu 26.04 and other Wayland-only GNOME installations**, install:
+
+```sh
+sudo apt install gnome-shell dbus-daemon pipewire wireplumber gstreamer1.0-tools gstreamer1.0-pipewire gstreamer1.0-plugins-base libgl1-mesa-dri
+open-terminal run --desktop-environment gnome
+```
+
+Open Terminal starts a headless GNOME Shell with its own virtual monitor, D-Bus
+session, and PipeWire services. It works over SSH without a graphical login or
+an on-screen permission prompt. It uses the same viewer, screenshots, and input
+tools as other desktops. Commands launched through the API inherit this virtual
+desktop's display and bus so Wayland apps open there. The logged-in host desktop
+is not used. This backend currently requires single-user mode and does not stream
+audio; use XFCE for multi-user deployments. It is tested with Ubuntu 26.04/GNOME 50.
+
+For **XFCE or older GNOME installations with an X11 session**, install the VNC tools:
 
 ```sh
 sudo apt install tigervnc-standalone-server dbus-x11 x11-utils xauth xdotool scrot xclip
@@ -62,9 +77,9 @@ or `xfce4 xfce4-terminal`. Debian 13 packages GNOME's X11 session separately as
 `gnome-session-xsession`; install it as well when using GNOME there.
 Keep your existing display manager if the installer
 asks; Open Terminal starts its own session and does not need LightDM or GDM.
-GNOME installations that only support Wayland cannot run inside TigerVNC;
-auto selection uses XFCE instead. Explicit `gnome` selection reports an error
-if the required X11 session is missing. Restart Open Terminal after installation.
+When GNOME has no X11 session, Open Terminal selects the Wayland backend instead
+of TigerVNC. Missing dependencies produce an error for the selected backend;
+they never cause a connection to the host desktop. Restart after installation.
 
 To share **your actual logged-in desktop and its open windows**, opt in explicitly:
 
@@ -87,7 +102,7 @@ From SSH, run as the same OS user: Open Terminal can reach that user's existing
 desktop portal even when `XDG_SESSION_TYPE=tty`. Someone must still be logged in
 to the graphical desktop and approve the dialog there. Host mode never starts
 a new desktop as a fallback. Wayland text input sends Unicode key events; audio
-sharing is currently available only in virtual mode.
+sharing is currently available only in VNC virtual sessions.
 
 The equivalent environment variables are `OPEN_TERMINAL_DESKTOP_MODE`
 (`virtual` or `host`) and `OPEN_TERMINAL_DESKTOP_ENVIRONMENT`
