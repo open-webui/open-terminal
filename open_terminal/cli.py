@@ -1,10 +1,12 @@
 import os
+from importlib.metadata import version
 
 import click
 import uvicorn
 
 
 @click.group()
+@click.version_option(package_name="open-terminal")
 def main():
     """open-terminal — terminal interaction API"""
     pass
@@ -148,6 +150,8 @@ def run(
         binary = resolve_binary(yes=yes)
 
     click.echo(BANNER)
+    click.echo(f"  Open Terminal v{version('open-terminal')}")
+    click.echo()
 
     # -- Startup info block --
     local_url = f"http://{'localhost' if host in ('0.0.0.0', '127.0.0.1') else host}:{port}"
