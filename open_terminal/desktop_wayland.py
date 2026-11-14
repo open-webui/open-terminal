@@ -182,6 +182,8 @@ class WaylandDesktop(PortalDesktop):
             await self.invoke(REMOTE, self.session, REMOTE + ".Session", "Stop")
 
     async def stop_process(self, process):
+        if process.returncode is not None:
+            return
         # Services can spawn D-Bus-activated apps in the same owned process group.
         for sig in (signal.SIGTERM, signal.SIGKILL):
             with contextlib.suppress(ProcessLookupError):
