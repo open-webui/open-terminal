@@ -204,26 +204,31 @@ class PortalDesktop(NativeDesktop):
             reply = await self.call(SCREENCAST, "OpenPipeWireRemote", "oa{sv}", [self.session, {}])
             try:
                 fd = reply.unix_fds[reply.body[0]]
-                process = await asyncio.create_subprocess_exec(
-                    "gst-launch-1.0", "-q", "pipewiresrc", f"fd={fd}", f"path={self.node}",
-                    "!", "queue", "max-size-buffers=1", "leaky=downstream",
-                    "!", "videoconvert", "!", "videoscale",
-                    "!", f"video/x-raw,format=RGBx,width={self.width},height={self.height},pixel-aspect-ratio=1/1",
-                    "!", "fdsink", "fd=1", "sync=false",
-                    pass_fds=(fd,), env=sanitized_environ(),
-                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
-                )
-                self.processes.append(process)
+                await self.start_capture(fd=fd)
             finally:
                 for fd in reply.unix_fds:
                     os.close(fd)
-            self.reader_task = asyncio.create_task(self.read_frames(process))
-            await asyncio.wait_for(self.first_frame.wait(), 15)
-            self.grab()
         except HTTPException:
             raise
         except Exception as exc:
             raise HTTPException(503, f"Could not share the Linux desktop: {exc}. Requires a logged-in desktop with the RemoteDesktop portal and GStreamer PipeWire support.") from exc
+
+    async def start_capture(self, *, fd=None, env=None):
+        process = await asyncio.create_subprocess_exec(
+            "gst-launch-1.0", "-q", "pipewiresrc", f"path={self.node}",
+            *((f"fd={fd}",) if fd is not None else ()),
+            "!", "queue", "max-size-buffers=1", "leaky=downstream",
+            "!", "videoconvert", "!", "videoscale",
+            "!", f"video/x-raw,format=RGBx,width={self.width},height={self.height},pixel-aspect-ratio=1/1",
+            "!", "fdsink", "fd=1", "sync=false",
+            pass_fds=() if fd is None else (fd,), env=sanitized_environ(env),
+            start_new_session=True,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+        )
+        self.processes.append(process)
+        self.reader_task = asyncio.create_task(self.read_frames(process))
+        await asyncio.wait_for(self.first_frame.wait(), 15)
+        self.grab()
 
     async def read_frames(self, process):
         try:
@@ -263,6 +268,21 @@ class PortalDesktop(NativeDesktop):
 
         self.sync(type_text(), timeout=max(10, len(text) / 100))
 
+    async def stop_session(self):
+        if self.bus and self.session:
+            await self.call(SESSION, "Close", path=self.session)
+
+    async def stop_process(self, process):
+        if process.returncode is None:
+            with contextlib.suppress(ProcessLookupError):
+                process.terminate()
+            try:
+                await asyncio.wait_for(process.wait(), 3)
+            except TimeoutError:
+                with contextlib.suppress(ProcessLookupError):
+                    process.kill()
+                await process.wait()
+
     async def close(self):
         self.closed = True
         self.latest = None
@@ -272,18 +292,9 @@ class PortalDesktop(NativeDesktop):
             if self.reader_task:
                 self.reader_task.cancel()
                 await asyncio.gather(self.reader_task, return_exceptions=True)
-            for process in self.processes:
-                if process.returncode is None:
-                    with contextlib.suppress(ProcessLookupError):
-                        process.terminate()
-                    try:
-                        await asyncio.wait_for(process.wait(), 3)
-                    except TimeoutError:
-                        with contextlib.suppress(ProcessLookupError):
-                            process.kill()
-                        await process.wait()
+            with contextlib.suppress(Exception):
+                await self.stop_session()
+            for process in reversed(self.processes):
+                await self.stop_process(process)
             if self.bus:
-                if self.session:
-                    with contextlib.suppress(Exception):
-                        await self.call(SESSION, "Close", path=self.session)
                 self.bus.disconnect()

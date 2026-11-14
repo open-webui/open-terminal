@@ -54,10 +54,14 @@ def gnome_session():
 
 def virtual_environment():
     if DESKTOP_ENVIRONMENT == "gnome" or (
-        DESKTOP_ENVIRONMENT == "auto" and gnome_session()
+        DESKTOP_ENVIRONMENT == "auto" and shutil.which("gnome-shell")
     ):
         return "gnome"
     return "xfce"
+
+
+def virtual_backend():
+    return "wayland" if virtual_environment() == "gnome" and not gnome_session() else "vnc"
 
 
 def host_backend():
@@ -82,6 +86,12 @@ def available():
             return bool(importlib.util.find_spec("dbus_next") and shutil.which("gst-launch-1.0"))
         return all(
             importlib.util.find_spec(name) for name in ("mss", "pyautogui", "pyperclip")
+        )
+    if sys.platform == "linux" and virtual_backend() == "wayland":
+        return not MULTI_USER and bool(importlib.util.find_spec("dbus_next")) and all(
+            shutil.which(name) for name in (
+                "gnome-shell", "dbus-daemon", "pipewire", "wireplumber", "gst-launch-1.0",
+            )
         )
     return sys.platform == "linux" and bool(
         gnome_session() if virtual_environment() == "gnome" else shutil.which("startxfce4")
@@ -116,6 +126,10 @@ class Desktop:
         }
         if BROWSER_NO_SANDBOX:
             self.env["OPEN_TERMINAL_BROWSER_NO_SANDBOX"] = "true"
+
+    @property
+    def command_env(self):
+        return {"DISPLAY": self.env["DISPLAY"], "XAUTHORITY": self.env["XAUTHORITY"]}
 
     async def spawn(self, *command, **kwargs):
         if self.fs.username:
@@ -451,6 +465,10 @@ async def get_desktop(request, fs):
                 from open_terminal.desktop_native import NativeDesktop
 
                 desktop = NativeDesktop(fs)
+        elif virtual_backend() == "wayland":
+            from open_terminal.desktop_wayland import WaylandDesktop
+
+            desktop = WaylandDesktop(fs)
         else:
             desktop = Desktop(fs)
         try:

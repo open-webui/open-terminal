@@ -1835,12 +1835,12 @@ async def execute(
 
     env = request.env
     if ENABLE_DESKTOP:
-        from open_terminal.desktop import Desktop, desktops
+        from open_terminal.desktop import desktops
 
         desktop = desktops.get((http_request.headers.get("x-user-id", ""), fs.home))
-        if isinstance(desktop, Desktop):
+        if desktop is not None and hasattr(desktop, "command_env"):
             # Lets windows opened by commands appear on the user's running desktop.
-            env = {"DISPLAY": desktop.env["DISPLAY"], "XAUTHORITY": desktop.env["XAUTHORITY"], **(request.env or {})}
+            env = {**desktop.command_env, **(request.env or {})}
 
     runner = await create_runner(request.command, cwd, env, run_as_user=fs.username)
 

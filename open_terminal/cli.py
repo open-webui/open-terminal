@@ -61,11 +61,11 @@ BANNER = r"""
 @click.option("--yes", is_flag=True, help="Approve the pinned cloudflared download (requires --cftunnel).")
 @click.option(
     "--desktop-mode", type=click.Choice(["virtual", "host"]), default=None,
-    help="Linux desktop: separate VNC session (default) or share the logged-in desktop.",
+    help="Linux desktop: separate session (default) or share the logged-in desktop.",
 )
 @click.option(
     "--desktop-environment", type=click.Choice(["auto", "gnome", "xfce"]), default=None,
-    help="Virtual desktop environment (default: prefer GNOME with X11 support, then XFCE).",
+    help="Virtual desktop environment (default: prefer GNOME, then XFCE).",
 )
 def run(
     host: str | None,
