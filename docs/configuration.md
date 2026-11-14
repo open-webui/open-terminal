@@ -40,6 +40,61 @@ You can also point to a specific config file:
 open-terminal run --config /path/to/my-config.toml
 ```
 
+## Desktop
+
+Linux defaults to a **separate virtual desktop over VNC**. It prefers an installed
+GNOME X11 session (including Ubuntu's GNOME session), otherwise uses XFCE. Docker
+`latest` includes XFCE. To choose explicitly:
+
+```sh
+open-terminal run --desktop-environment gnome
+# Or: open-terminal run --desktop-environment xfce
+```
+
+On bare-metal Ubuntu/Debian, install the VNC tools:
+
+```sh
+sudo apt install tigervnc-standalone-server dbus-x11 x11-utils xauth xdotool scrot xclip
+```
+
+You also need a compatible desktop session: `gnome-session` with X11 support,
+or `xfce4 xfce4-terminal`. Debian 13 packages GNOME's X11 session separately as
+`gnome-session-xsession`; install it as well when using GNOME there.
+Keep your existing display manager if the installer
+asks; Open Terminal starts its own session and does not need LightDM or GDM.
+GNOME installations that only support Wayland cannot run inside TigerVNC;
+auto selection uses XFCE instead. Explicit `gnome` selection reports an error
+if the required X11 session is missing. Restart Open Terminal after installation.
+
+To share **your actual logged-in desktop and its open windows**, opt in explicitly:
+
+```sh
+open-terminal run --desktop-mode host
+```
+
+Host mode requires single-user operation as the desktop's OS user. On Linux
+X11, run from a graphical terminal so `DISPLAY` and `XAUTHORITY` identify that
+session; install `xclip` for clipboard input. On Wayland/GNOME, install:
+
+```sh
+sudo apt install xdg-desktop-portal xdg-desktop-portal-gnome gstreamer1.0-tools gstreamer1.0-pipewire gstreamer1.0-plugins-base
+```
+
+Approve monitor, keyboard, and pointer access in the dialog on your Ubuntu
+desktop. Sharing can be stopped from the desktop's sharing indicator. Reconnecting
+after sharing stops asks for permission again. A GNOME VNC/RDP server is not needed.
+From SSH, run as the same OS user: Open Terminal can reach that user's existing
+desktop portal even when `XDG_SESSION_TYPE=tty`. Someone must still be logged in
+to the graphical desktop and approve the dialog there. Host mode never starts
+a new desktop as a fallback. Wayland text input sends Unicode key events; audio
+sharing is currently available only in virtual mode.
+
+The equivalent environment variables are `OPEN_TERMINAL_DESKTOP_MODE`
+(`virtual` or `host`) and `OPEN_TERMINAL_DESKTOP_ENVIRONMENT`
+(`auto`, `gnome`, or `xfce`); TOML keys are `desktop_mode` and
+`desktop_environment`. CLI flags take precedence. Restart after changing modes.
+macOS and Windows keep their existing host-desktop behavior by default.
+
 ## Use your running Chrome
 
 Browser defaults to `managed`: Open Terminal launches a separate Chrome profile.

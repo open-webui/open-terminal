@@ -1,4 +1,5 @@
 import os
+import sys
 
 from open_terminal import config
 
@@ -172,6 +173,18 @@ ENABLE_DESKTOP = os.environ.get(
     "OPEN_TERMINAL_ENABLE_DESKTOP",
     str(config.get("enable_desktop", True)),
 ).lower() not in ("false", "0", "no")
+
+DESKTOP_MODE = os.environ.get(
+    "OPEN_TERMINAL_DESKTOP_MODE",
+    config.get("desktop_mode", "virtual" if sys.platform == "linux" else "host"),
+).lower()
+if DESKTOP_MODE not in ("virtual", "host"):
+    raise ValueError("OPEN_TERMINAL_DESKTOP_MODE must be 'virtual' or 'host'")
+DESKTOP_ENVIRONMENT = os.environ.get(
+    "OPEN_TERMINAL_DESKTOP_ENVIRONMENT", config.get("desktop_environment", "auto")
+).lower()
+if DESKTOP_ENVIRONMENT not in ("auto", "gnome", "xfce"):
+    raise ValueError("OPEN_TERMINAL_DESKTOP_ENVIRONMENT must be 'auto', 'gnome', or 'xfce'")
 
 ENABLE_SYSTEM_PROMPT = os.environ.get(
     "OPEN_TERMINAL_ENABLE_SYSTEM_PROMPT",

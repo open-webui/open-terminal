@@ -1,8 +1,12 @@
-"""Capture and control the logged-in macOS or Windows desktop."""
+"""Direct host capture for macOS, Windows, and Linux/X11.
+
+Linux/Wayland host capture and control use the desktop_portal backend.
+"""
 
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import ctypes
+import contextlib
 import io
 import sys
 import time
@@ -120,6 +124,7 @@ class NativeDesktop:
             max_workers=1, thread_name_prefix="desktop-capture"
         )
         self.capture = None
+        self.origin = (0, 0)
         self.width = self.height = 0
 
     async def work(self, fn, *args):
@@ -156,7 +161,12 @@ class NativeDesktop:
         )
         shot = self.capture.grab(screen)
         image = Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
-        self.screen_width, self.screen_height = self.input.size()
+        self.origin = (screen["left"], screen["top"]) if sys.platform == "linux" else (0, 0)
+        # X11's root size spans every monitor; input must match the captured one.
+        self.screen_width, self.screen_height = (
+            (screen["width"], screen["height"])
+            if sys.platform == "linux" else self.input.size()
+        )
         scale = min(1, 1920 / self.screen_width, 1080 / self.screen_height)
         self.width, self.height = (
             round(self.screen_width * scale),
@@ -168,8 +178,8 @@ class NativeDesktop:
         if not (0 <= x < self.width and 0 <= y < self.height):
             raise ValueError("Coordinates are outside the current desktop screenshot")
         self.input.moveTo(
-            round(x * self.screen_width / self.width),
-            round(y * self.screen_height / self.height),
+            self.origin[0] + round(x * self.screen_width / self.width),
+            self.origin[1] + round(y * self.screen_height / self.height),
         )
 
     def paste(self, text):
@@ -277,7 +287,7 @@ class NativeDesktop:
                     ready.ack(message.window)
                 else:
                     async with self.actions:
-                        await asyncio.to_thread(self.handle, message, keys, buttons)
+                        await self.work(self.handle, message, keys, buttons)
 
         tasks = [asyncio.create_task(frames()), asyncio.create_task(commands())]
         try:
@@ -291,12 +301,14 @@ class NativeDesktop:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
             async with self.actions:
-                await asyncio.to_thread(self.release, keys, buttons)
+                with contextlib.suppress(Exception):
+                    await self.work(self.release, keys, buttons)
             self.peers.discard(ws)
 
     async def close(self):
         for peer in list(self.peers):
-            await peer.close(code=1012)
+            with contextlib.suppress(Exception):
+                await peer.close(code=1012)
         if self.capture:
             await self.work(self.capture.close)
         self.worker.shutdown(wait=False, cancel_futures=True)

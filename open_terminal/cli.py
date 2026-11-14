@@ -57,6 +57,14 @@ BANNER = r"""
 )
 @click.option("--isolated", is_flag=True, help="Ignore system and user configuration files.")
 @click.option("--yes", is_flag=True, help="Approve the pinned cloudflared download (requires --cftunnel).")
+@click.option(
+    "--desktop-mode", type=click.Choice(["virtual", "host"]), default=None,
+    help="Linux desktop: separate VNC session (default) or share the logged-in desktop.",
+)
+@click.option(
+    "--desktop-environment", type=click.Choice(["auto", "gnome", "xfce"]), default=None,
+    help="Virtual desktop environment (default: prefer GNOME with X11 support, then XFCE).",
+)
 def run(
     host: str | None,
     port: int | None,
@@ -68,6 +76,8 @@ def run(
     yes: bool,
     isolated: bool,
     ipc: str | None,
+    desktop_mode: str | None,
+    desktop_environment: str | None,
 ):
     """Start the sandbox API server."""
     import secrets
@@ -88,6 +98,10 @@ def run(
 
     # Load config files before resolving other settings.
     cfg = config.init(config_path, isolated=isolated)
+    if desktop_mode is not None:
+        os.environ["OPEN_TERMINAL_DESKTOP_MODE"] = desktop_mode
+    if desktop_environment is not None:
+        os.environ["OPEN_TERMINAL_DESKTOP_ENVIRONMENT"] = desktop_environment
 
     # Resolve host/port: CLI flag > config file > built-in default
     ipc_port = port  # Only an explicit --port opts IPC mode into TCP listening.
