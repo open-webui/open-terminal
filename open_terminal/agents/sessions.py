@@ -18,7 +18,7 @@ from fastapi import HTTPException, WebSocket
 from pydantic import BaseModel, Field
 
 from open_terminal.env import sanitized_environ
-from . import codex, claude_code, cursor, grok, opencode, cline, gemini, pi
+from . import codex, claude_code, cursor, grok, opencode, cline, gemini, hermes, pi
 
 LIMIT = 16 * 1024 * 1024
 PROVIDERS = {
@@ -29,6 +29,7 @@ PROVIDERS = {
     "opencode": opencode,
     "cline": cline,
     "gemini": gemini,
+    "hermes": hermes,
     "pi": pi,
 }
 sessions: dict[str, Session] = {}
@@ -70,6 +71,7 @@ def identity(fs):
                     "OPENCODE_",
                     "CLINE_",
                     "PI_",
+                    "HERMES_",
                 )
             ):
                 env.pop(key, None)
