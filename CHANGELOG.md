@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.17.10] - 2026-11-15
+
+### Added
+
+- You can now share and control your actual logged-in Linux desktop, including its open windows, with `open-terminal run --desktop-mode host`. Supports X11 and compatible Wayland desktops such as Ubuntu GNOME. Run Open Terminal as the desktop's user in single-user mode. On Wayland, approve screen, keyboard, and mouse access on that desktop; you can stop sharing from its sharing indicator. Starting through SSH still requires someone logged in to the graphical desktop to approve access. Sound sharing is not available in host mode.
+
+### Changed
+
+- The separate Linux desktop now uses GNOME when a compatible GNOME X11 session is installed, otherwise XFCE. You can choose explicitly with `--desktop-environment gnome` or `--desktop-environment xfce`. Linux still opens a separate desktop by default, and the full Docker image still includes XFCE.
+- Added [Linux desktop setup instructions](docs/configuration.md#desktop) for both modes, including the packages needed when installing with uv or pip. Missing desktop dependencies now point to those instructions, and startup failures include the underlying error.
+
 ## [0.17.9] - 2026-11-14
 
 ### Added
