@@ -43,8 +43,7 @@ open-terminal run --config /path/to/my-config.toml
 ## Desktop
 
 Linux defaults to a **separate virtual desktop**. It prefers installed GNOME,
-otherwise uses XFCE. Docker
-`latest` includes XFCE. To choose explicitly:
+otherwise uses XFCE. Docker `latest` includes XFCE. To choose explicitly:
 
 ```sh
 open-terminal run --desktop-environment gnome
@@ -55,7 +54,7 @@ On **Ubuntu 26.04 and other Wayland-only GNOME installations**, install:
 
 ```sh
 sudo apt install gnome-shell dbus-daemon pipewire wireplumber gstreamer1.0-tools gstreamer1.0-pipewire gstreamer1.0-plugins-base libgl1-mesa-dri
-open-terminal run --desktop-environment gnome
+open-terminal run --desktop-mode virtual --desktop-environment gnome
 ```
 
 Open Terminal starts a headless GNOME Shell with its own virtual monitor, D-Bus
@@ -64,7 +63,8 @@ an on-screen permission prompt. It uses the same viewer, screenshots, and input
 tools as other desktops. Commands launched through the API inherit this virtual
 desktop's display and bus so Wayland apps open there. The logged-in host desktop
 is not used. This backend currently requires single-user mode and does not stream
-audio; use XFCE for multi-user deployments. It is tested with Ubuntu 26.04/GNOME 50.
+audio; multi-user deployments keep the XFCE fallback when GNOME is Wayland-only.
+It is tested with Ubuntu 26.04/GNOME 50.
 
 For **XFCE or older GNOME installations with an X11 session**, install the VNC tools:
 
@@ -95,12 +95,15 @@ session; install `xclip` for clipboard input. On Wayland/GNOME, install:
 sudo apt install xdg-desktop-portal xdg-desktop-portal-gnome gstreamer1.0-tools gstreamer1.0-pipewire gstreamer1.0-plugins-base
 ```
 
-Approve monitor, keyboard, and pointer access in the dialog on your Ubuntu
-desktop. Sharing can be stopped from the desktop's sharing indicator. Reconnecting
-after sharing stops asks for permission again. A GNOME VNC/RDP server is not needed.
+Approve monitor, keyboard, and pointer access once in the dialog on your Ubuntu
+desktop. Open Terminal requests persistent authorization and remembers it when
+the portal grants it, so later connections and server restarts can reuse that
+approval, including over SSH. Older portals, revoked permissions, or a changed
+monitor may require approval again. Sharing can be stopped from the desktop's
+sharing indicator. A GNOME VNC/RDP server is not needed.
 From SSH, run as the same OS user: Open Terminal can reach that user's existing
 desktop portal even when `XDG_SESSION_TYPE=tty`. Someone must still be logged in
-to the graphical desktop and approve the dialog there. Host mode never starts
+to the graphical desktop and approve the initial dialog there. Host mode never starts
 a new desktop as a fallback. Wayland text input sends Unicode key events; audio
 sharing is currently available only in VNC virtual sessions.
 
@@ -109,6 +112,13 @@ even if the SSH shell has a private D-Bus address. Startup errors identify the
 failed portal request or PipeWire capture stage and include GStreamer errors.
 A permission timeout means you should check the sharing dialog on the unlocked
 Ubuntu desktop; it will not appear in the SSH terminal.
+
+The authorization token is stored with owner-only permissions in
+`$XDG_STATE_HOME/open-terminal/desktop-restore-token` (default:
+`~/.local/state/open-terminal/desktop-restore-token`) and renewed after each
+successful portal connection. To forget saved approval, stop Open Terminal and
+delete that file; the next connection will ask again. If the portal does not
+grant persistent access or the token cannot be saved, the server logs a warning.
 
 The equivalent environment variables are `OPEN_TERMINAL_DESKTOP_MODE`
 (`virtual` or `host`) and `OPEN_TERMINAL_DESKTOP_ENVIRONMENT`

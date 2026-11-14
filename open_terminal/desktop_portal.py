@@ -10,6 +10,7 @@ import logging
 import os
 from pathlib import Path
 import secrets
+import tempfile
 import time
 
 from dbus_next import Message, MessageType, Variant
@@ -27,6 +28,44 @@ SCREENCAST = "org.freedesktop.portal.ScreenCast"
 SESSION = "org.freedesktop.portal.Session"
 REQUEST = "org.freedesktop.portal.Request"
 log = logging.getLogger(__name__)
+
+
+def restore_token_path():
+    state = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state")
+    return state / "open-terminal" / "desktop-restore-token"
+
+
+def read_restore_token():
+    try:
+        with restore_token_path().open(encoding="utf-8") as source:
+            token = source.read(4097).strip()
+        return token if token and len(token) <= 4096 else None
+    except FileNotFoundError:
+        return None
+    except (OSError, UnicodeError):
+        log.warning("Could not read saved desktop authorization; approval will be requested again.")
+        return None
+
+
+def save_restore_token(token):
+    path = restore_token_path()
+    temporary = None
+    try:
+        if not token:
+            path.unlink(missing_ok=True)
+            return
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        # The grant is a credential. Replace atomically using a private file.
+        fd, temporary = tempfile.mkstemp(prefix=".desktop-token-", dir=path.parent)
+        with os.fdopen(fd, "w", encoding="utf-8") as target:
+            target.write(token)
+        os.replace(temporary, path)
+    except OSError:
+        log.warning("Could not update saved desktop authorization; the next connection may require approval again.")
+    finally:
+        if temporary:
+            with contextlib.suppress(OSError):
+                os.unlink(temporary)
 
 
 def host_session():
@@ -220,17 +259,37 @@ class PortalDesktop(NativeDesktop):
                 )), 10)
                 if reply.message_type == MessageType.ERROR:
                     raise RuntimeError("Could not listen for desktop portal permission changes")
+            version = (await self.call(
+                "org.freedesktop.DBus.Properties", "Get", "ss", [REMOTE, "version"],
+            )).body[0].value
+            devices = {"types": Variant("u", 3)}
+            saved_token = None
+            if version >= 2:
+                devices["persist_mode"] = Variant("u", 2)
+                saved_token = read_restore_token()
+                if saved_token:
+                    devices["restore_token"] = Variant("s", saved_token)
+            else:
+                log.warning("This desktop portal cannot remember authorization; approve sharing for each new session.")
             stage = "creating the desktop sharing session"
             results = await self.request(REMOTE, "CreateSession", options={
                 "session_handle_token": Variant("s", "open_terminal_" + secrets.token_hex(12)),
             })
             self.session = results["session_handle"].value
-            await self.request(REMOTE, "SelectDevices", "o", [self.session], {"types": Variant("u", 3)})
+            await self.request(REMOTE, "SelectDevices", "o", [self.session], devices)
             await self.request(SCREENCAST, "SelectSources", "o", [self.session], {
                 "types": Variant("u", 1), "multiple": Variant("b", False),
                 "cursor_mode": Variant("u", 2),
             })
+            # Restore tokens are single-use, including attempts that time out.
+            if saved_token:
+                save_restore_token(None)
             results = await self.request(REMOTE, "Start", "os", [self.session, ""])
+            if version >= 2:
+                replacement = results.get("restore_token")
+                save_restore_token(replacement.value if replacement else None)
+                if not replacement:
+                    log.warning("The desktop portal did not grant persistent authorization; the next session will need approval.")
             streams = results.get("streams")
             if not streams or len(streams.value) != 1 or results.get("devices", Variant("u", 0)).value & 3 != 3:
                 raise HTTPException(403, "Desktop sharing requires one monitor plus keyboard and pointer access.")

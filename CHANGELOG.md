@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.17.11] - 2026-11-15
+
+### Added
+
+- You can now start a separate GNOME desktop on Ubuntu 26.04 and other GNOME installations that only support Wayland. Use `open-terminal run --desktop-environment gnome` after installing the packages in the [desktop setup guide](docs/configuration.md#desktop). It works over SSH without a graphical login or on-screen approval. Once the desktop is open, apps launched by assistant commands open there too. This requires single-user mode and does not share sound; use XFCE if you need multiple users or sound sharing.
+- The startup banner now shows the installed Open Terminal version. You can also check it with `open-terminal --version`.
+
+### Fixed
+
+- Fixed sharing your existing Wayland desktop failing because Open Terminal looked for it inside the SSH session. It now finds the same user's logged-in desktop. Someone must still approve sharing on that desktop.
+- Fixed missed replies from the desktop's permission service that could leave sharing waiting until it timed out. Startup errors now identify the failed step and include the screen capture error when available. If approval times out, the message tells you to unlock the desktop and approve its sharing dialog, which does not appear in the SSH terminal.
+
 ## [0.17.10] - 2026-11-15
 
 ### Added

@@ -55,6 +55,7 @@ def gnome_session():
 def virtual_environment():
     if DESKTOP_ENVIRONMENT == "gnome" or (
         DESKTOP_ENVIRONMENT == "auto" and shutil.which("gnome-shell")
+        and (not MULTI_USER or gnome_session())
     ):
         return "gnome"
     return "xfce"
