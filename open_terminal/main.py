@@ -212,7 +212,7 @@ async def lifespan(app):
             from open_terminal.browser.router import shutdown as shutdown_browsers
             await shutdown_browsers()
         if ENABLE_DESKTOP:
-            from open_terminal.desktop import shutdown as shutdown_desktops
+            from open_terminal.desktop.router import shutdown as shutdown_desktops
             await shutdown_desktops()
         global _port_proxy_client
         if _port_proxy_client is not None:
@@ -1835,7 +1835,7 @@ async def execute(
 
     env = request.env
     if ENABLE_DESKTOP:
-        from open_terminal.desktop import desktops
+        from open_terminal.desktop.router import desktops
 
         desktop = desktops.get((http_request.headers.get("x-user-id", ""), fs.home))
         if desktop is not None and hasattr(desktop, "command_env"):
@@ -2683,5 +2683,5 @@ if ENABLE_BROWSER:
     app.include_router(browser_router)
 
 if ENABLE_DESKTOP:
-    from open_terminal.desktop import router as desktop_router, available as desktop_available
+    from open_terminal.desktop.router import router as desktop_router, available as desktop_available
     app.include_router(desktop_router, include_in_schema=desktop_available())

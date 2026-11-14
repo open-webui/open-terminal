@@ -340,7 +340,7 @@ async def get_host(session):
         if all(
             shutil.which(name) for name in ("Xtigervnc", "xauth", "xrandr", "xdotool")
         ):
-            from open_terminal.desktop import Desktop, startup_lock
+            from open_terminal.desktop.router import Desktop, startup_lock
 
             display = Desktop(session.fs)
             try:

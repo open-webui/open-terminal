@@ -12,8 +12,9 @@ from dbus_next import Message, MessageType, Variant
 from dbus_next.aio import MessageBus
 from fastapi import HTTPException
 
-from open_terminal.desktop import WIDTH, HEIGHT
-from open_terminal.desktop_portal import PortalDesktop, PortalInput
+from open_terminal.desktop.router import WIDTH, HEIGHT
+from open_terminal.desktop.portal import PortalDesktop, PortalInput
+from open_terminal.desktop.vnc import RawVNC
 from open_terminal.env import sanitized_environ
 
 REMOTE = "org.gnome.Mutter.RemoteDesktop"
@@ -23,6 +24,9 @@ DBUS = "org.freedesktop.DBus"
 
 
 class WaylandDesktop(PortalDesktop):
+    transport = "vnc"
+    clipboard = False
+
     def __init__(self, fs):
         if fs.username:
             raise HTTPException(503, "GNOME Wayland virtual desktops require single-user mode; use XFCE for multi-user deployments.")
@@ -32,6 +36,7 @@ class WaylandDesktop(PortalDesktop):
         self.stream_path = None
         self.node_ready = asyncio.Event()
         self.services = {}
+        self.vnc = None
         self.width = self.screen_width = WIDTH
         self.height = self.screen_height = HEIGHT
         self.failure = "The virtual GNOME Wayland desktop has stopped. Reconnect to start a new session."
@@ -163,6 +168,7 @@ class WaylandDesktop(PortalDesktop):
             self.input = PortalInput(self)
             await self.invoke(REMOTE, self.session, REMOTE + ".Session", "Start")
             await asyncio.wait_for(self.node_ready.wait(), 15)
+            self.vnc = RawVNC(self)
             await self.start_capture(env=self.env)
         except Exception as exc:
             details = []
@@ -188,6 +194,14 @@ class WaylandDesktop(PortalDesktop):
         if self.bus and self.session:
             await self.invoke(REMOTE, self.session, REMOTE + ".Session", "Stop")
 
+    def update_frame(self, data):
+        super().update_frame(data)
+        if self.vnc:
+            self.vnc.update(data)
+
+    async def stream(self, ws):
+        await self.vnc.stream(ws)
+
     async def stop_process(self, process):
         if process.returncode is not None:
             return
@@ -203,6 +217,8 @@ class WaylandDesktop(PortalDesktop):
 
     async def close(self):
         try:
+            if self.vnc:
+                await self.vnc.close()
             await super().close()
         finally:
             shutil.rmtree(self.runtime, ignore_errors=True)

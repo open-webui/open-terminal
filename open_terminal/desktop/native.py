@@ -1,6 +1,6 @@
 """Direct host capture for macOS, Windows, and Linux/X11.
 
-Linux/Wayland host capture and control use the desktop_portal backend.
+Linux/Wayland host capture and control use the portal backend.
 """
 
 import asyncio

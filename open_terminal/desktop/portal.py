@@ -18,7 +18,7 @@ from dbus_next.aio import MessageBus
 from fastapi import HTTPException
 from PIL import Image
 
-from open_terminal.desktop_native import NativeDesktop
+from open_terminal.desktop.native import NativeDesktop
 from open_terminal.env import sanitized_environ
 
 DESTINATION = "org.freedesktop.portal.Desktop"
@@ -348,8 +348,7 @@ class PortalDesktop(NativeDesktop):
         try:
             while True:
                 data = await process.stdout.readexactly(self.width * self.height * 4)
-                self.latest = Image.frombytes("RGB", (self.width, self.height), data, "raw", "RGBX")
-                self.first_frame.set()
+                self.update_frame(data)
         except asyncio.IncompleteReadError:
             if self.stderr_task:
                 with contextlib.suppress(TimeoutError):
@@ -359,6 +358,10 @@ class PortalDesktop(NativeDesktop):
             self.closed = True
             self.latest = None
             self.first_frame.set()
+
+    def update_frame(self, data):
+        self.latest = Image.frombytes("RGB", (self.width, self.height), data, "raw", "RGBX")
+        self.first_frame.set()
 
     def grab(self):
         if self.closed or self.latest is None:

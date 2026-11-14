@@ -91,7 +91,7 @@ def available():
     if sys.platform == "linux" and virtual_backend() == "wayland":
         return not MULTI_USER and bool(importlib.util.find_spec("dbus_next")) and all(
             shutil.which(name) for name in (
-                "gnome-shell", "dbus-daemon", "pipewire", "wireplumber", "gst-launch-1.0",
+                "gnome-shell", "dbus-daemon", "pipewire", "wireplumber", "gst-launch-1.0", "x11vnc",
             )
         )
     return sys.platform == "linux" and bool(
@@ -446,7 +446,7 @@ async def get_desktop(request, fs):
     if not available():
         raise HTTPException(503, "Desktop dependencies for the selected mode are not installed. See docs/configuration.md#desktop.")
     if DESKTOP_MODE == "host" and sys.platform == "darwin":
-        from open_terminal.desktop_native import check_permissions
+        from open_terminal.desktop.native import check_permissions
 
         check_permissions()
     key = ("host" if DESKTOP_MODE == "host" else request.headers.get("x-user-id", ""), fs.home)
@@ -459,15 +459,15 @@ async def get_desktop(request, fs):
             desktops.pop(key, None)
         if DESKTOP_MODE == "host":
             if host_backend() == "portal":
-                from open_terminal.desktop_portal import PortalDesktop
+                from open_terminal.desktop.portal import PortalDesktop
 
                 desktop = PortalDesktop(fs)
             else:
-                from open_terminal.desktop_native import NativeDesktop
+                from open_terminal.desktop.native import NativeDesktop
 
                 desktop = NativeDesktop(fs)
         elif virtual_backend() == "wayland":
-            from open_terminal.desktop_wayland import WaylandDesktop
+            from open_terminal.desktop.wayland import WaylandDesktop
 
             desktop = WaylandDesktop(fs)
         else:
@@ -500,6 +500,7 @@ async def connect(request: Request, fs: UserFS = Depends(get_filesystem)):
         "platform": sys.platform,
         "mode": DESKTOP_MODE,
         "audio": getattr(desktop, "audio_available", False),
+        "clipboard": getattr(desktop, "clipboard", desktop.transport == "vnc"),
     }
 
 
@@ -570,7 +571,7 @@ class ActionRequest(BaseModel):
 
 
 async def perform_action(desktop, body):
-    if desktop.transport == "frames":
+    if hasattr(desktop, "perform"):
         try:
             await desktop.work(desktop.perform, body)
         except ValueError as exc:
