@@ -111,12 +111,13 @@ USER root
 RUN npm install --global --prefix /usr/local --include=optional \
     @openai/codex@latest \
     @anthropic-ai/claude-code@latest \
-    && npm cache clean --force
+    && npm cache clean --force \
+    && curl -fsSL https://antigravity.google/cli/install.sh | bash -s -- --dir /usr/local/bin
 
 # Agent updates are delivered by rebuilding the image.
 ENV DISABLE_AUTOUPDATER=1
 USER user
-RUN codex --version && claude --version
+RUN codex --version && claude --version && agy --version
 
 # CUDA development tools and GPU-enabled PyTorch share the full environment.
 FROM base AS cuda

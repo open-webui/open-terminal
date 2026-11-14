@@ -18,7 +18,7 @@ from fastapi import HTTPException, WebSocket
 from pydantic import BaseModel, Field
 
 from open_terminal.env import sanitized_environ
-from . import codex, claude_code, cursor, grok, opencode, cline, gemini, pi
+from . import antigravity, codex, claude_code, cursor, grok, opencode, cline, gemini, pi
 
 LIMIT = 16 * 1024 * 1024
 PROVIDERS = {
@@ -30,6 +30,7 @@ PROVIDERS = {
     "cline": cline,
     "gemini": gemini,
     "pi": pi,
+    "antigravity": antigravity,
 }
 sessions: dict[str, Session] = {}
 creation_lock = asyncio.Lock()
@@ -70,6 +71,7 @@ def identity(fs):
                     "OPENCODE_",
                     "CLINE_",
                     "PI_",
+                    "ANTIGRAVITY_",
                 )
             ):
                 env.pop(key, None)
