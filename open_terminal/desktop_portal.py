@@ -6,6 +6,7 @@ stream it grants; no VNC/RDP listener or privileged input device is needed.
 
 import asyncio
 import contextlib
+import logging
 import os
 from pathlib import Path
 import secrets
@@ -25,6 +26,25 @@ REMOTE = "org.freedesktop.portal.RemoteDesktop"
 SCREENCAST = "org.freedesktop.portal.ScreenCast"
 SESSION = "org.freedesktop.portal.Session"
 REQUEST = "org.freedesktop.portal.Request"
+log = logging.getLogger(__name__)
+
+
+def host_session():
+    """Resolve the desktop user's bus without inheriting an SSH/private bus."""
+    runtime = Path(f"/run/user/{os.getuid()}")
+    socket = runtime / "bus"
+    address = os.environ.get("DBUS_SESSION_BUS_ADDRESS")
+    ssh = bool(os.environ.get("SSH_CONNECTION") or os.environ.get("SSH_TTY"))
+    if ssh or not address:
+        if (not runtime.is_dir() or runtime.stat().st_uid != os.getuid()
+                or not socket.is_socket() or socket.stat().st_uid != os.getuid()):
+            raise RuntimeError(
+                "No desktop user bus. Log in to Ubuntu's graphical desktop as "
+                "the same OS user first; do not run Open Terminal with sudo."
+            )
+        address = f"unix:path={socket}"
+        return address, {"XDG_RUNTIME_DIR": str(runtime), "DBUS_SESSION_BUS_ADDRESS": address}
+    return address, {}
 
 KEYSYMS = {
     "enter": 0xFF0D, "esc": 0xFF1B, "tab": 0xFF09, "backspace": 0xFF08,
@@ -101,6 +121,8 @@ class PortalDesktop(NativeDesktop):
         self.closed = False
         self.latest = None
         self.reader_task = None
+        self.stderr_task = None
+        self.capture_stderr = ""
         self.first_frame = asyncio.Event()
         self.pending = {}
         self.failure = "Desktop sharing has ended. Reconnect and approve sharing on the Linux desktop."
@@ -115,10 +137,13 @@ class PortalDesktop(NativeDesktop):
             raise
 
     async def call(self, interface, member, signature="", body=None, path=PATH):
-        reply = await asyncio.wait_for(self.bus.call(Message(
-            destination=DESTINATION, path=path, interface=interface,
-            member=member, signature=signature, body=body or [],
-        )), 10)
+        try:
+            reply = await asyncio.wait_for(self.bus.call(Message(
+                destination=DESTINATION, path=path, interface=interface,
+                member=member, signature=signature, body=body or [],
+            )), 10)
+        except TimeoutError as exc:
+            raise RuntimeError(f"Desktop portal {interface}.{member} did not reply within 10 seconds. Check the desktop portal services on the logged-in user's session.") from exc
         if reply.message_type == MessageType.ERROR:
             raise RuntimeError(f"Desktop portal {member}: {reply.body[0] if reply.body else reply.error_name}")
         return reply
@@ -134,6 +159,9 @@ class PortalDesktop(NativeDesktop):
             self.closed = True
             self.latest = None
             self.first_frame.set()
+            for future in self.pending.values():
+                if not future.done():
+                    future.set_exception(RuntimeError("The desktop portal closed the sharing session."))
 
     async def request(self, interface, member, signature="", body=None, options=None):
         token = "open_terminal_" + secrets.token_hex(12)
@@ -142,9 +170,25 @@ class PortalDesktop(NativeDesktop):
         future = asyncio.get_running_loop().create_future()
         self.pending[path] = future
         opts = {**(options or {}), "handle_token": Variant("s", token)}
+        log.info("Desktop portal: %s.%s", interface, member)
         try:
-            await self.call(interface, member, signature + "a{sv}", [*(body or []), opts])
-            response, results = await asyncio.wait_for(future, 120)
+            reply = await self.call(interface, member, signature + "a{sv}", [*(body or []), opts])
+            # Portals may return a different request handle than the proposed one.
+            returned_path = reply.body[0]
+            if returned_path != path:
+                self.pending.pop(path, None)
+                path = returned_path
+                self.pending[path] = future
+            timeout = 120 if member == "Start" else 10
+            try:
+                response, results = await asyncio.wait_for(future, timeout)
+            except TimeoutError as exc:
+                hint = (
+                    "Unlock the Ubuntu desktop and approve its screen-sharing dialog; the dialog appears on the desktop, not in SSH."
+                    if member == "Start" else
+                    "Check xdg-desktop-portal and xdg-desktop-portal-gnome in the logged-in user's session."
+                )
+                raise RuntimeError(f"Desktop portal {member} timed out after {timeout} seconds waiting for its Response signal. {hint}") from exc
             if response == 1:
                 raise HTTPException(403, "Desktop sharing was not approved. Approve screen and input access on the logged-in Linux desktop.")
             if response != 0:
@@ -159,27 +203,25 @@ class PortalDesktop(NativeDesktop):
 
     async def start(self):
         self.loop = asyncio.get_running_loop()
+        stage = "connecting to the desktop user's D-Bus session"
         try:
             # SSH may lack DISPLAY and DBUS_SESSION_BUS_ADDRESS. Connect only to
             # this OS user's existing bus, never launch a graphical/login session.
-            address = os.environ.get("DBUS_SESSION_BUS_ADDRESS")
-            if not address:
-                socket = Path(f"/run/user/{os.getuid()}/bus")
-                if not socket.is_socket() or socket.stat().st_uid != os.getuid():
-                    raise RuntimeError("No desktop user bus. Log in to Ubuntu's graphical desktop as this user first.")
-                address = f"unix:path={socket}"
+            address, capture_env = host_session()
             self.bus = await asyncio.wait_for(
                 MessageBus(bus_address=address, negotiate_unix_fd=True).connect(), 10
             )
             self.bus.add_message_handler(self.on_message)
+            stage = "subscribing to desktop portal responses"
             for interface in (REQUEST, SESSION):
-                reply = await self.bus.call(Message(
+                reply = await asyncio.wait_for(self.bus.call(Message(
                     destination="org.freedesktop.DBus", path="/org/freedesktop/DBus",
                     interface="org.freedesktop.DBus", member="AddMatch", signature="s",
                     body=[f"type='signal',sender='{DESTINATION}',interface='{interface}'"],
-                ))
+                )), 10)
                 if reply.message_type == MessageType.ERROR:
                     raise RuntimeError("Could not listen for desktop portal permission changes")
+            stage = "creating the desktop sharing session"
             results = await self.request(REMOTE, "CreateSession", options={
                 "session_handle_token": Variant("s", "open_terminal_" + secrets.token_hex(12)),
             })
@@ -204,14 +246,17 @@ class PortalDesktop(NativeDesktop):
             reply = await self.call(SCREENCAST, "OpenPipeWireRemote", "oa{sv}", [self.session, {}])
             try:
                 fd = reply.unix_fds[reply.body[0]]
-                await self.start_capture(fd=fd)
+                stage = "starting PipeWire screen capture"
+                await self.start_capture(fd=fd, env=capture_env)
             finally:
                 for fd in reply.unix_fds:
                     os.close(fd)
         except HTTPException:
             raise
         except Exception as exc:
-            raise HTTPException(503, f"Could not share the Linux desktop: {exc}. Requires a logged-in desktop with the RemoteDesktop portal and GStreamer PipeWire support.") from exc
+            detail = str(exc).strip() or (f"Timed out while {stage}" if isinstance(exc, TimeoutError) else f"{type(exc).__name__} while {stage}")
+            log.warning("Could not share the Linux desktop: %s", detail)
+            raise HTTPException(503, f"Could not share the Linux desktop: {detail}") from exc
 
     async def start_capture(self, *, fd=None, env=None):
         process = await asyncio.create_subprocess_exec(
@@ -223,12 +268,23 @@ class PortalDesktop(NativeDesktop):
             "!", "fdsink", "fd=1", "sync=false",
             pass_fds=() if fd is None else (fd,), env=sanitized_environ(env),
             start_new_session=True,
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
         )
         self.processes.append(process)
+        self.stderr_task = asyncio.create_task(self.read_stderr(process))
         self.reader_task = asyncio.create_task(self.read_frames(process))
-        await asyncio.wait_for(self.first_frame.wait(), 15)
+        try:
+            await asyncio.wait_for(self.first_frame.wait(), 15)
+        except TimeoutError as exc:
+            raise RuntimeError("PipeWire capture produced no screen frame within 15 seconds. Check that the shared desktop is unlocked and PipeWire is running." + self.capture_error()) from exc
         self.grab()
+
+    async def read_stderr(self, process):
+        while data := await process.stderr.read(4096):
+            self.capture_stderr = (self.capture_stderr + data.decode(errors="replace"))[-4096:]
+
+    def capture_error(self):
+        return f" GStreamer: {self.capture_stderr.strip()}" if self.capture_stderr.strip() else ""
 
     async def read_frames(self, process):
         try:
@@ -237,7 +293,10 @@ class PortalDesktop(NativeDesktop):
                 self.latest = Image.frombytes("RGB", (self.width, self.height), data, "raw", "RGBX")
                 self.first_frame.set()
         except asyncio.IncompleteReadError:
-            self.failure = "Desktop capture stopped. Check gstreamer1.0-pipewire and gstreamer1.0-plugins-base, then reconnect."
+            if self.stderr_task:
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(asyncio.shield(self.stderr_task), 1)
+            self.failure = "Desktop capture stopped before another complete frame arrived. Check gstreamer1.0-pipewire and gstreamer1.0-plugins-base." + self.capture_error()
         finally:
             self.closed = True
             self.latest = None
@@ -296,5 +355,8 @@ class PortalDesktop(NativeDesktop):
                 await self.stop_session()
             for process in reversed(self.processes):
                 await self.stop_process(process)
+            if self.stderr_task:
+                self.stderr_task.cancel()
+                await asyncio.gather(self.stderr_task, return_exceptions=True)
             if self.bus:
                 self.bus.disconnect()
