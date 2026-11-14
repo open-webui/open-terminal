@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.17.9] - 2026-11-14
+
+### Added
+
+- Added support for choosing thinking effort in Claude Code, Pi, and compatible agents such as OpenCode from Open WebUI's model controls. Available choices match the selected model, and models without supported effort settings leave the control hidden. Requires an updated Open WebUI.
+
+### Fixed
+
+- Fixed file requests getting stuck when many tabs or connected clients were watching folders for changes. Opening the same folder in several views now shares the work of detecting changes, and watching folders no longer ties up the resources needed to read files.
+
+### Changed
+
+- Updated the README with a one-line `uvx open-terminal@latest` command that starts the latest release and shows where to set your API key.
+
 ## [0.17.8] - 2026-11-13
 
 ### Added
