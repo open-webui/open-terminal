@@ -62,9 +62,12 @@ class WaylandDesktop(PortalDesktop):
         return self.env
 
     async def launch(self, name, *command):
+        env = sanitized_environ(self.env)
+        # libpulse's SSH X11 probe deadlocks GNOME on its own on-demand Xwayland.
+        env.pop("SSH_CONNECTION", None)
         with (self.runtime / f"{name}.log").open("wb") as output:
             process = await asyncio.create_subprocess_exec(
-                *command, env=sanitized_environ(self.env), cwd=self.env["HOME"],
+                *command, env=env, cwd=self.env["HOME"],
                 start_new_session=True, stdout=output, stderr=output,
             )
         self.processes.append(process)
@@ -114,8 +117,7 @@ class WaylandDesktop(PortalDesktop):
             await self.wait_socket("bus", daemon)
             pipewire = await self.launch("pipewire", "pipewire")
             await self.wait_socket("pipewire-0", pipewire)
-            # Only link our screen stream; leave physical devices to the host.
-            await self.launch("wireplumber", "wireplumber", "--profile=policy")
+            await self.launch("wireplumber", "wireplumber")
             compositor = await self.launch(
                 "gnome", "gnome-shell", "--headless", "--wayland",
                 f"--virtual-monitor={WIDTH}x{HEIGHT}", "--wayland-display=wayland-0",
