@@ -345,7 +345,7 @@ class Desktop:
         for name in (
             "nm-applet", "blueman", "xfce4-power-manager", "light-locker", "xfce4-screensaver",
             "gnome-keyring-pkcs11", "gnome-keyring-secrets", "gnome-keyring-ssh",
-            "org.gnome.SettingsDaemon.Color",
+            "org.gnome.SettingsDaemon.Color", "xiccd",
         ):
             (autostart / f"{name}.desktop").write_text("[Desktop Entry]\nType=Application\nHidden=true\n")
         self.env["XDG_CONFIG_DIRS"] = f"{config}:{directories}"

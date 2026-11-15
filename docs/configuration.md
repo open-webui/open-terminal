@@ -114,7 +114,9 @@ they never cause a connection to the host desktop. Restart after installation.
 Virtual XFCE sessions prefer `xfce4-terminal` and use their own session defaults
 so GNOME startup services are not inherited. Host network, power, color, and
 login-keyring autostart services are disabled in the virtual session only;
-host settings and authentication policy are unchanged. If Ubuntu's terminal
+host settings and authentication policy are unchanged. Applications can still
+request access to the login keyring through D-Bus and prompt to unlock it;
+disabling autostart does not unlock the keyring. If Ubuntu's terminal
 shows “Failed to connect to user scope bus,” press **Alt+F2** in the desktop and
 run `xfce4-terminal`.
 
