@@ -1,9 +1,12 @@
 """Streaming I/O helpers with cancellation-safe resource cleanup."""
 
 import asyncio
+import json
 import os
 
 from fastapi import HTTPException
+
+from open_terminal.env import MAX_TOOL_OUTPUT_SIZE
 
 CHUNK_SIZE = 64 * 1024
 
@@ -93,3 +96,55 @@ async def run_worker(command, payload=None, *, request=None, timeout=60, **optio
         while await process.stdout.read(CHUNK_SIZE):
             pass
         await process.wait()
+
+
+def json_bytes(payload: object) -> int:
+    """Size of *payload* serialized the way the API returns it."""
+    return len(
+        json.dumps(
+            payload, ensure_ascii=False, allow_nan=False, separators=(",", ":")
+        ).encode("utf-8")
+    )
+
+
+def escaped_bytes(text: str) -> int:
+    """Size of *text* once JSON-escaped, as it lands in a response body."""
+    return len(json.dumps(text, ensure_ascii=False).encode("utf-8")) - 2
+
+
+def truncate_escaped(text: str, max_bytes: int) -> str:
+    """Cut *text* so that its JSON-escaped size fits *max_bytes*."""
+    low, high = 0, min(len(text), max_bytes)
+    while low < high:
+        middle = (low + high + 1) // 2
+        if escaped_bytes(text[:middle]) <= max_bytes:
+            low = middle
+        else:
+            high = middle - 1
+    return text[:low]
+
+
+def excerpt_around(text: str, index: int, max_bytes: int) -> tuple[str, bool]:
+    """Bounded window of *text* around the match at character *index*."""
+    if len(text) <= max_bytes and len(text.encode("utf-8")) <= max_bytes:
+        return text, False
+    window_start = max(0, index - max_bytes)
+    window = text[window_start : index + max_bytes].encode("utf-8")
+    match_start = len(text[window_start:index].encode("utf-8"))
+    start = min(max(0, match_start - max_bytes // 4), len(window) - max_bytes)
+    return window[start : start + max_bytes].decode("utf-8", errors="ignore"), True
+
+
+def fit_items(payload: dict, key: str) -> int:
+    """Drop items from the end of ``payload[key]`` until *payload* fits the limit; returns how many."""
+    items = payload[key]
+    payload[key] = []
+    used = json_bytes(payload)
+    kept = []
+    for item in items:
+        used += json_bytes(item) + (1 if kept else 0)
+        if used > MAX_TOOL_OUTPUT_SIZE and kept:
+            break
+        kept.append(item)
+    payload[key] = kept
+    return len(items) - len(kept)

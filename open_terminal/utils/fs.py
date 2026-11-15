@@ -19,12 +19,14 @@ import re
 import tempfile
 import shutil
 import subprocess
+from itertools import groupby
 
 import aiofiles
 import aiofiles.os
 from starlette.responses import FileResponse
 
-from open_terminal.utils.limits import CHUNK_SIZE, run_io
+from open_terminal.env import MAX_TOOL_OUTPUT_SIZE
+from open_terminal.utils.limits import CHUNK_SIZE, escaped_bytes, run_io, truncate_escaped
 
 
 class FullFileResponse(FileResponse):
@@ -54,6 +56,7 @@ class TemporaryFileResponse(FullFileResponse):
 
 
 _LINE_BREAK = re.compile(r"\r\n|[\r\n\v\f\x1c-\x1e\x85\u2028\u2029]")
+_LINE_END = re.compile(f"(?:{_LINE_BREAK.pattern})\\Z")
 
 
 def line_range_offsets(text, start_line=None, end_line=None):
@@ -103,17 +106,65 @@ def read_text_range(path, start_line=None, end_line=None):
     return {"total_lines": total, "content": selected.getvalue()}
 
 
-def _build_text_file_response(path, display_path, start_line=None, end_line=None, normalize_newlines=True):
-    """Build the original JSON response on disk, including arbitrarily long lines."""
+def _text_response_end(total_lines: int, returned_lines: int, next_line: int | None, cut_line: dict | None) -> str:
+    """Fields that close a read_file response, after its content."""
+    fields = {"total_lines": total_lines, "returned_lines": returned_lines, "truncated": bool(next_line or cut_line)}
+    if cut_line:
+        # Only continuing inside the cut line keeps its rest, so next_line is withheld.
+        fields.update(cut_line)
+    elif next_line:
+        fields["next_line"] = next_line
+    return '",' + json.dumps(fields)[1:]
+
+
+_LARGEST_NUMBER = 9_999_999_999
+_TEXT_END_SIZE = len(_text_response_end(_LARGEST_NUMBER, _LARGEST_NUMBER, None, {
+    "line_truncated": True, "start_line": _LARGEST_NUMBER, "line_offset": _LARGEST_NUMBER, "line_length": _LARGEST_NUMBER,
+}))
+
+
+def _build_text_file_response(path, display_path, start_line=None, end_line=None, normalize_newlines=True, line_offset: int = 0):
+    """Build the JSON response on disk, cut at the tool output limit."""
+    start_line = start_line or 1
     fd, temporary = tempfile.mkstemp(suffix=".json")
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="") as output, open(path, encoding="utf-8", newline=None if normalize_newlines else "") as source:
-            output.write('{"path":' + json.dumps(display_path) + ',"content":"')
-            total = 0
-            for total, chunk in text_chunks(source):
-                if total >= (start_line or 1) and (end_line is None or total <= end_line):
-                    output.write(json.dumps(chunk, ensure_ascii=False)[1:-1])
-            output.write('","total_lines":' + str(total) + '}')
+            head = '{"path":' + json.dumps(display_path) + ',"content":"'
+            output.write(head)
+            budget = max(MAX_TOOL_OUTPUT_SIZE - len(head) - _TEXT_END_SIZE, MAX_TOOL_OUTPUT_SIZE // 4)
+            used = returned_lines = total = 0
+            next_line = cut_line = None
+            for total, pieces in groupby(text_chunks(source), key=lambda item: item[0]):
+                if next_line or cut_line or total < start_line or (end_line is not None and total > end_line):
+                    continue
+                kept, kept_size, line_length, overflows = [], 0, 0, False
+                skip = line_offset if total == start_line else 0
+                for _, piece in pieces:
+                    ending = _LINE_END.search(piece)
+                    line_length += len(piece) - (len(ending.group()) if ending else 0)
+                    if skip:
+                        skipped = min(skip, len(piece))
+                        piece, skip = piece[skipped:], skip - skipped
+                    if overflows:
+                        continue
+                    size = escaped_bytes(piece)
+                    if used + kept_size + size > budget:
+                        overflows = True
+                        if not returned_lines:
+                            kept.append(truncate_escaped(piece, budget - used - kept_size))
+                        continue
+                    kept.append(piece)
+                    kept_size += size
+                if overflows and returned_lines:
+                    next_line = total
+                    continue
+                text = "".join(kept)
+                output.write(json.dumps(text, ensure_ascii=False)[1:-1])
+                used += kept_size
+                returned_lines += 1
+                if overflows:
+                    cut_line = {"line_truncated": True, "start_line": total, "line_offset": line_offset + len(text), "line_length": line_length}
+            output.write(_text_response_end(total, returned_lines, next_line, cut_line))
         return TemporaryFileResponse(temporary, media_type="application/json")
     except BaseException:
         os.unlink(temporary)
