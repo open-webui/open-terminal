@@ -64,9 +64,21 @@ an on-screen permission prompt. Install the optional `x11vnc` package
 Without it, GNOME uses the frame viewer and the Desktop option remains available.
 Commands launched through the API inherit this virtual
 desktop's display and bus so Wayland apps open there. The logged-in host desktop
-is not used. This backend currently requires single-user mode and does not stream
-audio; multi-user deployments keep the XFCE fallback when GNOME is Wayland-only.
+is not used. This backend currently requires single-user mode;
+multi-user deployments keep the XFCE fallback when GNOME is Wayland-only.
 It is tested with Ubuntu 26.04/GNOME 50.
+
+For **GNOME Wayland audio**, install these optional packages, then restart Open Terminal:
+
+```sh
+sudo apt install pipewire-pulse pulseaudio-utils ffmpeg
+```
+
+Click the viewer's speaker button to unmute. Sound works with both noVNC and the
+frame viewer through a separate authenticated audio stream. Apps in the virtual
+desktop use its private sound server, including apps launched through the API.
+The host's sound and microphone are not captured. Without the audio packages,
+the desktop remains available without sound.
 
 With noVNC, GNOME still runs on Wayland: PipeWire supplies frames to
 [`x11vnc`'s raw-framebuffer mode](https://github.com/LibVNC/x11vnc/blob/master/x11vnc.1),
@@ -74,7 +86,7 @@ and input goes back through the owned Mutter session. LibVNCServer handles the
 VNC protocol. Each authenticated viewer gets a private socket pair; no VNC TCP
 port is opened. Browser paste requires an updated Open WebUI and transfers UTF-8
 text through the private GNOME clipboard. Automatic clipboard synchronization
-and audio are not provided by this backend.
+is not provided by this backend.
 
 Ubuntu's [documented GNOME remote access route is RDP](https://documentation.ubuntu.com/desktop/en/24.04/how-to/share-your-desktop-remotely/).
 The raw-framebuffer transport above keeps noVNC compatibility using packaged dependencies.
@@ -99,6 +111,10 @@ When GNOME has no X11 session, Open Terminal selects the Wayland backend instead
 of TigerVNC. Missing dependencies produce an error for the selected backend;
 they never cause a connection to the host desktop. Restart after installation.
 
+For audio in these X11 virtual desktops, install `pulseaudio pulseaudio-utils ffmpeg`
+and restart Open Terminal. The full Docker images already include these packages.
+Slim images require desktop and audio packages to be installed separately.
+
 To share **your actual logged-in desktop and its open windows**, opt in explicitly:
 
 ```sh
@@ -122,8 +138,9 @@ sharing indicator. A GNOME VNC/RDP server is not needed.
 From SSH, run as the same OS user: Open Terminal can reach that user's existing
 desktop portal even when `XDG_SESSION_TYPE=tty`. Someone must still be logged in
 to the graphical desktop and approve the initial dialog there. Host mode never starts
-a new desktop as a fallback. Wayland text input sends Unicode key events; audio
-sharing is currently available only in VNC virtual sessions.
+a new desktop as a fallback. Wayland text input sends Unicode key events.
+Host-mode audio is not implemented on Linux, macOS, or Windows; audio sharing
+is currently available only in virtual desktops.
 
 SSH host mode uses the same OS user's desktop bus at `/run/user/<uid>/bus`,
 even if the SSH shell has a private D-Bus address. Startup errors identify the

@@ -24,6 +24,7 @@ from fastapi import (
 from fastapi.responses import Response
 from pydantic import BaseModel, Field, model_validator
 
+from open_terminal.desktop.audio import DesktopAudio
 from open_terminal.dependencies import get_filesystem, matches_api_key, verify_api_key
 from open_terminal.env import (
     BROWSER_NO_SANDBOX, DESKTOP_ENVIRONMENT, DESKTOP_MODE, MULTI_USER,
@@ -112,7 +113,7 @@ class Desktop:
         self.fs = fs
         self.runtime = Path(tempfile.mkdtemp(prefix="open-terminal-desktop-"))
         self.processes = []
-        self.audio_process = None
+        self.audio = DesktopAudio(self)
         self.actions = asyncio.Lock()
         self.peers = set()
         self.env = {
@@ -125,7 +126,7 @@ class Desktop:
 
     @property
     def command_env(self):
-        return {"DISPLAY": self.env["DISPLAY"], "XAUTHORITY": self.env["XAUTHORITY"]}
+        return {key: self.env[key] for key in ("DISPLAY", "XAUTHORITY", "PULSE_SERVER", "PULSE_SINK", "PULSE_SOURCE") if key in self.env}
 
     async def spawn(self, *command, **kwargs):
         if self.fs.username:
@@ -268,7 +269,7 @@ class Desktop:
             raise RuntimeError("Desktop display did not start")
         if not shell:
             return
-        await self.start_audio()
+        await self.audio.start()
         environment = virtual_environment()
         if environment == "gnome":
             session = gnome_session()
@@ -311,83 +312,10 @@ class Desktop:
 
     @property
     def audio_available(self):
-        return self.audio_process is not None and self.audio_process.returncode is None
-
-    async def start_audio(self):
-        if not all(shutil.which(name) for name in ("pulseaudio", "ffmpeg", "pactl")):
-            return
-        socket = self.runtime / "audio.sock"
-        self.env.update(
-            PULSE_SERVER=f"unix:{socket}",
-            PULSE_SINK="desktop",
-            PULSE_SOURCE="desktop.monitor",
-        )
-        try:
-            with (self.runtime / "audio.log").open("wb") as output:
-                self.audio_process = await self.spawn(
-                    "pulseaudio",
-                    "--daemonize=no",
-                    "--use-pid-file=no",
-                    "--exit-idle-time=-1",
-                    "--disable-shm=yes",
-                    "--log-target=stderr",
-                    "-n",
-                    "--load=module-null-sink sink_name=desktop rate=48000 channels=2",
-                    # Only this workspace's Unix socket; clients run as its OS user.
-                    f"--load=module-native-protocol-unix socket={socket} auth-cookie-enabled=0",
-                    stdout=output,
-                    stderr=output,
-                )
-            for _ in range(50):
-                if self.audio_process.returncode is not None:
-                    raise RuntimeError("Desktop audio server exited")
-                if socket.exists():
-                    await self.run("pactl", "info")
-                    return
-                await asyncio.sleep(0.1)
-            raise RuntimeError("Desktop audio server did not start")
-        except (OSError, RuntimeError, TimeoutError):
-            log.warning(
-                "Desktop audio unavailable; continuing without sound", exc_info=True
-            )
-            if self.audio_process:
-                await self.stop_process(self.audio_process)
-            self.audio_process = None
-            for key in ("PULSE_SERVER", "PULSE_SINK", "PULSE_SOURCE"):
-                self.env.pop(key, None)
+        return self.audio.available
 
     async def stream_audio(self, ws):
-        process = await self.spawn(
-            "ffmpeg", "-nostdin", "-loglevel", "error",
-            "-f", "pulse", "-sample_rate", "48000", "-channels", "2",
-            "-fragment_size", "3840", "-i", "desktop.monitor",
-            "-c:a", "libopus", "-b:a", "64k", "-vbr", "off",
-            "-application", "lowdelay", "-frame_duration", "20",
-            "-f", "webm", "-live", "1", "-cluster_time_limit", "100",
-            "-flush_packets", "1", "pipe:1",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-        self.peers.add(ws)
-
-        async def outgoing():
-            # Forward the WebM stream unchanged; the browser handles Opus decoding.
-            while data := await process.stdout.read(4096):
-                await asyncio.wait_for(ws.send_bytes(data), 2)
-
-        async def incoming():
-            while (await ws.receive())["type"] != "websocket.disconnect":
-                pass
-
-        tasks = [asyncio.create_task(outgoing()), asyncio.create_task(incoming())]
-        try:
-            await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-        finally:
-            for task in tasks:
-                task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
-            self.peers.discard(ws)
-            await self.stop_process(process)
+        await self.audio.stream(ws)
 
     async def screenshot(self):
         path = self.runtime / "screenshot.png"
@@ -427,8 +355,7 @@ class Desktop:
                 await peer.close(code=1012)
         for process in reversed(self.processes):
             await self.stop_process(process)
-        if self.audio_process:
-            await self.stop_process(self.audio_process)
+        await self.audio.close()
         if self.fs.username:
             await self.run("rm", "-rf", "--", str(self.runtime))
         else:

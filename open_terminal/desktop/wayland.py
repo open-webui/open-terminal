@@ -13,6 +13,7 @@ from dbus_next.aio import MessageBus
 from fastapi import HTTPException
 
 from open_terminal.desktop.router import WIDTH, HEIGHT
+from open_terminal.desktop.audio import DesktopAudio
 from open_terminal.desktop.portal import PortalDesktop, PortalInput
 from open_terminal.desktop.vnc import RawVNC
 from open_terminal.env import sanitized_environ
@@ -37,6 +38,7 @@ class WaylandDesktop(PortalDesktop):
         self.node_ready = asyncio.Event()
         self.services = {}
         self.vnc = None
+        self.audio = DesktopAudio(self)
         self.clipboard_data = b""
         self.clipboard_tasks = set()
         self.width = self.screen_width = WIDTH
@@ -68,15 +70,17 @@ class WaylandDesktop(PortalDesktop):
     def command_env(self):
         return self.env
 
-    async def launch(self, name, *command):
+    async def spawn(self, *command, **kwargs):
         env = sanitized_environ(self.env)
         # libpulse's SSH X11 probe deadlocks GNOME on its own on-demand Xwayland.
         env.pop("SSH_CONNECTION", None)
+        return await asyncio.create_subprocess_exec(
+            *command, env=env, cwd=self.env["HOME"], start_new_session=True, **kwargs,
+        )
+
+    async def launch(self, name, *command):
         with (self.runtime / f"{name}.log").open("wb") as output:
-            process = await asyncio.create_subprocess_exec(
-                *command, env=env, cwd=self.env["HOME"],
-                start_new_session=True, stdout=output, stderr=output,
-            )
+            process = await self.spawn(*command, stdout=output, stderr=output)
         self.processes.append(process)
         self.services[name] = process
         return process
@@ -130,6 +134,7 @@ class WaylandDesktop(PortalDesktop):
             pipewire = await self.launch("pipewire", "pipewire")
             await self.wait_socket("pipewire-0", pipewire)
             await self.launch("wireplumber", "wireplumber")
+            await self.audio.start(pipewire=True)
             compositor = await self.launch(
                 "gnome", "gnome-shell", "--headless", "--wayland",
                 f"--virtual-monitor={WIDTH}x{HEIGHT}", "--wayland-display=wayland-0",
@@ -256,6 +261,13 @@ class WaylandDesktop(PortalDesktop):
         else:
             await super().stream(ws)
 
+    @property
+    def audio_available(self):
+        return self.audio.available
+
+    async def stream_audio(self, ws):
+        await self.audio.stream(ws)
+
     async def stop_process(self, process):
         if process.returncode is not None:
             return
@@ -271,6 +283,7 @@ class WaylandDesktop(PortalDesktop):
 
     async def close(self):
         try:
+            await self.audio.close()
             if self.vnc:
                 await self.vnc.close()
             self.closed = True
