@@ -53,21 +53,22 @@ open-terminal run --desktop-environment gnome
 On **Ubuntu 26.04 and other Wayland-only GNOME installations**, install:
 
 ```sh
-sudo apt install gnome-shell dbus-daemon pipewire wireplumber gstreamer1.0-tools gstreamer1.0-pipewire gstreamer1.0-plugins-base libgl1-mesa-dri x11vnc
+sudo apt install gnome-shell dbus-daemon pipewire wireplumber gstreamer1.0-tools gstreamer1.0-pipewire gstreamer1.0-plugins-base libgl1-mesa-dri
 open-terminal run --desktop-mode virtual --desktop-environment gnome
 ```
 
 Open Terminal starts a headless GNOME Shell with its own virtual monitor, D-Bus
 session, and PipeWire services. It works over SSH without a graphical login or
-an on-screen permission prompt. It uses noVNC, like XFCE. Existing GNOME Wayland
-installations need `sudo apt install x11vnc` after upgrading. Commands launched
-through the API inherit this virtual
+an on-screen permission prompt. Install the optional `x11vnc` package
+(`sudo apt install x11vnc`) to use noVNC, like XFCE, then restart Open Terminal.
+Without it, GNOME uses the frame viewer and the Desktop option remains available.
+Commands launched through the API inherit this virtual
 desktop's display and bus so Wayland apps open there. The logged-in host desktop
 is not used. This backend currently requires single-user mode and does not stream
 audio; multi-user deployments keep the XFCE fallback when GNOME is Wayland-only.
 It is tested with Ubuntu 26.04/GNOME 50.
 
-GNOME still runs on Wayland: PipeWire supplies frames to
+With noVNC, GNOME still runs on Wayland: PipeWire supplies frames to
 [`x11vnc`'s raw-framebuffer mode](https://github.com/LibVNC/x11vnc/blob/master/x11vnc.1),
 and input goes back through the owned Mutter session. LibVNCServer handles the
 VNC protocol. Each authenticated viewer gets a private socket pair; no VNC TCP

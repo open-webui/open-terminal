@@ -24,13 +24,13 @@ DBUS = "org.freedesktop.DBus"
 
 
 class WaylandDesktop(PortalDesktop):
-    transport = "vnc"
     clipboard = False
 
     def __init__(self, fs):
         if fs.username:
             raise HTTPException(503, "GNOME Wayland virtual desktops require single-user mode; use XFCE for multi-user deployments.")
         super().__init__(fs)
+        self.transport = "vnc" if shutil.which("x11vnc") else "frames"
         self.runtime = Path(tempfile.mkdtemp(prefix="open-terminal-wayland-"))
         self.owner = None
         self.stream_path = None
@@ -176,7 +176,8 @@ class WaylandDesktop(PortalDesktop):
             await self.invoke(REMOTE, self.session, REMOTE + ".Session", "Start")
             await self.invoke(REMOTE, self.session, REMOTE + ".Session", "EnableClipboard", "a{sv}", [{}])
             await asyncio.wait_for(self.node_ready.wait(), 15)
-            self.vnc = RawVNC(self)
+            if self.transport == "vnc":
+                self.vnc = RawVNC(self)
             await self.start_capture(env=self.env)
         except Exception as exc:
             details = []
@@ -250,7 +251,10 @@ class WaylandDesktop(PortalDesktop):
             self.vnc.update(data)
 
     async def stream(self, ws):
-        await self.vnc.stream(ws)
+        if self.vnc:
+            await self.vnc.stream(ws)
+        else:
+            await super().stream(ws)
 
     async def stop_process(self, process):
         if process.returncode is not None:

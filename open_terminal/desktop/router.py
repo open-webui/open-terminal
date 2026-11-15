@@ -91,7 +91,7 @@ def available():
     if sys.platform == "linux" and virtual_backend() == "wayland":
         return not MULTI_USER and bool(importlib.util.find_spec("dbus_next")) and all(
             shutil.which(name) for name in (
-                "gnome-shell", "dbus-daemon", "pipewire", "wireplumber", "gst-launch-1.0", "x11vnc",
+                "gnome-shell", "dbus-daemon", "pipewire", "wireplumber", "gst-launch-1.0",
             )
         )
     return sys.platform == "linux" and bool(
