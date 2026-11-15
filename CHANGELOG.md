@@ -4,11 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.17.17] - 2026-11-15
+
+### Fixed
+
+- Prevented XFCE's `xiccd` color service from starting automatically in virtual desktops, avoiding unnecessary color-profile authentication prompts. Host color management and application-requested keyring unlocks are unchanged.
+
 ## [0.17.16] - 2026-11-15
 
 ### Fixed
 
-- Virtual XFCE sessions now use XFCE session settings and prefer XFCE Terminal over Ubuntu's systemd-dependent default terminal. Session-local startup overrides prevent host network, power, color, and login-keyring services from launching authentication dialogs in the virtual desktop, without changing host settings or authentication policy.
+- Virtual XFCE sessions now use XFCE session settings and prefer XFCE Terminal over Ubuntu's systemd-dependent default terminal. Session-local startup overrides disable selected host network, power, GNOME color, and login-keyring autostart entries, without changing host settings or authentication policy.
 - Multi-user commands now retain their explicit desktop and audio environment after switching users, allowing API-launched applications to use their own desktop's sound server and terminal settings.
 
 ## [0.17.15] - 2026-11-15
