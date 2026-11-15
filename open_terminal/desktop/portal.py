@@ -247,6 +247,7 @@ class PortalDesktop(NativeDesktop):
             # SSH may lack DISPLAY and DBUS_SESSION_BUS_ADDRESS. Connect only to
             # this OS user's existing bus, never launch a graphical/login session.
             address, capture_env = host_session()
+            self.env.update(capture_env)
             self.bus = MessageBus(bus_address=address, negotiate_unix_fd=True)
             await asyncio.wait_for(self.bus.connect(), 10)
             self.bus.add_message_handler(self.on_message)
@@ -306,6 +307,7 @@ class PortalDesktop(NativeDesktop):
                 fd = reply.unix_fds[reply.body[0]]
                 stage = "starting PipeWire screen capture"
                 await self.start_capture(fd=fd, env=capture_env)
+                await self.audio.start()
             finally:
                 for fd in reply.unix_fds:
                     os.close(fd)
@@ -391,17 +393,6 @@ class PortalDesktop(NativeDesktop):
     async def stop_session(self):
         if self.bus and self.session:
             await self.call(SESSION, "Close", path=self.session)
-
-    async def stop_process(self, process):
-        if process.returncode is None:
-            with contextlib.suppress(ProcessLookupError):
-                process.terminate()
-            try:
-                await asyncio.wait_for(process.wait(), 3)
-            except TimeoutError:
-                with contextlib.suppress(ProcessLookupError):
-                    process.kill()
-                await process.wait()
 
     async def close(self):
         self.closed = True

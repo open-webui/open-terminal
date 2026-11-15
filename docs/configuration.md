@@ -139,8 +139,22 @@ From SSH, run as the same OS user: Open Terminal can reach that user's existing
 desktop portal even when `XDG_SESSION_TYPE=tty`. Someone must still be logged in
 to the graphical desktop and approve the initial dialog there. Host mode never starts
 a new desktop as a fallback. Wayland text input sends Unicode key events.
-Host-mode audio is not implemented on Linux, macOS, or Windows; audio sharing
-is currently available only in virtual desktops.
+Host audio captures the logged-in desktop's sound output when you unmute the
+viewer. It does not capture the microphone. Install **FFmpeg** with Opus support
+and ensure `ffmpeg` is on the server's `PATH`, then restart Open Terminal:
+
+| Host platform | Capture method and requirements |
+| --- | --- |
+| Linux, X11 or Wayland | The current user's PulseAudio/PipeWire output monitor. On Ubuntu/Debian, install `pulseaudio-utils ffmpeg`. Use the existing desktop audio server. |
+| macOS 13+ | ScreenCaptureKit system audio. Allow screen/system audio recording for the app running Open Terminal. FFmpeg can be installed with `brew install ffmpeg`. |
+| Windows | WASAPI loopback on the default output device. Install FFmpeg and run Open Terminal in the logged-in desktop session. No virtual audio driver is needed. |
+
+The macOS and Windows Python capture bindings install automatically on their
+respective platforms. Capture starts on unmute and stops on mute or disconnect.
+After changing the default speakers/headphones on Linux or Windows, mute and
+unmute to select the new output. Missing audio dependencies or denied capture
+permission do not disable desktop sharing. Docker virtual desktops use their
+own audio server; a container does not automatically gain access to its host's sound.
 
 SSH host mode uses the same OS user's desktop bus at `/run/user/<uid>/bus`,
 even if the SSH shell has a private D-Bus address. Startup errors identify the

@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 import ctypes
 import contextlib
 import io
+import subprocess
 import sys
 import time
 
@@ -17,6 +18,8 @@ from pydantic import BaseModel, Field
 from typing import Literal
 
 from open_terminal.frames import Frames, FrameWindow
+from open_terminal.desktop.audio import HostAudio
+from open_terminal.env import sanitized_environ
 
 
 class Input(BaseModel):
@@ -120,6 +123,8 @@ class NativeDesktop:
         self.actions = asyncio.Lock()
         self.processes = []
         self.peers = set()
+        self.env = {}
+        self.audio = HostAudio(self)
         self.worker = ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="desktop-capture"
         )
@@ -145,6 +150,7 @@ class NativeDesktop:
     async def start(self):
         try:
             await self.work(self.setup)
+            await self.audio.start()
         except HTTPException:
             raise
         except Exception as exc:
@@ -153,6 +159,31 @@ class NativeDesktop:
                 "Desktop capture requires a logged-in, unlocked graphical session: "
                 + str(exc),
             ) from exc
+
+    @property
+    def audio_available(self):
+        return self.audio.available
+
+    async def stream_audio(self, ws):
+        await self.audio.stream(ws)
+
+    async def spawn(self, *command, **kwargs):
+        env = sanitized_environ(self.env)
+        env.pop("SSH_CONNECTION", None)
+        if sys.platform == "win32":
+            kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+        return await asyncio.create_subprocess_exec(*command, env=env, **kwargs)
+
+    async def stop_process(self, process):
+        if process.returncode is None:
+            with contextlib.suppress(ProcessLookupError):
+                process.terminate()
+            try:
+                await asyncio.wait_for(process.wait(), 3)
+            except TimeoutError:
+                with contextlib.suppress(ProcessLookupError):
+                    process.kill()
+                await process.wait()
 
     def grab(self):
         screen = next(
@@ -306,6 +337,7 @@ class NativeDesktop:
             self.peers.discard(ws)
 
     async def close(self):
+        await self.audio.close()
         for peer in list(self.peers):
             with contextlib.suppress(Exception):
                 await peer.close(code=1012)

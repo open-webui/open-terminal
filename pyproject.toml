@@ -1,6 +1,6 @@
 [project]
 name = "open-terminal"
-version = "0.17.14"
+version = "0.17.15"
 description = "A remote computer API."
 license = "MIT"
 readme = "README.md"
@@ -30,6 +30,8 @@ dependencies = [
     "pyautogui>=0.9.54",
     "pyperclip>=1.9.0",
     "dbus-next>=0.2.3; sys_platform == 'linux'",
+    "pyobjc-framework-ScreenCaptureKit>=11.0; sys_platform == 'darwin'",
+    "soundcard>=0.4.5; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]

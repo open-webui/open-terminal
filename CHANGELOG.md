@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.17.15] - 2026-11-15
+
+### Added
+
+- Host desktop audio on Linux (PulseAudio/PipeWire output monitors), macOS 13+ (ScreenCaptureKit), and Windows (WASAPI loopback). Install FFmpeg and unmute in the viewer to capture system output. Capture stops on mute/disconnect, and audio remains optional for desktop sharing.
+- Separate GNOME Wayland desktops now support audio in both the noVNC and frame viewers. Install `pipewire-pulse pulseaudio-utils ffmpeg`, restart Open Terminal, and unmute using the viewer's speaker button. Audio uses a private desktop sound server; missing audio packages do not disable the desktop.
+
+### Changed
+
+- Linux virtual desktops now default to XFCE, even when GNOME is installed. Select GNOME with `--desktop-environment gnome` or an explicit environment/config setting. The existing `auto` setting now selects XFCE.
+
+### Fixed
+
+- Fixed audio capture processes hanging during viewer disconnect when their output buffers were full.
+- Restored the Desktop option for GNOME Wayland installations without `x11vnc`. The package is optional: when installed, GNOME uses noVNC; otherwise it keeps the frame viewer.
+
 ## [0.17.14] - 2026-11-15
 
 ### Fixed

@@ -261,13 +261,6 @@ class WaylandDesktop(PortalDesktop):
         else:
             await super().stream(ws)
 
-    @property
-    def audio_available(self):
-        return self.audio.available
-
-    async def stream_audio(self, ws):
-        await self.audio.stream(ws)
-
     async def stop_process(self, process):
         if process.returncode is not None:
             return

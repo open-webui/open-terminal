@@ -52,6 +52,8 @@ Linux defaults to a separate XFCE desktop. Select GNOME explicitly with `--deskt
 
 For GNOME Wayland audio, install `pipewire-pulse pulseaudio-utils ffmpeg`, restart Open Terminal, and click the viewer's speaker button to unmute. Audio is optional and works with either viewer.
 
+Host desktop audio is also supported on Linux, macOS 13+, and Windows. Install FFmpeg and follow the [host audio setup](docs/configuration.md#desktop), then unmute in the viewer to share system sound.
+
 If no API key is configured, one is generated and printed at startup. For Docker, find it with `docker logs open-terminal`.
 
 > [!CAUTION]
