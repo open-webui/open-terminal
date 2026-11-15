@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import shlex
 import socket
+import struct
 import sys
 import tempfile
 
@@ -81,6 +82,7 @@ class RawVNC:
         self.streams.add(task)
         desktop.peers.add(ws)
         state = VNCInput(desktop)
+        paste_ready = asyncio.Event()
         process = writer = pipe_transport = None
         tasks = []
         resources = contextlib.ExitStack()
@@ -125,6 +127,12 @@ class RawVNC:
                         command = Input.model_validate_json(message.get("text") or "")
                         if command.type != "paste":
                             raise ValueError("Only paste commands are supported alongside VNC")
+                        # Wait for earlier RFB keys to reach Mutter before releasing
+                        # modifiers or pasting. VoidSymbol never reaches the desktop.
+                        paste_ready.clear()
+                        writer.write(struct.pack("!BBHI", 4, 0, 0, 0xFFFFFF))
+                        await writer.drain()
+                        await asyncio.wait_for(paste_ready.wait(), 5)
                         async with desktop.actions:
                             await state.release()
                             await desktop.work(desktop.paste, command.text)
@@ -136,7 +144,11 @@ class RawVNC:
             async def inputs():
                 while line := await events.readline():
                     async with desktop.actions:
-                        await state.handle(line)
+                        fields = line.split()
+                        if len(fields) == 6 and fields[0] == b"Keysym" and fields[2:4] == [b"0", b"16777215"]:
+                            paste_ready.set()
+                        else:
+                            await state.handle(line)
 
             tasks = [asyncio.create_task(fn()) for fn in (incoming, outgoing, inputs)]
             done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
