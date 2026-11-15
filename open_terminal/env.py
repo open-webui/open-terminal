@@ -181,7 +181,7 @@ DESKTOP_MODE = os.environ.get(
 if DESKTOP_MODE not in ("virtual", "host"):
     raise ValueError("OPEN_TERMINAL_DESKTOP_MODE must be 'virtual' or 'host'")
 DESKTOP_ENVIRONMENT = os.environ.get(
-    "OPEN_TERMINAL_DESKTOP_ENVIRONMENT", config.get("desktop_environment", "auto")
+    "OPEN_TERMINAL_DESKTOP_ENVIRONMENT", config.get("desktop_environment", "xfce")
 ).lower()
 if DESKTOP_ENVIRONMENT not in ("auto", "gnome", "xfce"):
     raise ValueError("OPEN_TERMINAL_DESKTOP_ENVIRONMENT must be 'auto', 'gnome', or 'xfce'")

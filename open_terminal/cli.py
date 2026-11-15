@@ -65,7 +65,7 @@ BANNER = r"""
 )
 @click.option(
     "--desktop-environment", type=click.Choice(["auto", "gnome", "xfce"]), default=None,
-    help="Virtual desktop environment (default: prefer GNOME, then XFCE).",
+    help="Virtual desktop environment (default: XFCE; auto also selects XFCE). Choose gnome explicitly to use GNOME.",
 )
 def run(
     host: str | None,

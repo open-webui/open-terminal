@@ -42,12 +42,12 @@ open-terminal run --config /path/to/my-config.toml
 
 ## Desktop
 
-Linux defaults to a **separate virtual desktop**. It prefers installed GNOME,
-otherwise uses XFCE. Docker `latest` includes XFCE. To choose explicitly:
+Linux defaults to a **separate XFCE virtual desktop**, even when GNOME is installed.
+Docker `latest` includes XFCE. Select GNOME explicitly when wanted:
 
 ```sh
-open-terminal run --desktop-environment gnome
-# Or: open-terminal run --desktop-environment xfce
+open-terminal run                             # XFCE (default)
+open-terminal run --desktop-environment gnome # Explicit GNOME
 ```
 
 On **Ubuntu 26.04 and other Wayland-only GNOME installations**, install:
@@ -140,8 +140,9 @@ grant persistent access or the token cannot be saved, the server logs a warning.
 
 The equivalent environment variables are `OPEN_TERMINAL_DESKTOP_MODE`
 (`virtual` or `host`) and `OPEN_TERMINAL_DESKTOP_ENVIRONMENT`
-(`auto`, `gnome`, or `xfce`); TOML keys are `desktop_mode` and
-`desktop_environment`. CLI flags take precedence. Restart after changing modes.
+(`xfce` by default, or `gnome`; `auto` is retained as an alias for XFCE);
+TOML keys are `desktop_mode` and `desktop_environment`. CLI flags take precedence.
+Restart after changing modes.
 macOS and Windows keep their existing host-desktop behavior by default.
 
 ## Use your running Chrome
