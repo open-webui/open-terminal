@@ -111,6 +111,13 @@ When GNOME has no X11 session, Open Terminal selects the Wayland backend instead
 of TigerVNC. Missing dependencies produce an error for the selected backend;
 they never cause a connection to the host desktop. Restart after installation.
 
+Virtual XFCE sessions prefer `xfce4-terminal` and use their own session defaults
+so GNOME startup services are not inherited. Host network, power, color, and
+login-keyring autostart services are disabled in the virtual session only;
+host settings and authentication policy are unchanged. If Ubuntu's terminal
+shows “Failed to connect to user scope bus,” press **Alt+F2** in the desktop and
+run `xfce4-terminal`.
+
 For audio in these X11 virtual desktops, install `pulseaudio pulseaudio-utils ffmpeg`
 and restart Open Terminal. The full Docker images already include these packages.
 Slim images require desktop and audio packages to be installed separately.

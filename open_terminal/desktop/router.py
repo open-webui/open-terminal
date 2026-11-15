@@ -126,7 +126,12 @@ class Desktop:
 
     @property
     def command_env(self):
-        return {key: self.env[key] for key in ("DISPLAY", "XAUTHORITY", "PULSE_SERVER", "PULSE_SINK", "PULSE_SOURCE") if key in self.env}
+        return {key: self.env[key] for key in (
+            "DISPLAY", "XAUTHORITY", "PULSE_SERVER", "PULSE_SINK", "PULSE_SOURCE",
+            "XDG_CURRENT_DESKTOP", "XDG_SESSION_DESKTOP", "DESKTOP_SESSION",
+            "XDG_SESSION_TYPE", "XDG_MENU_PREFIX", "GDK_BACKEND", "QT_QPA_PLATFORM",
+            "TERMINAL", "XDG_CONFIG_DIRS",
+        ) if key in self.env}
 
     async def spawn(self, *command, **kwargs):
         if self.fs.username:
@@ -200,6 +205,8 @@ class Desktop:
             await self.stop_process(process)
 
     async def start(self, *, shell=True):
+        if shell and virtual_environment() == "xfce":
+            self.configure_xfce()
         if self.fs.username:
             import pwd
 
@@ -209,6 +216,7 @@ class Desktop:
                 "sudo",
                 "-n",
                 "chown",
+                "-R",
                 f"{account.pw_uid}:{os.getegid()}",
                 str(self.runtime),
             )
@@ -309,6 +317,38 @@ class Desktop:
                 await self.run("xdotool", "search", "--sync", "--onlyvisible", "--class", "xfdesktop", timeout=30)
         except (TimeoutError, RuntimeError) as exc:
             raise RuntimeError(f"{environment} desktop did not start: " + (self.runtime / "session.log").read_text(errors="replace")[-2000:]) from exc
+
+    def configure_xfce(self):
+        # startxfce4 preserves inherited GNOME values unless we replace them.
+        self.env.update(
+            XDG_CURRENT_DESKTOP="XFCE", XDG_SESSION_DESKTOP="xfce",
+            DESKTOP_SESSION="xfce", XDG_SESSION_TYPE="x11", XDG_MENU_PREFIX="xfce-",
+            GDK_BACKEND="x11", QT_QPA_PLATFORM="xcb",
+        )
+        config = self.runtime / "config"
+        (config / "xfce4").mkdir(parents=True, exist_ok=True)
+        directories = os.environ.get("XDG_CONFIG_DIRS") or "/etc/xdg"
+        helpers = ""
+        for directory in directories.split(":"):
+            path = Path(directory) / "xfce4/helpers.rc"
+            if path.is_file():
+                helpers = path.read_text()
+                break
+        # Ubuntu's x-terminal-emulator alternative can select systemd-only Ptyxis.
+        helpers = "\n".join(line for line in helpers.splitlines() if line.partition("=")[0].strip() != "TerminalEmulator")
+        if shutil.which("xfce4-terminal"):
+            self.env["TERMINAL"] = "xfce4-terminal"
+            (config / "xfce4/helpers.rc").write_text(helpers + "\nTerminalEmulator=xfce4-terminal\n")
+        autostart = config / "autostart"
+        autostart.mkdir(exist_ok=True)
+        # These manage host hardware or unlock login secrets, not virtual devices.
+        for name in (
+            "nm-applet", "blueman", "xfce4-power-manager", "light-locker", "xfce4-screensaver",
+            "gnome-keyring-pkcs11", "gnome-keyring-secrets", "gnome-keyring-ssh",
+            "org.gnome.SettingsDaemon.Color",
+        ):
+            (autostart / f"{name}.desktop").write_text("[Desktop Entry]\nType=Application\nHidden=true\n")
+        self.env["XDG_CONFIG_DIRS"] = f"{config}:{directories}"
 
     @property
     def audio_available(self):

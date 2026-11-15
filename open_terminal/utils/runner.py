@@ -102,7 +102,12 @@ class PtyRunner(ProcessRunner):
         if run_as_user:
             # Build the inner command: optionally cd first, then run the command.
             inner = f"cd {shlex.quote(cwd)} && {command}" if cwd else command
-            command = f"sudo -u {shlex.quote(run_as_user)} -- bash -c {shlex.quote(inner)}"
+            # Apply explicit overrides after sudo resets the target user's environment.
+            command = shlex.join([
+                "sudo", "-u", run_as_user, "--", "env", "--",
+                *(f"{key}={value}" for key, value in (env or {}).items()),
+                "bash", "-c", inner,
+            ])
             cwd = None  # Popen runs as parent user — can't chdir into chmod 700 dirs
         master_fd, slave_fd = pty.openpty()
         try:
