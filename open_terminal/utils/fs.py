@@ -74,13 +74,15 @@ def line_range_offsets(text, start_line=None, end_line=None):
 
 
 def edit_patch(path: str, old: str, new: str) -> str | None:
-    """Return the edit from *old* to *new* as a unified diff, or None when it is longer than *new*.
+    """Return the edit from *old* to *new* as a unified diff.
 
-    The diff goes to the model too, so a near-total rewrite leaves it out; clients then
-    show the edit from the request instead.
+    The diff goes to the model too, so it is left out (None) when its lines take more space
+    than the old and new file together, as in a full rewrite. Clients then show the edit
+    from the request instead.
     """
-    patch = "\n".join(difflib.unified_diff(old.splitlines(), new.splitlines(), path, path, n=3, lineterm=""))
-    return patch if len(patch) <= len(new) else None
+    lines = list(difflib.unified_diff(old.splitlines(), new.splitlines(), path, path, n=3, lineterm=""))
+    changes = sum(len(line) + 1 for line in lines[2:] if not line.startswith("@@"))
+    return "\n".join(lines) if changes <= len(old) + len(new) else None
 
 
 def text_chunks(source):

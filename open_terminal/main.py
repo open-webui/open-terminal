@@ -1047,10 +1047,7 @@ async def write_file(http_request: Request, request: WriteRequest, fs: UserFS = 
     previous = None
     if not created:
         try:
-            # Lines removed from a file over twice the new size alone outgrow the new
-            # file, so its patch would be dropped; skip reading it.
-            if (await fs.stat(target))["size"] <= 2 * len(request.content.encode()):
-                previous = await fs.read_text(target)
+            previous = await fs.read_text(target)
         except (OSError, UnicodeDecodeError):
             pass
     try:
