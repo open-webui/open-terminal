@@ -94,7 +94,8 @@ def configured_agents(raw: str | None) -> dict[str, ConfiguredAcp]:
     for key, spec in entries.items():
         spec = spec if isinstance(spec, dict) else {}
         try:
-            command = shlex.split(spec.get("command") or "")
+            command = spec.get("command")
+            command = shlex.split(command) if isinstance(command, str) else []
         except (TypeError, ValueError):
             command = []
         if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,47}", str(key)) or not command:

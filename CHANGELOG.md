@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.17.19] - 2026-11-16
+
+### Added
+
+- Added Hermes, Antigravity, GitHub Copilot, Goose, and Qwen Code as coding agents you can use in Open WebUI chats. Install each agent and set up its login or model provider as the user running Open Terminal. Requires an updated Open WebUI.
+- You can now add other ACP-compatible coding agents, such as Factory Droid or Kiro, without changing Open Terminal's code. Set their names and launch commands in `OPEN_TERMINAL_ACP_AGENTS`, then restart Open Terminal; see the [agent setup instructions](README.md#coding-agents-in-chat). Requires an updated Open WebUI and agents that are already installed and set up. Choosing Auto still asks for approval unless Open WebUI has a separate approval reviewer configured.
+- Choosing Auto for tool approvals in Open WebUI now lets Claude Code and Grok review and approve routine actions themselves. Actions they send back for approval still go through Open WebUI's approval checks. Requires an updated Open WebUI and agent versions that support Auto mode.
+
 ## [0.17.18] - 2026-11-16
 
 ### Fixed
