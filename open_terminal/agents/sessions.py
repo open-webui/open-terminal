@@ -15,6 +15,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from fastapi import HTTPException, WebSocket
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 from open_terminal.env import sanitized_environ
@@ -41,6 +43,8 @@ class Start(BaseModel):
     model: str | None = Field(default=None, max_length=256)
     resume: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9_-]{1,128}$")
     instructions: str = ""
+    # The caller's tool permission mode; providers with their own auto review map Auto to it.
+    approval_mode: Literal["ask", "auto", "full"] | None = None
 
 
 def identity(fs):

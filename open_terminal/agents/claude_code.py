@@ -21,6 +21,9 @@ def arguments(options):
         args += ["--resume", options.resume]
     if options.instructions:
         args += ["--append-system-prompt", options.instructions]
+    if options.approval_mode == "auto":
+        # Claude's own reviewer approves routine actions; what it escalates still comes through stdio.
+        args += ["--permission-mode", "auto"]
     return args
 
 
