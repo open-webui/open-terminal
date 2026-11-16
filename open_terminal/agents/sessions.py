@@ -6,7 +6,10 @@ import asyncio
 import contextlib
 import errno
 import json
+import logging
 import os
+import re
+import shlex
 import shutil
 import signal
 import time
@@ -21,6 +24,7 @@ from pydantic import BaseModel, Field
 
 from open_terminal.env import sanitized_environ
 from . import (
+    acp,
     codex,
     claude_code,
     cursor,
@@ -31,7 +35,12 @@ from . import (
     pi,
     hermes,
     antigravity,
+    copilot,
+    goose,
+    qwen,
 )
+
+log = logging.getLogger(__name__)
 
 LIMIT = 16 * 1024 * 1024
 PROVIDERS = {
@@ -45,7 +54,59 @@ PROVIDERS = {
     "pi": pi,
     "hermes": hermes,
     "antigravity": antigravity,
+    "copilot": copilot,
+    "goose": goose,
+    "qwen": qwen,
 }
+
+
+class ConfiguredAcp:
+    """An ACP agent declared in OPEN_TERMINAL_ACP_AGENTS, run with plain ACP and no per-agent handling."""
+
+    COMMAND_ENV = ""
+
+    def __init__(self, name: str, command: list[str]):
+        self.NAME = name
+        self.BINARY, *self.args = command
+
+    def arguments(self, options):
+        return list(self.args)
+
+    async def discover(self, send, response, cwd):
+        return await acp.discover(send, response, cwd, auth_method=None)
+
+
+def configured_agents(raw: str | None) -> dict[str, ConfiguredAcp]:
+    """Read `{"id": {"name": ..., "command": ...}}`; ids get an `acp-` prefix so they never shadow built-ins."""
+    try:
+        entries = json.loads(raw or "{}")
+    except json.JSONDecodeError:
+        log.warning(
+            "OPEN_TERMINAL_ACP_AGENTS is not valid JSON; no extra agents loaded"
+        )
+        return {}
+    if not isinstance(entries, dict):
+        log.warning(
+            "OPEN_TERMINAL_ACP_AGENTS must be a JSON object; no extra agents loaded"
+        )
+        return {}
+    agents = {}
+    for key, spec in entries.items():
+        spec = spec if isinstance(spec, dict) else {}
+        try:
+            command = shlex.split(spec.get("command") or "")
+        except (TypeError, ValueError):
+            command = []
+        if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,47}", str(key)) or not command:
+            log.warning(
+                "Skipping ACP agent %r: it needs a lowercase id and a command", key
+            )
+            continue
+        agents[f"acp-{key}"] = ConfiguredAcp(str(spec.get("name") or key), command)
+    return agents
+
+
+PROVIDERS.update(configured_agents(os.environ.get("OPEN_TERMINAL_ACP_AGENTS")))
 sessions: dict[str, Session] = {}
 creation_lock = asyncio.Lock()
 

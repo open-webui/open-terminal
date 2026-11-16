@@ -101,6 +101,17 @@ Install and sign in to the agent CLIs as the user running Open Terminal. In a co
 | Pi | `pi --mode rpc` | `OPEN_TERMINAL_PI_COMMAND` |
 | Hermes | `hermes acp` | `OPEN_TERMINAL_HERMES_COMMAND` |
 | Antigravity | `agy acp` | `OPEN_TERMINAL_ANTIGRAVITY_COMMAND` |
+| GitHub Copilot | `copilot --acp` | `OPEN_TERMINAL_COPILOT_COMMAND` |
+| Goose | `goose acp` | `OPEN_TERMINAL_GOOSE_COMMAND` |
+| Qwen Code | `qwen --acp` | `OPEN_TERMINAL_QWEN_COMMAND` |
+
+Any other ACP agent, such as those in the [ACP Registry](https://agentclientprotocol.com/get-started/registry), can be added without a code change. List them in `OPEN_TERMINAL_ACP_AGENTS` as a JSON object of ids, display names and launch commands:
+
+```bash
+OPEN_TERMINAL_ACP_AGENTS='{"droid": {"name": "Factory Droid", "command": "droid exec --output-format acp-daemon"}, "kiro": {"name": "Kiro", "command": "kiro-cli acp"}}'
+```
+
+Each one appears as `acp-<id>` (for example `acp-droid`). Ids are lowercase letters, digits, `-` and `_`. These agents run with plain ACP: they get no agent-specific sign-in step, and in Auto they ask before acting instead of using their own reviewer. Because each entry is a command Open Terminal runs, it can only be set in Open Terminal's environment, not through its API.
 
 These adapters target current CLI protocols. ACP model discovery prefers session config options and also reads the native `models` field still advertised by current agents such as Gemini. Pi requires the current RPC `agent_settled` completion event and `--session-id` support. There are no hardcoded model lists. Log in through the CLI before using WebUI; the integration does not run interactive login flows. ACP agents execute their own filesystem and terminal tools in this environment. Pi follows its native tool policy; WebUI forwards extension confirmation dialogs but does not add a separate per-tool permission layer.
 

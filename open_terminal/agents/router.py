@@ -4,7 +4,6 @@ import asyncio
 import contextlib
 import json
 import time
-from typing import Literal
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket
@@ -51,21 +50,13 @@ def payload(session):
     include_in_schema=False,
 )
 async def create(
-    provider: Literal[
-        "codex",
-        "claude-code",
-        "cursor",
-        "grok",
-        "opencode",
-        "cline",
-        "gemini",
-        "pi",
-        "hermes",
-        "antigravity",
-    ],
+    provider: str,
     body: runtime.Start,
     request: Request,
 ):
+    # Built-ins plus any agents configured in OPEN_TERMINAL_ACP_AGENTS.
+    if provider not in runtime.PROVIDERS:
+        raise HTTPException(404, "Unknown agent provider")
     fs = get_filesystem(request)
     owner = request.headers.get("x-user-id") or "single"
     chat = request.headers.get("x-session-id", "")
