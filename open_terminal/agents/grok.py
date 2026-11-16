@@ -8,7 +8,9 @@ COMMAND_ENV = "OPEN_TERMINAL_GROK_COMMAND"
 
 
 def arguments(options):
-    return ["--no-auto-update", "agent", "stdio"]
+    # Grok's own reviewer approves routine actions in Auto; it escalates the rest over ACP.
+    mode = ["--permission-mode", "auto"] if options.approval_mode == "auto" else []
+    return ["--no-auto-update", *mode, "agent", "stdio"]
 
 
 async def discover(send, response, cwd):
