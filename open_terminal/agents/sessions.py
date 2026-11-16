@@ -117,6 +117,10 @@ class Start(BaseModel):
     cwd: str | None = None
     model: str | None = Field(default=None, max_length=256)
     resume: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9_-]{1,128}$")
+    # Continue `resume` from this native turn; later turns are left out.
+    resume_at: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9_-]{1,128}$")
+    # Continue in a new conversation copied from `resume`, leaving the original as it was.
+    fork: bool = False
     instructions: str = ""
     # The caller's tool permission mode; providers with their own auto review map Auto to it.
     approval_mode: Literal["ask", "auto", "full"] | None = None

@@ -40,6 +40,9 @@ def payload(session):
         "agent": session.provider,
         "cwd": session.cwd,
         "running": session.process.returncode is None,
+        # Echoed so callers can tell this server forks rather than resumes.
+        "resume_at": session.options.resume_at,
+        "fork": session.options.fork,
         "protocol_version": 1,
     }
 

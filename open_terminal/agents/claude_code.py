@@ -19,6 +19,10 @@ def arguments(options):
         args += ["--model", options.model]
     if options.resume:
         args += ["--resume", options.resume]
+        if options.resume_at:
+            args += ["--resume-session-at", options.resume_at]
+        if options.fork:
+            args += ["--fork-session"]
     if options.instructions:
         args += ["--append-system-prompt", options.instructions]
     if options.approval_mode == "auto":
