@@ -12,6 +12,7 @@ so that files belong to the provisioned user, not the server process.
 """
 
 import asyncio
+import difflib
 import os
 import io
 import json
@@ -70,6 +71,16 @@ def line_range_offsets(text, start_line=None, end_line=None):
             if number >= last_boundary:
                 break
     return start, end
+
+
+def edit_patch(path: str, old: str, new: str) -> str | None:
+    """Return the edit from *old* to *new* as a unified diff, or None when it is longer than *new*.
+
+    The diff goes to the model too, so a near-total rewrite leaves it out; clients then
+    show the edit from the request instead.
+    """
+    patch = "\n".join(difflib.unified_diff(old.splitlines(), new.splitlines(), path, path, n=3, lineterm=""))
+    return patch if len(patch) <= len(new) else None
 
 
 def text_chunks(source):
@@ -207,9 +218,8 @@ class UserFS:
     async def _chown(self, path: str) -> None:
         """Fix ownership of *path* to the provisioned user.
 
-        Also sets group-write permission so the server process (which is
-        in the provisioned user's group) can overwrite the file on
-        subsequent writes.
+        Also sets group read/write permissions so the server process (which
+        is in the provisioned user's group) can read and overwrite the file.
         """
         if self.username:
             await asyncio.to_thread(
@@ -219,7 +229,7 @@ class UserFS:
             )
             await asyncio.to_thread(
                 subprocess.run,
-                ["sudo", "chmod", "g+w", path],
+                ["sudo", "chmod", "g+rw", path],
                 check=True, capture_output=True,
             )
 

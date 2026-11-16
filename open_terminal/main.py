@@ -37,7 +37,7 @@ from open_terminal.dependencies import get_filesystem, matches_api_key, verify_a
 from open_terminal.env import API_KEY, BINARY_FILE_MIME_PREFIXES, CORS_ALLOWED_ORIGINS, ENABLE_BROWSER, ENABLE_DESKTOP, ENABLE_NOTEBOOKS, ENABLE_SYSTEM_PROMPT, ENABLE_TERMINAL, EXECUTE_DESCRIPTION, EXECUTE_TIMEOUT, FILE_BROWSER_ROOT, LOG_DIR, MAX_TERMINAL_SESSIONS, MULTI_USER, OPEN_TERMINAL_INFO, PROCESS_LOG_RETENTION, SESSION_CWD_TTL, SYSTEM_PROMPT, TERMINAL_TERM
 from open_terminal.env import sanitized_environ
 from open_terminal.utils.runner import PipeRunner, ProcessRunner, create_runner, read_pty, write_pty, PtyRunner
-from open_terminal.utils.fs import UserFS, FullFileResponse as FileResponse, TemporaryFileResponse, text_file_response, line_range_offsets
+from open_terminal.utils.fs import UserFS, FullFileResponse as FileResponse, TemporaryFileResponse, edit_patch, text_file_response, line_range_offsets
 from open_terminal.utils.limits import (CHUNK_SIZE, NormalizeNullQueryMiddleware, run_io, run_worker)
 from open_terminal.utils.file_compare import CompareRequest, run_comparison
 from open_terminal.utils.git import GitRepository
@@ -1043,11 +1043,27 @@ async def write_file(http_request: Request, request: WriteRequest, fs: UserFS = 
     session_id = http_request.headers.get("x-session-id")
     session_cwd = _get_session_cwd(session_id, fs) if session_id else None
     target = fs.resolve_path(request.path, cwd=session_cwd)
+    created = not await fs.exists(target)
+    previous = None
+    if not created:
+        try:
+            # Lines removed from a file over twice the new size alone outgrow the new
+            # file, so its patch would be dropped; skip reading it.
+            if (await fs.stat(target))["size"] <= 2 * len(request.content.encode()):
+                previous = await fs.read_text(target)
+        except (OSError, UnicodeDecodeError):
+            pass
     try:
         await fs.write(target, request.content)
     except (OSError, subprocess.CalledProcessError) as e:
         raise HTTPException(status_code=400, detail=str(e))
-    return {"path": target, "size": len(request.content.encode())}
+    result = {"path": target, "size": len(request.content.encode()), "created": created}
+    # A new file's diff is the content itself, which the caller already has.
+    if previous is not None:
+        patch = await run_io(edit_patch, target, previous, request.content)
+        if patch is not None:
+            result["patch"] = patch
+    return result
 
 
 @app.post(
@@ -1133,6 +1149,7 @@ async def replace_file_content(http_request: Request, request: ReplaceRequest, f
         content = await fs.read_text(target)
     except OSError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    original = content
 
     for chunk in request.replacements:
         if chunk.start_line or chunk.end_line:
@@ -1164,7 +1181,11 @@ async def replace_file_content(http_request: Request, request: ReplaceRequest, f
     except OSError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    return {"path": target, "size": len(content.encode())}
+    result = {"path": target, "size": len(content.encode())}
+    patch = await run_io(edit_patch, target, original, content)
+    if patch is not None:
+        result["patch"] = patch
+    return result
 
 
 @app.get(
