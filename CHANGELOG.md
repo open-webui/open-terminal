@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.17.20] - 2026-11-16
+
+### Added
+
+- File edits made by the assistant can now show the added and removed lines, with line numbers, in chat. This also works when the assistant saves over an existing text file. Requires an updated Open WebUI. Full rewrites may show the replacement text instead of a line-by-line comparison.
+
+### Fixed
+
+- Fixed new uploads becoming unreadable in multi-user setups, causing file reads, previews, and later edits to fail with permission errors. Files uploaded before this update may still need their permissions repaired.
+
 ## [0.17.19] - 2026-11-16
 
 ### Added

@@ -48,11 +48,7 @@ pip install open-terminal
 open-terminal run --host 0.0.0.0 --port 8000
 ```
 
-Linux defaults to a separate XFCE desktop. Select GNOME explicitly with `--desktop-environment gnome`. GNOME supports Wayland-only systems such as Ubuntu 26.04; it uses noVNC when the optional `x11vnc` package is installed and the frame viewer otherwise. XFCE and older GNOME X11 sessions use noVNC. See [desktop setup](docs/configuration.md#desktop) for required packages. Keep your existing display manager if prompted during installation. Docker `latest` includes XFCE and its dependencies. Sharing your actual logged-in desktop requires `--desktop-mode host`.
-
-For GNOME Wayland audio, install `pipewire-pulse pulseaudio-utils ffmpeg`, restart Open Terminal, and click the viewer's speaker button to unmute. Audio is optional and works with either viewer.
-
-Host desktop audio is also supported on Linux, macOS 13+, and Windows. Install FFmpeg and follow the [host audio setup](docs/configuration.md#desktop), then unmute in the viewer to share system sound.
+Linux defaults to a separate XFCE desktop. Select GNOME explicitly with `--desktop-environment gnome`. See [desktop setup](docs/configuration.md#desktop) for required packages. Keep your existing display manager if prompted during installation. Docker `latest` includes XFCE and its dependencies. Sharing your actual logged-in desktop requires `--desktop-mode host`.
 
 If no API key is configured, one is generated and printed at startup. For Docker, find it with `docker logs open-terminal`.
 
@@ -111,16 +107,6 @@ Any other ACP agent, such as those in the [ACP Registry](https://agentclientprot
 OPEN_TERMINAL_ACP_AGENTS='{"droid": {"name": "Factory Droid", "command": "droid exec --output-format acp-daemon"}, "kiro": {"name": "Kiro", "command": "kiro-cli acp"}}'
 ```
 
-Each one appears as `acp-<id>` (for example `acp-droid`). Ids are lowercase letters, digits, `-` and `_`. These agents run with plain ACP: they get no agent-specific sign-in step, and in Auto they ask before acting instead of using their own reviewer. Because each entry is a command Open Terminal runs, it can only be set in Open Terminal's environment, not through its API.
-
-These adapters target current CLI protocols. ACP model discovery prefers session config options and also reads the native `models` field still advertised by current agents such as Gemini. Pi requires the current RPC `agent_settled` completion event and `--session-id` support. There are no hardcoded model lists. Log in through the CLI before using WebUI; the integration does not run interactive login flows. ACP agents execute their own filesystem and terminal tools in this environment. Pi follows its native tool policy; WebUI forwards extension confirmation dialogs but does not add a separate per-tool permission layer.
-
-ACP history replay is suppressed when resuming an already saved WebUI conversation. If an agent does not advertise native resume, the next turn receives the saved conversation text instead. Agent-specific editor extensions beyond ACP's standard permissions and form elicitation are not implemented.
-
-The same flow works through Tether's saved connection and outbound relay; the hosted server does not need to reach the local machine's IP. All three applications need the agent-capable changes. Provider CLIs and their login credentials stay in the terminal environment; no provider SDK is required in WebUI. Executable overrides above accept a path to the installed CLI.
-
-The authenticated `/agents` catalog advertises installed providers and models. `POST /agents/{provider}/sessions` starts an owned process; `/agents/sessions/{id}` inspects or deletes it. Its `/connect` WebSocket carries native JSONL inside sequenced input/output frames with acknowledgements and replay. Sessions require `X-User-Id` and `X-Session-Id` ownership headers (single-user clients may omit `X-User-Id`). WebSocket clients send an initial `{ "type": "auth", "token": "<API key>", "cursor": 0 }` frame. Agent turns use a single backend task and resume the provider's saved conversation on the next turn; branching/regeneration requires a new chat.
-
 ### Server settings
 
 Configure Open Terminal with CLI flags, environment variables, or a TOML file. CLI flags take precedence.
@@ -141,6 +127,10 @@ For separate containers per user, use [Terminals](https://github.com/open-webui/
 ## Support
 
 [Open an issue](https://github.com/open-webui/open-terminal/issues) for bugs or setup problems. Report vulnerabilities privately through [GitHub Security Advisories](https://github.com/open-webui/open-terminal/security/advisories/new).
+
+## Contributing
+
+We don't accept pull requests except in exceptional cases. [Open an issue](https://github.com/open-webui/open-terminal/issues) describing the bug or idea first.
 
 ## Star History
 
