@@ -99,6 +99,8 @@ Install and sign in to the agent CLIs as the user running Open Terminal. In a co
 | Cline | `cline --acp` | `OPEN_TERMINAL_CLINE_COMMAND` |
 | Gemini CLI | `gemini --acp` | `OPEN_TERMINAL_GEMINI_COMMAND` |
 | Pi | `pi --mode rpc` | `OPEN_TERMINAL_PI_COMMAND` |
+| Hermes | `hermes acp` | `OPEN_TERMINAL_HERMES_COMMAND` |
+| Antigravity | `agy acp` | `OPEN_TERMINAL_ANTIGRAVITY_COMMAND` |
 
 These adapters target current CLI protocols. ACP model discovery prefers session config options and also reads the native `models` field still advertised by current agents such as Gemini. Pi requires the current RPC `agent_settled` completion event and `--session-id` support. There are no hardcoded model lists. Log in through the CLI before using WebUI; the integration does not run interactive login flows. ACP agents execute their own filesystem and terminal tools in this environment. Pi follows its native tool policy; WebUI forwards extension confirmation dialogs but does not add a separate per-tool permission layer.
 

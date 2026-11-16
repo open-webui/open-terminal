@@ -52,7 +52,16 @@ def payload(session):
 )
 async def create(
     provider: Literal[
-        "codex", "claude-code", "cursor", "grok", "opencode", "cline", "gemini", "pi"
+        "codex",
+        "claude-code",
+        "cursor",
+        "grok",
+        "opencode",
+        "cline",
+        "gemini",
+        "pi",
+        "hermes",
+        "antigravity",
     ],
     body: runtime.Start,
     request: Request,

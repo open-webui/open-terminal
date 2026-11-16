@@ -20,7 +20,18 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from open_terminal.env import sanitized_environ
-from . import codex, claude_code, cursor, grok, opencode, cline, gemini, pi
+from . import (
+    codex,
+    claude_code,
+    cursor,
+    grok,
+    opencode,
+    cline,
+    gemini,
+    pi,
+    hermes,
+    antigravity,
+)
 
 LIMIT = 16 * 1024 * 1024
 PROVIDERS = {
@@ -32,6 +43,8 @@ PROVIDERS = {
     "cline": cline,
     "gemini": gemini,
     "pi": pi,
+    "hermes": hermes,
+    "antigravity": antigravity,
 }
 sessions: dict[str, Session] = {}
 creation_lock = asyncio.Lock()
