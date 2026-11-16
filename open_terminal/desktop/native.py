@@ -4,6 +4,7 @@ Linux/Wayland host capture and control use the portal backend.
 """
 
 import asyncio
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 import ctypes
 import contextlib
@@ -142,6 +143,8 @@ class NativeDesktop:
 
         self.input = pyautogui
         self.input.PAUSE = 0
+        if sys.platform == "darwin":
+            self.input.DARWIN_CATCH_UP_TIME = 0.001
         # A remote viewer must be able to use screen corners, like the VNC viewer.
         self.input.FAILSAFE = False
         self.capture = mss.mss()
@@ -205,13 +208,19 @@ class NativeDesktop:
         )
         return image.resize((self.width, self.height), Image.Resampling.BILINEAR)
 
-    def position(self, x, y):
+    def position(self, x, y, buttons=()):
         if not (0 <= x < self.width and 0 <= y < self.height):
             raise ValueError("Coordinates are outside the current desktop screenshot")
-        self.input.moveTo(
+        target = (
             self.origin[0] + round(x * self.screen_width / self.width),
             self.origin[1] + round(y * self.screen_height / self.height),
         )
+        if sys.platform == "darwin" and buttons:
+            # macOS requires drag events, even when mouseDown has already been sent.
+            button = next(b for b in ("left", "right", "middle") if b in buttons)
+            self.input.dragTo(*target, button=button, mouseDownUp=False)
+        else:
+            self.input.moveTo(*target)
 
     def paste(self, text):
         import pyperclip
@@ -229,7 +238,7 @@ class NativeDesktop:
 
     def handle(self, message, keys, buttons):
         if message.type == "mouse":
-            self.position(message.x, message.y)
+            self.position(message.x, message.y, buttons)
             for flag, button in ((1, "left"), (2, "right"), (4, "middle")):
                 down = bool(message.buttons & flag)
                 if down and button not in buttons:
@@ -267,7 +276,7 @@ class NativeDesktop:
         elif body.action == "drag":
             try:
                 self.input.mouseDown(button=body.button)
-                self.position(body.to_x, body.to_y)
+                self.position(body.to_x, body.to_y, (body.button,))
             finally:
                 self.input.mouseUp(button=body.button)
         elif body.action == "scroll":
@@ -300,6 +309,8 @@ class NativeDesktop:
         ready = FrameWindow()
         keys, buttons = set(), set()
         encoder = Frames()
+        pending = deque()
+        input_ready = asyncio.Event()
 
         async def frames():
             while True:
@@ -312,15 +323,45 @@ class NativeDesktop:
                 await asyncio.sleep(max(0, 1 / 30 - (time.monotonic() - start)))
 
         async def commands():
+            received_buttons = 0
             while True:
                 message = Input.model_validate(await ws.receive_json())
                 if message.type == "frameAck":
                     ready.ack(message.window)
                 else:
-                    async with self.actions:
-                        await self.work(self.handle, message, keys, buttons)
+                    motion = (
+                        message.type == "mouse"
+                        and message.buttons == received_buttons
+                        and not message.deltaX
+                        and not message.deltaY
+                    )
+                    if message.type == "mouse":
+                        received_buttons = message.buttons
+                    elif message.type in ("release", "paste"):
+                        received_buttons = 0
+                    # Only replace consecutive moves, never a button edge, key or scroll.
+                    if motion and pending and pending[-1][1]:
+                        pending[-1] = (message, motion)
+                    else:
+                        if len(pending) >= 256:
+                            raise ValueError("Desktop input queue is full")
+                        pending.append((message, motion))
+                    input_ready.set()
 
-        tasks = [asyncio.create_task(frames()), asyncio.create_task(commands())]
+        async def inputs():
+            while True:
+                await input_ready.wait()
+                message, _ = pending.popleft()
+                if not pending:
+                    input_ready.clear()
+                async with self.actions:
+                    await self.work(self.handle, message, keys, buttons)
+
+        tasks = [
+            asyncio.create_task(frames()),
+            asyncio.create_task(commands()),
+            asyncio.create_task(inputs()),
+        ]
         try:
             done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
             for task in done:
