@@ -1,0 +1,15 @@
+[project]
+name = "open-machine"
+version = "0.1.0"
+description = "Alias package for open-terminal"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+dependencies = ["open-terminal"]
+
+[project.scripts]
+open-machine = "open_machine.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
