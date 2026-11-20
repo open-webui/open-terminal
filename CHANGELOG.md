@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- `GET /browser/tabs` now includes each tab's view token, so clients (such as the Open WebUI UI) can rebuild `/browser/view/{sid}/{token}` URLs for tabs created outside the current page session, e.g. by an assistant. The token is the same one the create and get-session responses already return.
+
+
 ## [0.17.20] - 2026-11-16
 
 ### Added
