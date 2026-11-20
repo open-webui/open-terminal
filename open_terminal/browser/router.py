@@ -563,8 +563,11 @@ async def image(chrome):
 )
 async def tabs(request: Request):
     """List this user's open browser tabs in this chat, including their session IDs,
-    URLs, titles, and modes. The selected tab is the active browser tab, or the
-    last-used browser tab when hidden.
+    view tokens, URLs, titles, and modes. The selected tab is the active browser tab,
+    or the last-used browser tab when hidden. The view token is the same one returned
+    when the tab was created; it lets callers (e.g. the Open WebUI UI, hydrating its
+    tab strip) build /browser/view/{sid}/{token} URLs for tabs they did not create
+    in this page session.
     """
     candidates = visible_sessions(request)
     for session in candidates:
@@ -577,6 +580,7 @@ async def tabs(request: Request):
         "tabs": [
             {
                 "session_id": s.id,
+                "token": s.token,
                 "url": s.url,
                 "title": s.title,
                 "mode": s.mode,
