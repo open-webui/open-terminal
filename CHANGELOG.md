@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- Commands run by the assistant now default to `TERM=xterm-256color` when the server environment has no `TERM`, so screen-oriented programs like `less`, `vim`, and `git log` no longer print "WARNING: terminal is not fully functional". An explicit `TERM` from the caller or the `OPEN_TERMINAL_TERM` setting still takes precedence.
+
 ## [0.17.20] - 2026-11-16
 
 ### Added
