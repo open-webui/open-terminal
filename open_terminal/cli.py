@@ -2,7 +2,6 @@ import os
 from importlib.metadata import version
 
 import click
-import uvicorn
 
 
 @click.group()
@@ -218,10 +217,31 @@ def run(
     if cftunnel:
         run_server(binary, host, port, loop=UVICORN_LOOP, **uvicorn_options)
         return
+    import uvicorn
+
     uvicorn.run(
         "open_terminal.main:app", host=host, port=port, loop=UVICORN_LOOP,
         **uvicorn_options,
     )
+
+
+@main.command()
+@click.argument("path")
+def bridge(path: str):
+    """Relay stdin/stdout to a local --ipc socket.
+
+    For clients that reach this machine over SSH when the server blocks Unix
+    socket forwarding: run `open-terminal bridge <socket>` over SSH and speak
+    HTTP over its stdin/stdout.
+    """
+    if os.name == "nt":
+        raise click.UsageError("bridge supports Unix sockets only.")
+    if not os.path.isabs(path):
+        raise click.UsageError("PATH must be an absolute Unix socket path.")
+
+    from open_terminal.bridge import relay
+
+    raise SystemExit(relay(path))
 
 
 @main.command()
