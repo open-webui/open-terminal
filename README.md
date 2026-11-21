@@ -74,6 +74,16 @@ it binds to `127.0.0.1` unless `--host 0.0.0.0` is explicitly supplied.
 Use port `0` to select an available port. The bind address and port are logged at startup.
 With `--ipc`, `--host` requires an explicit `--port`; `--cftunnel` is not supported.
 
+To reach an IPC server on another machine over SSH, forward to the socket. If that machine's SSH server
+blocks socket forwarding (`AllowStreamLocalForwarding no`), run `open-terminal bridge` over SSH instead.
+It relays its stdin and stdout to the socket, so the client speaks HTTP over the SSH session:
+
+```bash
+ssh user@host open-terminal bridge /path/to/private-directory/api.sock
+```
+
+`bridge` supports Unix sockets only.
+
 ## Connect to Open WebUI
 
 1. Open **Settings → Admin → Integrations → Open Terminal**.

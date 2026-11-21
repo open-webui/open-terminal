@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.17.21] - 2026-11-21
+
+### Added
+
+- Added support for continuing Claude Code chats from an earlier reply when you regenerate a response or edit a previous message. Forked chats can continue in a separate copy of the Claude conversation. Requires an updated Open WebUI. Going back in a chat does not undo changes to files.
+- Added the `open-machine` alias package. Install it to use `open-machine` with the same commands and options as `open-terminal`.
+- Added `open-terminal bridge <socket>` so clients can connect over SSH even when the remote machine blocks socket forwarding. It connects to an already running `--ipc` server on Linux or macOS, without opening a network port. See the [SSH connection instructions](README.md#private-local-ipc).
+
+### Changed
+
+- Help, version checks, and the new bridge command start faster.
+
 ## [0.17.20] - 2026-11-16
 
 ### Added
