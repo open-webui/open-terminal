@@ -244,6 +244,25 @@ def bridge(path: str):
     raise SystemExit(relay(path))
 
 
+@main.command("install-deps")
+@click.argument("features", nargs=-1, type=click.Choice(["desktop", "browser"]))
+@click.option("--dry-run", is_flag=True, help="Print what would be installed without installing it.")
+@click.option("--yes", is_flag=True, help="Install without asking.")
+def install_deps(features: tuple[str, ...], dry_run: bool, yes: bool):
+    """Install the system packages for Desktop and Chrome tabs.
+
+    Installs both unless FEATURES names one. Supports Debian and Ubuntu and
+    needs root or sudo. Restart Open Terminal afterwards.
+    """
+    from open_terminal import config
+
+    config.init()
+
+    from open_terminal.utils import packages
+
+    raise SystemExit(packages.install(features or packages.FEATURES, dry_run=dry_run, yes=yes))
+
+
 @main.command()
 @click.option(
     "--transport",
