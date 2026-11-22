@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.17.22] - 2026-11-22
+
+### Added
+
+- Added `open-terminal install-deps` to install the programs needed for the XFCE desktop, desktop sound, and Chrome tabs on Debian and Ubuntu. Add `desktop` or `browser` to install just one. It skips packages already installed and asks before installing; administrator access is required. Restart Open Terminal afterwards. Debian uses Chromium; Ubuntu uses Google Chrome, with automatic browser installation available only on x86-64 machines.
+- Use `open-terminal install-deps --dry-run` to preview the installation command, or `--yes` to skip confirmation in scripts. You can also install extra programs, for example `open-terminal install-deps --package libreoffice`. See the [setup instructions](docs/configuration.md#desktop).
+
 ## [0.17.21] - 2026-11-21
 
 ### Added
