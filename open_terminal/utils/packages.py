@@ -6,6 +6,7 @@ set the Docker image ships through apt, on Debian and Ubuntu.
 
 import os
 import platform
+import re
 import shlex
 import shutil
 import subprocess
@@ -59,12 +60,16 @@ def ubuntu():
         return False
 
 
-def install(features, *, dry_run=False, yes=False):
-    """Install what *features* still lack. Returns the process exit code."""
+def install(features, extra=(), *, dry_run=False, yes=False):
+    """Install what *features* still lack, plus any *extra* apt packages. Returns the process exit code."""
     if sys.platform != "linux" or not shutil.which("apt-get"):
         raise click.ClickException(f"install-deps supports Debian and Ubuntu. For other systems see {DOCS}")
-    features = list(dict.fromkeys(features))
-    packages, deb = [], None
+    for name in extra:
+        # Names only: anything else could reach apt as an option, run as root.
+        if not re.fullmatch(r"[a-z0-9][a-z0-9+.-]*", name):
+            raise click.BadParameter(f"{name!r} is not a package name.", param_hint="--package")
+    features, extra = list(dict.fromkeys(features)), list(dict.fromkeys(extra))
+    packages, deb = missing(extra), None
     for feature in features:
         wanted = APT[feature]
         if feature == "browser":
@@ -81,7 +86,7 @@ def install(features, *, dry_run=False, yes=False):
             wanted = (*wanted, *FONTS)
         packages += missing(wanted)
     if not packages and not deb:
-        return report(features)
+        return report(features, extra)
 
     root = os.geteuid() == 0
     if not root and not shutil.which("sudo"):
@@ -118,12 +123,13 @@ def install(features, *, dry_run=False, yes=False):
     if code:
         click.echo("Install failed. Run the command above yourself, then restart Open Terminal.", err=True)
         return code
-    click.echo("Restart Open Terminal to use the new features.")
-    return report(features)
+    if features:
+        click.echo("Restart Open Terminal to use the new features.")
+    return report(features, extra)
 
 
-def report(features):
-    ok = True
+def report(features, extra=()):
+    ok = not missing(extra)
     for feature in features:
         if ready(feature):
             click.echo(f"{feature}: ready")

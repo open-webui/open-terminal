@@ -246,13 +246,15 @@ def bridge(path: str):
 
 @main.command("install-deps")
 @click.argument("features", nargs=-1, type=click.Choice(["desktop", "browser"]))
+@click.option("--package", "extra", multiple=True, help="Also install this apt package. Repeat for more.")
 @click.option("--dry-run", is_flag=True, help="Print what would be installed without installing it.")
 @click.option("--yes", is_flag=True, help="Install without asking.")
-def install_deps(features: tuple[str, ...], dry_run: bool, yes: bool):
+def install_deps(features: tuple[str, ...], extra: tuple[str, ...], dry_run: bool, yes: bool):
     """Install the system packages for Desktop and Chrome tabs.
 
-    Installs both unless FEATURES names one. Supports Debian and Ubuntu and
-    needs root or sudo. Restart Open Terminal afterwards.
+    Installs both unless FEATURES names one, or only --package is given.
+    Supports Debian and Ubuntu and needs root or sudo. Restart Open Terminal
+    afterwards.
     """
     from open_terminal import config
 
@@ -260,7 +262,8 @@ def install_deps(features: tuple[str, ...], dry_run: bool, yes: bool):
 
     from open_terminal.utils import packages
 
-    raise SystemExit(packages.install(features or packages.FEATURES, dry_run=dry_run, yes=yes))
+    features = features or (() if extra else packages.FEATURES)
+    raise SystemExit(packages.install(features, extra, dry_run=dry_run, yes=yes))
 
 
 @main.command()

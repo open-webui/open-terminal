@@ -51,7 +51,7 @@ open-terminal run --host 0.0.0.0 --port 8000
 The [Open Machine alias package](packages/open-machine) provides the same CLI as
 `open-machine` and depends on `open-terminal`.
 
-Linux defaults to a separate XFCE desktop. Select GNOME explicitly with `--desktop-environment gnome`. See [desktop setup](docs/configuration.md#desktop) for required packages. Keep your existing display manager if prompted during installation. Docker `latest` includes XFCE and its dependencies. Sharing your actual logged-in desktop requires `--desktop-mode host`.
+Linux defaults to a separate XFCE desktop. Select GNOME explicitly with `--desktop-environment gnome`. On Debian and Ubuntu, `open-terminal install-deps` installs the packages for the desktop and Chrome tabs; see [desktop setup](docs/configuration.md#desktop) for other systems. Keep your existing display manager if prompted during installation. Docker `latest` includes XFCE and its dependencies. Sharing your actual logged-in desktop requires `--desktop-mode host`.
 
 If no API key is configured, one is generated and printed at startup. For Docker, find it with `docker logs open-terminal`.
 

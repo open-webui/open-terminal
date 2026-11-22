@@ -50,6 +50,23 @@ open-terminal run                             # XFCE (default)
 open-terminal run --desktop-environment gnome # Explicit GNOME
 ```
 
+On **Debian and Ubuntu**, one command installs what the default XFCE desktop and
+Chrome tabs need:
+
+```sh
+open-terminal install-deps                       # Desktop and Chrome tabs
+open-terminal install-deps desktop               # Only one of them
+open-terminal install-deps --dry-run             # Show the command without running it
+open-terminal install-deps --package libreoffice # Any other apt package
+```
+
+It skips what is already installed, shows the command and asks before running
+it, and uses `sudo` when not run as root. Pass `--yes` to skip the question, for
+example from a script; without a terminal, `sudo` reads its password from
+standard input. On Ubuntu, Chrome tabs get Google Chrome's own package (x86-64
+only), because Ubuntu ships Chromium only as a snap. Restart Open Terminal
+afterwards. GNOME, host mode, and other distributions need the packages below.
+
 On **Ubuntu 26.04 and other Wayland-only GNOME installations**, install:
 
 ```sh
