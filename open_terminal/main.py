@@ -1159,7 +1159,16 @@ async def replace_file_content(http_request: Request, request: ReplaceRequest, f
         if count == 0:
             raise HTTPException(
                 status_code=400,
-                detail=f"Target string not found: {chunk.target[:100]!r}",
+                detail=(
+                    f"Target string not found: {chunk.target[:100]!r}. "
+                    "`target` must be an exact substring copied from the file's "
+                    "current content. Re-read the file if you're not sure of "
+                    "the exact text. To ADD new content (e.g. a new section) "
+                    "rather than replace existing text, set `target` to an "
+                    "existing line to anchor on (e.g. the heading above or the "
+                    "line you want to follow) and include that same line at the "
+                    "start of `replacement`, followed by the new content."
+                ),
             )
         if count > 1 and not chunk.allow_multiple:
             raise HTTPException(
