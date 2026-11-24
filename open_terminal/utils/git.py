@@ -5,6 +5,7 @@ import os
 import signal
 import json
 import sys
+from urllib.parse import urlsplit
 
 from fastapi import HTTPException
 
@@ -286,7 +287,32 @@ class GitRepository:
         if view == "list":
             # `search` tells the client these items were already searched by GitHub.
             return {"items": json.loads(output), "search": search.strip()}
-        return {"diff": output} if view == "diff" else json.loads(output)
+        if view == "diff":
+            return {"diff": output}
+        pull_request = json.loads(output)
+        pull_request["reviewComments"] = await self.review_comments(pull_request["url"], number)
+        return pull_request
+
+    async def review_comments(self, url, number):
+        """The comments of unresolved review threads, which `gh pr view` leaves out."""
+        parts = urlsplit(url)
+        owner, name = parts.path.strip("/").split("/")[:2]
+        query = (
+            "query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){"
+            "reviewThreads(last:100){nodes{isResolved path line startLine comments(first:50){nodes{id body author{login}}}}}}}}"
+        )
+        _, output, _ = await self.run(
+            "api", "graphql", "--hostname", parts.netloc, "-f", f"query={query}",
+            "-f", f"owner={owner}", "-f", f"name={name}", "-F", f"number={number}", program="gh",
+        )
+        threads = json.loads(output)["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"]
+        return [
+            # An outdated thread has no line in the current code.
+            {**comment, "path": thread["path"], "line": thread["line"], "startLine": thread["startLine"]}
+            for thread in threads
+            if not thread["isResolved"]
+            for comment in thread["comments"]["nodes"]
+        ]
 
     async def pull_request_action(self, action, number=0, title="", body="", base="", head="", draft=False, method="squash"):
         if not await self.detect():

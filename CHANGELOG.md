@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.18.1] - 2026-11-25
+
+### Fixed
+
+- Fixed coding-agent chats refusing new messages with "Another agent turn is running in this conversation" for up to an hour after Open WebUI crashes. Once the old agent has been disconnected for at least 10 seconds, sending a new message stops it and starts a new turn. The interrupted reply does not resume automatically; file changes already made by the agent remain.
+- Pull requests now include unresolved comments left on lines of code, with their file and line, so they appear in Activity and reach the agent when you use Address feedback. Comments on code that has since changed show only their file. Requires an updated Open WebUI.
+
 ## [0.18.0] - 2026-11-24
 
 ### Added
