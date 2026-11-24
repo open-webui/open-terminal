@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.17.23] - 2026-11-24
+
+### Added
+
+- You can now open the same terminal in multiple windows or devices within the same user account and chat. Each viewer sees the output and can type. The terminal size follows whichever viewer last typed or resized it. A slow viewer can skip older output without holding up the others.
+
+### Changed
+
+- Terminal shells no longer stop five minutes after you disconnect. Builds, development servers, and other programs started in the terminal keep running when you close the browser or lose your connection. Return to the same chat to reconnect. Closing the terminal itself, exiting the shell, or stopping Open Terminal still ends the session.
+- Removed the default limit of 16 terminal shells per server. Administrators can still set a limit with `OPEN_TERMINAL_MAX_SESSIONS`; leave it unset or empty for no limit. Existing numeric limits still apply, and `0` allows no shells.
+
 ## [0.17.22] - 2026-11-22
 
 ### Added

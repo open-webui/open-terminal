@@ -223,7 +223,7 @@ async def lifespan(app):
 app = FastAPI(
     lifespan=lifespan,
     title="Open Terminal",
-    description="A remote computer API.",
+    description="A remote machine API.",
     version=_pkg_version("open-terminal"),
 )
 app.include_router(agent_router)
@@ -2310,6 +2310,8 @@ if ENABLE_TERMINAL:
             chat_id=request.headers.get("x-session-id", ""),
             output=bytearray(),
             viewers=[],
+            owner=None,
+            seen=0,
             input_lock=asyncio.Lock(),
             output_offset=0,
             output_changed=asyncio.Event(),
@@ -2368,6 +2370,15 @@ if ENABLE_TERMINAL:
             session["user_id"] == request.headers.get("x-user-id", "")
             and session["chat_id"] == request.headers.get("x-session-id", "")
         )
+
+
+    # Sent by the terminal itself, not typed. Modified F3 looks like a cursor report on row 1.
+    _TERMINAL_REPLY = re.compile(
+        rb"(?:\x1b\[(?!1;[2-8]R)[?>=]?[0-9;]+(?:[cnRt]|\$y)|\x1b\[\?[0-9]+u"
+        rb"|\x1b\](?:4;[0-9]+|1[0-9]);rgba?:[^\x07\x1b]*(?:\x07|\x1b\\)"
+        rb"|\x1bP[^\x1b]*\x1b\\)+"
+    )
+    _TERMINAL_FOCUS = re.compile(rb"\x1b\[[IO]")
 
 
     def _set_terminal_active(session: dict, viewer: dict, active: bool):
@@ -2496,7 +2507,8 @@ if ENABLE_TERMINAL:
         confirms ``{"type": "flow_control"}``. Acknowledge consumed output with
         ``{"type": "ack", "cursor": <output end>}`` to release more data.
         Several viewers can attach: all receive the output and can type, and the
-        last to type or resize sets the terminal size. Reads pause when every
+        last to type or resize sets the size and answers terminal queries, except
+        queries in output a viewer has already seen. Reads pause when every
         acknowledging viewer falls behind; one slower than the rest skips to the
         retained history. Detached shells keep running with bounded history.
 
@@ -2555,10 +2567,14 @@ if ENABLE_TERMINAL:
         acknowledged = max(cursor, session["output_offset"] - len(session["output"]))
         viewer = {"ack": acknowledged if flow_control else None, "active": False, "size": None, "tasks": ()}
 
-        def _apply_size():
+        def _take_over():
+            session["owner"] = viewer
             if viewer["size"] and session.get("size") != viewer["size"]:
                 _do_resize(*viewer["size"])
                 session["size"] = viewer["size"]
+
+        # Queries in output already shown were answered then.
+        seen = session["seen"] if flow_control else 0
 
         async def _pty_reader():
             nonlocal cursor, acknowledged
@@ -2596,6 +2612,9 @@ if ENABLE_TERMINAL:
                         # Skipped output will never be acknowledged.
                         acknowledged = start
                     end = min(end, acknowledged + 256 * 1024)
+                    if start < seen:
+                        # Keep replayed and new output in separate acknowledgements.
+                        end = min(end, seen)
                 if end > cursor:
                     data = bytes(session["output"][start - oldest:end - oldest])
                     truncated = cursor < oldest
@@ -2603,6 +2622,8 @@ if ENABLE_TERMINAL:
                     if resume:
                         await ws.send_json({"type": "output", "start": start, "end": end, "truncated": truncated})
                     await ws.send_bytes(data)
+                    if not flow_control:
+                        session["seen"] = max(session["seen"], end)
                     continue
                 if session["reader_done"]:
                     return
@@ -2632,11 +2653,15 @@ if ENABLE_TERMINAL:
                     break
                 elif "bytes" in msg and msg["bytes"]:
                     data = msg["bytes"]
+                    if _TERMINAL_REPLY.fullmatch(data):
+                        if session["owner"] not in (None, viewer) or acknowledged < seen:
+                            continue
+                    elif not _TERMINAL_FOCUS.fullmatch(data):
+                        _take_over()
                     if input_queue.full() or input_bytes + len(data) > 1024 * 1024:
                         await ws.close(code=4000, reason="Terminal input backlog exceeded")
                         return
                     input_bytes += len(data)
-                    _apply_size()
                     # A blocked paste must not prevent reading output acknowledgements.
                     input_queue.put_nowait(data)
                 elif "text" in msg and msg["text"]:
@@ -2649,12 +2674,13 @@ if ENABLE_TERMINAL:
                                 return
                             acknowledged = max(acknowledged, consumed)
                             viewer["ack"] = acknowledged
+                            session["seen"] = max(session["seen"], acknowledged)
                             session["output_consumed"].set()
                         elif payload.get("type") == "resize":
                             cols = payload.get("cols", 80)
                             rows = payload.get("rows", 24)
                             viewer["size"] = (rows, cols)
-                            _apply_size()
+                            _take_over()
                         elif payload.get("type") == "activity" and isinstance(payload.get("active"), bool):
                             _set_terminal_active(session, viewer, payload["active"])
                         elif payload.get("type") == "chat":
@@ -2682,6 +2708,8 @@ if ENABLE_TERMINAL:
             for task in tasks:
                 task.cancel()
             session["viewers"].remove(viewer)
+            if session["owner"] is viewer:
+                session["owner"] = session["viewers"][-1] if session["viewers"] else None
             session["active"] = any(v["active"] for v in session["viewers"])
             session["output_consumed"].set()
             try:

@@ -7,7 +7,7 @@ import click
 @click.group()
 @click.version_option(package_name="open-terminal")
 def main():
-    """Open Terminal provides a remote computer API."""
+    """Open Terminal provides a remote machine API."""
     pass
 
 
