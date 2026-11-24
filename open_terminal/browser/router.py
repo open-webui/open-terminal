@@ -119,12 +119,20 @@ def owner(request):
     return request.headers.get("x-user-id") or "single"
 
 
+def in_chat(session, request):
+    """Whether the session belongs to the chat, or to the workspace the chat is in."""
+    workspace = request.headers.get("x-workspace-id")
+    return session.chat == request.headers.get("x-session-id", "") or bool(
+        workspace and session.chat == workspace
+    )
+
+
 def owned(request, sid):
     session = sessions.get(sid)
     if (
         not session
         or session.owner != owner(request)
-        or session.chat != request.headers.get("x-session-id", "")
+        or not in_chat(session, request)
     ):
         raise HTTPException(404, "Browser session not found")
     session.touched = time.monotonic()
@@ -506,8 +514,7 @@ def visible_sessions(request):
     return [
         s
         for s in sessions.values()
-        if s.owner == owner(request)
-        and s.chat == request.headers.get("x-session-id", "")
+        if s.owner == owner(request) and in_chat(s, request)
     ]
 
 

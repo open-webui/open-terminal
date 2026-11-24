@@ -65,7 +65,7 @@ FROM python:3.12.16-alpine
 #   Core:        tini (PID 1), su-exec (drop privileges, Alpine's gosu)
 #   Utilities:   curl, git, jq, less, procps (ps/top)
 #   Firewall:    iptables, ipset, dnsmasq (egress whitelist)
-#   Shell:       bash (the terminal API spawns bash sessions)
+#   Shell:       bash (used for interactive terminal sessions)
 #
 # ➡️  Want more tools?  Add them here, one per line for easy diffs:
 #     e.g.  vim \

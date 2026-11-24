@@ -22,7 +22,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from typing import Optional
-from urllib.parse import quote as url_quote
+from urllib.parse import quote as url_quote, unquote
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.exceptions import RequestValidationError
@@ -647,6 +647,10 @@ async def list_skills(
     fs: UserFS = Depends(get_filesystem),
 ):
     roots = [("global", join_skill_path(fs.home, path)) for path in GLOBAL_SKILL_DIRS]
+    if directory := http_request.headers.get("x-workspace-directory"):
+        # Skills of the workspace go first, over those of the same name at home.
+        directory = fs.resolve_path(unquote(directory))
+        roots = [("workspace", join_skill_path(directory, path)) for path in GLOBAL_SKILL_DIRS] + roots
     seen_names: set[str] = set()
     seen_roots: set[str] = set()
     skills: list[SkillSummary] = []
@@ -2381,6 +2385,16 @@ if ENABLE_TERMINAL:
     _TERMINAL_FOCUS = re.compile(rb"\x1b\[[IO]")
 
 
+    def _in_workspace(session: dict, request) -> bool:
+        """Whether a model may reach the shell: in its chat, or in the workspace of its chat."""
+        workspace = request.headers.get("x-workspace-id")
+        return _owns_terminal(session, request) or (
+            bool(workspace)
+            and session["chat_id"] == workspace
+            and session["user_id"] == request.headers.get("x-user-id", "")
+        )
+
+
     def _set_terminal_active(session: dict, viewer: dict, active: bool):
         if active and not viewer["active"]:
             session["last_active"] = time.monotonic_ns()
@@ -2391,7 +2405,7 @@ if ENABLE_TERMINAL:
     def _user_terminal(request: Request) -> dict:
         sessions = [
             session for session in reversed(_terminal_sessions.values())
-            if _owns_terminal(session, request) and _session_is_alive(session)
+            if _in_workspace(session, request) and _session_is_alive(session)
         ]
         if sessions:
             return max(sessions, key=lambda session: (session.get("active", False), session.get("last_active", 0)))

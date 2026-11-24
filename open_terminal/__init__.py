@@ -1,1 +1,1 @@
-"""open-terminal — a barebones terminal interaction API."""
+"""A remote machine API."""

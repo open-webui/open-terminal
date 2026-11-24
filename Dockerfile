@@ -61,7 +61,7 @@ RUN pip install --no-cache-dir \
     openpyxl weasyprint \
     python-docx python-pptx pypdf csvkit
 
-# Desktop sessions are started on demand and streamed through the terminal API.
+# Open Terminal starts desktop sessions on demand and streams them through its desktop endpoints.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     tigervnc-standalone-server xfce4 xfce4-terminal dbus-x11 \
     xauth xdotool xclip scrot libreoffice libreoffice-gtk3 pulseaudio pulseaudio-utils \
