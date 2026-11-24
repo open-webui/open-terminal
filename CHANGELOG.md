@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.18.0] - 2026-11-24
+
+### Added
+
+- The assistant in a folder workspace can now read and type in your workspace terminals and view or control your workspace browser tabs from its chats. Terminals and browser tabs remain tied to your user account. Requires an updated Open WebUI.
+- Workspace chats can now find and read skills saved in the project directory, including `.agents/skills`, `.claude/skills`, `.codex/skills`, and `.cptr/skills`. If a project skill has the same name as one in your home directory, the project version takes precedence. Requires an updated Open WebUI.
+
+### Changed
+
+- Updated the remaining package and Docker image descriptions to reflect Open Terminal's role as a remote machine API.
+
 ## [0.17.23] - 2026-11-24
 
 ### Added
