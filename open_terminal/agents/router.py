@@ -66,7 +66,7 @@ async def create(
     if not chat:
         raise HTTPException(400, "X-Session-Id is required")
     async with runtime.creation_lock:
-        for session in runtime.sessions.values():
+        for session in list(runtime.sessions.values()):
             if (session.owner, session.chat, session.options.request_id) == (
                 owner,
                 chat,
@@ -78,9 +78,12 @@ async def create(
                     )
                 return payload(session)
             if (session.owner, session.chat) == (owner, chat):
-                raise HTTPException(
-                    409, "Another agent turn is running in this conversation"
-                )
+                # A dropped connection comes back within seconds; a crashed caller never does.
+                if session.peer or time.monotonic() - session.touched < 10:
+                    raise HTTPException(
+                        409, "Another agent turn is running in this conversation"
+                    )
+                await runtime.remove(session)
         if sum(s.owner == owner for s in runtime.sessions.values()) >= 16:
             raise HTTPException(429, "Too many agent sessions")
         process, cwd = await runtime.spawn(provider, fs, body)
