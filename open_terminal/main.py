@@ -460,8 +460,7 @@ async def _maintenance_loop():
         _expire_session_cwds()
         if ENABLE_TERMINAL:
             for sid, session in list(_terminal_sessions.items()):
-                if (not _session_is_alive(session) or
-                    (not session["connected"] and time.monotonic() - session.get("detached_at", time.monotonic()) > 300)):
+                if not _session_is_alive(session):
                     await _cleanup_session(sid)
         active = {p.log_path for p in _processes.values() if p.finished_at is None}
         try:
@@ -2166,7 +2165,7 @@ if ENABLE_TERMINAL:
         if session is None:
             return
 
-        tasks = [task for task in (*session.get("io_tasks", ()), *session.get("viewer_tasks", ()))
+        tasks = [task for task in (*session.get("io_tasks", ()), *(task for viewer in session.get("viewers", ()) for task in viewer["tasks"]))
                  if task is not asyncio.current_task()]
         for task in tasks:
             task.cancel()
@@ -2220,7 +2219,7 @@ if ENABLE_TERMINAL:
         for sid in dead:
             await _cleanup_session(sid)
 
-        if len(_terminal_sessions) >= MAX_TERMINAL_SESSIONS:
+        if MAX_TERMINAL_SESSIONS is not None and len(_terminal_sessions) >= MAX_TERMINAL_SESSIONS:
             return JSONResponse(
                 {"error": f"Maximum number of terminal sessions ({MAX_TERMINAL_SESSIONS}) reached"},
                 status_code=429,
@@ -2310,13 +2309,12 @@ if ENABLE_TERMINAL:
             user_id=request.headers.get("x-user-id", ""),
             chat_id=request.headers.get("x-session-id", ""),
             output=bytearray(),
-            connected=False,
+            viewers=[],
             input_lock=asyncio.Lock(),
             output_offset=0,
             output_changed=asyncio.Event(),
             output_consumed=asyncio.Event(),
             reader_done=False,
-            detached_at=time.monotonic(),
         )
         session["io_tasks"] = (asyncio.create_task(_read_terminal_output(session)),)
         return {
@@ -2331,8 +2329,9 @@ if ENABLE_TERMINAL:
         try:
             while True:
                 # Stop the producer before unread output can leave the retained history.
-                while (session.get("viewer_ack") is not None
-                       and session["output_offset"] - session["viewer_ack"] >= 512 * 1024):
+                # Only the fastest viewer holds it back: one that falls behind skips ahead instead.
+                while ((acks := [v["ack"] for v in session["viewers"] if v["ack"] is not None])
+                       and session["output_offset"] - max(acks) >= 512 * 1024):
                     session["output_consumed"].clear()
                     await session["output_consumed"].wait()
                 if session["backend"] == "pty":
@@ -2371,10 +2370,11 @@ if ENABLE_TERMINAL:
         )
 
 
-    def _set_terminal_active(session: dict, active: bool):
-        if active and not session.get("active", False):
+    def _set_terminal_active(session: dict, viewer: dict, active: bool):
+        if active and not viewer["active"]:
             session["last_active"] = time.monotonic_ns()
-        session["active"] = active
+        viewer["active"] = active
+        session["active"] = any(v["active"] for v in session["viewers"])
 
 
     def _user_terminal(request: Request) -> dict:
@@ -2495,8 +2495,10 @@ if ENABLE_TERMINAL:
         With ``resume`` and ``flow_control`` set to true in auth, the server
         confirms ``{"type": "flow_control"}``. Acknowledge consumed output with
         ``{"type": "ack", "cursor": <output end>}`` to release more data.
-        Reads pause when the attached viewer falls behind; detached shells keep
-        running with bounded history.
+        Several viewers can attach: all receive the output and can type, and the
+        last to type or resize sets the terminal size. Reads pause when every
+        acknowledging viewer falls behind; one slower than the rest skips to the
+        retained history. Detached shells keep running with bounded history.
 
         Set ``process_info`` to true in auth to receive foreground process
         changes as ``{"type": "process", "pid": ..., "name": ...}`` on Unix.
@@ -2522,10 +2524,6 @@ if ENABLE_TERMINAL:
             return
 
         backend = session["backend"]
-        if session["connected"]:
-            await ws.close(code=4009, reason="Session already connected")
-            return
-        session["connected"] = True
         stop_event = asyncio.Event()
 
         # --- Platform-specific read/write/resize helpers ---
@@ -2550,17 +2548,20 @@ if ENABLE_TERMINAL:
         resume = payload.get("resume") is True
         cursor = payload.get("cursor", 0) if resume else 0
         if not isinstance(cursor, int) or isinstance(cursor, bool) or cursor < 0 or cursor > session["output_offset"]:
-            session["connected"] = False
             await ws.close(code=4000, reason="Invalid output cursor")
             return
 
         flow_control = resume and payload.get("flow_control") is True
         acknowledged = max(cursor, session["output_offset"] - len(session["output"]))
-        if flow_control:
-            session["viewer_ack"] = acknowledged
+        viewer = {"ack": acknowledged if flow_control else None, "active": False, "size": None, "tasks": ()}
+
+        def _apply_size():
+            if viewer["size"] and session.get("size") != viewer["size"]:
+                _do_resize(*viewer["size"])
+                session["size"] = viewer["size"]
 
         async def _pty_reader():
-            nonlocal cursor
+            nonlocal cursor, acknowledged
             # shortcut: winpty needs separate console foreground detection for Windows.
             process_info = payload.get("process_info") is True and backend == "pty"
             # Reset stale titles from retained output before following the live process.
@@ -2591,6 +2592,9 @@ if ENABLE_TERMINAL:
                 start = max(cursor, oldest)
                 end = min(session["output_offset"], start + 64 * 1024)
                 if flow_control:
+                    if start > cursor:
+                        # Skipped output will never be acknowledged.
+                        acknowledged = start
                     end = min(end, acknowledged + 256 * 1024)
                 if end > cursor:
                     data = bytes(session["output"][start - oldest:end - oldest])
@@ -2632,6 +2636,7 @@ if ENABLE_TERMINAL:
                         await ws.close(code=4000, reason="Terminal input backlog exceeded")
                         return
                     input_bytes += len(data)
+                    _apply_size()
                     # A blocked paste must not prevent reading output acknowledgements.
                     input_queue.put_nowait(data)
                 elif "text" in msg and msg["text"]:
@@ -2639,18 +2644,19 @@ if ENABLE_TERMINAL:
                         payload = json.loads(msg["text"])
                         if payload.get("type") == "ack" and flow_control:
                             consumed = payload.get("cursor")
-                            if type(consumed) is not int or not acknowledged <= consumed <= cursor:
+                            if type(consumed) is not int or not 0 <= consumed <= cursor:
                                 await ws.close(code=4000, reason="Invalid output acknowledgement")
                                 return
-                            acknowledged = consumed
-                            session["viewer_ack"] = consumed
+                            acknowledged = max(acknowledged, consumed)
+                            viewer["ack"] = acknowledged
                             session["output_consumed"].set()
                         elif payload.get("type") == "resize":
                             cols = payload.get("cols", 80)
                             rows = payload.get("rows", 24)
-                            _do_resize(rows, cols)
+                            viewer["size"] = (rows, cols)
+                            _apply_size()
                         elif payload.get("type") == "activity" and isinstance(payload.get("active"), bool):
-                            _set_terminal_active(session, payload["active"])
+                            _set_terminal_active(session, viewer, payload["active"])
                         elif payload.get("type") == "chat":
                             chat_id = payload.get("chat_id")
                             if not isinstance(chat_id, str) or not 1 <= len(chat_id) <= 128:
@@ -2665,7 +2671,8 @@ if ENABLE_TERMINAL:
                         pass
         tasks = (asyncio.create_task(_pty_reader()), asyncio.create_task(_ws_reader()),
                  asyncio.create_task(_input_writer()))
-        session["viewer_tasks"] = tasks
+        viewer["tasks"] = tasks
+        session["viewers"].append(viewer)
         try:
             await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
         except asyncio.CancelledError:
@@ -2674,11 +2681,9 @@ if ENABLE_TERMINAL:
             stop_event.set()
             for task in tasks:
                 task.cancel()
-            session["connected"] = False
-            session.pop("viewer_ack", None)
+            session["viewers"].remove(viewer)
+            session["active"] = any(v["active"] for v in session["viewers"])
             session["output_consumed"].set()
-            session["detached_at"] = time.monotonic()
-            session["viewer_tasks"] = ()
             try:
                 await asyncio.gather(*tasks, return_exceptions=True)
                 await ws.close()

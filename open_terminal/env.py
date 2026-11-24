@@ -71,12 +71,12 @@ BINARY_FILE_MIME_PREFIXES = [
     if p.strip()
 ]
 
-MAX_TERMINAL_SESSIONS = int(
-    os.environ.get(
-        "OPEN_TERMINAL_MAX_SESSIONS",
-        config.get("max_terminal_sessions", "16"),
-    )
+# Leave empty for unlimited.
+MAX_TERMINAL_SESSIONS = os.environ.get(
+    "OPEN_TERMINAL_MAX_SESSIONS",
+    config.get("max_terminal_sessions", ""),
 )
+MAX_TERMINAL_SESSIONS = int(MAX_TERMINAL_SESSIONS) if MAX_TERMINAL_SESSIONS != "" else None
 
 ENABLE_TERMINAL = os.environ.get(
     "OPEN_TERMINAL_ENABLE_TERMINAL",
