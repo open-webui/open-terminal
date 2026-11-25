@@ -155,6 +155,8 @@ class PortalInput:
 
 
 class PortalDesktop(NativeDesktop):
+    fps = 60  # Frames arrive from PipeWire, so an unchanged one costs nothing.
+
     def __init__(self, fs):
         super().__init__(fs)
         self.bus = None
@@ -299,7 +301,8 @@ class PortalDesktop(NativeDesktop):
             await self.request(REMOTE, "SelectDevices", "o", [self.session], devices)
             await self.request(SCREENCAST, "SelectSources", "o", [self.session], {
                 "types": Variant("u", 1), "multiple": Variant("b", False),
-                "cursor_mode": Variant("u", 2),
+                # The viewer shows its own cursor; a second one would trail behind it.
+                "cursor_mode": Variant("u", 1),
             })
             # Restore tokens are single-use, including attempts that time out.
             if saved_token:

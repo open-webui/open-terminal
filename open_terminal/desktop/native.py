@@ -9,18 +9,21 @@ from concurrent.futures import ThreadPoolExecutor
 import ctypes
 import contextlib
 import io
+import logging
 import subprocess
 import sys
 import time
 
 from fastapi import HTTPException, WebSocketDisconnect
 from PIL import Image
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 from typing import Literal
 
 from open_terminal.frames import Frames, FrameWindow
 from open_terminal.desktop.audio import HostAudio
 from open_terminal.env import sanitized_environ
+
+log = logging.getLogger(__name__)
 
 
 class Input(BaseModel):
@@ -114,6 +117,7 @@ def check_permissions():
 
 class NativeDesktop:
     transport = "frames"
+    fps = 30
 
     def __init__(self, fs):
         if fs.username:
@@ -129,6 +133,8 @@ class NativeDesktop:
         self.worker = ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="desktop-capture"
         )
+        # Input must not wait behind frame capture and encoding.
+        self.inputs = ThreadPoolExecutor(max_workers=1, thread_name_prefix="desktop-input")
         self.capture = None
         self.origin = (0, 0)
         self.target = ()
@@ -136,6 +142,9 @@ class NativeDesktop:
 
     async def work(self, fn, *args):
         return await asyncio.get_running_loop().run_in_executor(self.worker, fn, *args)
+
+    async def send_input(self, fn, *args):
+        return await asyncio.get_running_loop().run_in_executor(self.inputs, fn, *args)
 
     def setup(self):
         check_permissions()
@@ -320,46 +329,62 @@ class NativeDesktop:
             while True:
                 await ready.wait()
                 start = time.monotonic()
-                packet = await self.work(lambda: encoder.encode(self.grab()))
-                if packet is not None:
-                    ready.sent()
-                    await ws.send_bytes(packet)
-                await asyncio.sleep(max(0, 1 / 30 - (time.monotonic() - start)))
+                # A slow viewer gets lighter frames; still areas are sharpened afterwards.
+                quality = 50 if ready.delay > 0.15 else 75
+                packets = await self.work(lambda: encoder.packets(self.grab(), quality))
+                if packets:
+                    ready.sent(len(packets))
+                    for packet in packets:
+                        await ws.send_bytes(packet)
+                fps = self.fps if ready.delay < 0.05 else 30
+                await asyncio.sleep(max(0, 1 / fps - (time.monotonic() - start)))
 
         async def commands():
             received_buttons = 0
             while True:
-                message = Input.model_validate(await ws.receive_json())
+                data = await ws.receive_json()
+                try:
+                    message = Input.model_validate(data)
+                except ValidationError as exc:
+                    log.warning("Ignored desktop input: %s", exc.errors()[0]["msg"])
+                    continue
                 if message.type == "frameAck":
                     ready.ack(message.window)
                 else:
                     motion = (
                         message.type == "mouse"
                         and message.buttons == received_buttons
-                        and not message.deltaX
-                        and not message.deltaY
                     )
+                    scroll = bool(message.deltaX or message.deltaY)
                     if message.type == "mouse":
                         received_buttons = message.buttons
                     elif message.type in ("release", "paste"):
                         received_buttons = 0
-                    # Only replace consecutive moves, never a button edge, key or scroll.
-                    if motion and pending and pending[-1][1]:
-                        pending[-1] = (message, motion)
+                    # Merge consecutive moves and scrolls, never a button edge or key.
+                    # A move after a scroll stays separate, so it cannot redirect it.
+                    if motion and pending and pending[-1][1] and (scroll or not pending[-1][2]):
+                        message.deltaX += pending[-1][0].deltaX
+                        message.deltaY += pending[-1][0].deltaY
+                        pending[-1] = (message, motion, scroll)
                     else:
                         if len(pending) >= 256:
                             raise ValueError("Desktop input queue is full")
-                        pending.append((message, motion))
+                        pending.append((message, motion, scroll))
                     input_ready.set()
 
         async def inputs():
             while True:
                 await input_ready.wait()
-                message, _ = pending.popleft()
+                message, *_ = pending.popleft()
                 if not pending:
                     input_ready.clear()
-                async with self.actions:
-                    await self.work(self.handle, message, keys, buttons)
+                try:
+                    async with self.actions:
+                        await self.send_input(self.handle, message, keys, buttons)
+                except Exception as exc:
+                    if getattr(self, "closed", False):
+                        raise
+                    log.warning("Desktop input failed: %s", exc)
 
         tasks = [
             asyncio.create_task(frames()),
@@ -378,7 +403,7 @@ class NativeDesktop:
             await asyncio.gather(*tasks, return_exceptions=True)
             async with self.actions:
                 with contextlib.suppress(Exception):
-                    await self.work(self.release, keys, buttons)
+                    await self.send_input(self.release, keys, buttons)
             self.peers.discard(ws)
 
     async def close(self):
@@ -389,3 +414,4 @@ class NativeDesktop:
         if self.capture:
             await self.work(self.capture.close)
         self.worker.shutdown(wait=False, cancel_futures=True)
+        self.inputs.shutdown(wait=False, cancel_futures=True)

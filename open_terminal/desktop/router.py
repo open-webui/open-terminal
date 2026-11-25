@@ -658,8 +658,10 @@ async def stream(ws: WebSocket):
             await desktop.stream_audio(ws)
         else:
             await desktop.stream(ws)
-    except (WebSocketDisconnect, TimeoutError, OSError, ValueError, HTTPException):
+    except WebSocketDisconnect:
         pass
+    except (TimeoutError, OSError, RuntimeError, ValueError, HTTPException) as exc:
+        log.warning("Desktop stream ended: %s: %s", type(exc).__name__, exc)
     finally:
         with contextlib.suppress(Exception):
             await ws.close(code=1011)
