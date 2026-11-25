@@ -373,23 +373,28 @@ class NativeDesktop:
         keys, buttons = set(), set()
         encoder = Frames()
         video = VideoEncoder()
+        # Each viewer encodes on its own thread, so one does not wait for another.
+        encoding = ThreadPoolExecutor(max_workers=1, thread_name_prefix="desktop-encode")
         h264 = False  # The viewer says with each acknowledgment whether it decodes video.
         pending = deque()
         input_ready = asyncio.Event()
 
-        def encode(level):
+        def encode(image, level):
             if not h264 and video.process is not None:
                 # The viewer stopped decoding, so its picture may be out of date.
                 video.close()
                 encoder.reset()
-            return encoder.packets(self.grab(), level, video if h264 else None)
+            return encoder.packets(image, level, video if h264 else None)
 
         async def frames():
             while True:
                 await ready.wait()
                 start = time.monotonic()
                 # A slow viewer gets lighter frames; still areas are sharpened afterwards.
-                packets = await self.work(encode, ready.adapt())
+                image = await self.work(self.grab)
+                packets = await asyncio.get_running_loop().run_in_executor(
+                    encoding, encode, image, ready.adapt()
+                )
                 if packets:
                     ready.sent(len(packets))
                     for packet in packets:
@@ -466,6 +471,7 @@ class NativeDesktop:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
             await asyncio.to_thread(video.close)
+            encoding.shutdown(wait=False, cancel_futures=True)
             async with self.actions:
                 with contextlib.suppress(Exception):
                     await self.send_input(self.release, keys, buttons)
