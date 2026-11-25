@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.18.4] - 2026-11-26
+
+### Changed
+
+- Desktop views that do not use VNC now send separate updates for changed screen areas, so typing or a ticking clock does not resend the space between them. Text sharpens after movement stops. Picture quality drops when the connection cannot keep up and rises again when it recovers.
+- Video playback, scrolling, and moving windows can now use video compression to reduce bandwidth in those desktop views. Requires an updated Open WebUI, HTTPS or localhost, and FFmpeg with libx264. Sharing automatically falls back to still-image updates if video compression is unavailable or fails. See the [setup instructions](docs/configuration.md#desktop).
+- Shared GNOME Wayland desktops now show a sharper picture on displays using scaling, up to 1920 by 1080. The viewer can update up to 60 times per second when the connection keeps up.
+- Trackpad scrolling now follows the size of your gesture instead of treating every small movement as a full mouse-wheel step. Both vertical and horizontal scrolling are supported. Requires an updated Open WebUI.
+
+### Fixed
+
+- Mouse and keyboard input no longer waits for screen capture and image preparation to finish.
+- Fixed desktop sharing reconnecting after an invalid input message, an oversized paste, or a failed mouse or keyboard action. The failed action is skipped while sharing continues. Rapid scrolling is combined into fewer updates to avoid filling the input queue.
+- Removed the second, trailing mouse pointer from shared Wayland desktops. The viewer shows one pointer; assistant screenshots no longer include the host pointer.
+
 ## [0.18.3] - 2026-11-26
 
 ### Fixed
