@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.18.3] - 2026-11-26
+
+### Fixed
+
+- Fixed the mouse reaching only the top-left quarter of a shared GNOME Wayland desktop at 200% display scaling. Mouse movement, clicks, and dragging now account for the shared monitor's display scale, including fractional settings such as 125%. This applies to both the desktop viewer and assistant actions. Restart desktop sharing if you change the display scale while connected.
+
 ## [0.18.2] - 2026-11-25
 
 ### Fixed
