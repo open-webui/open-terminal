@@ -134,6 +134,9 @@ class PortalInput:
     def scroll(self, amount, x=None, y=None):
         self.notify("NotifyPointerAxisDiscrete", "ui", 0, -amount)
 
+    def axis(self, x, y):
+        self.notify("NotifyPointerAxis", "dd", float(x), float(y))
+
     def hscroll(self, amount, x=None, y=None):
         self.notify("NotifyPointerAxisDiscrete", "ui", 1, amount)
 
@@ -156,6 +159,7 @@ class PortalInput:
 
 class PortalDesktop(NativeDesktop):
     fps = 60  # Frames arrive from PipeWire, so an unchanged one costs nothing.
+    scale = 1
 
     def __init__(self, fs):
         super().__init__(fs)
@@ -323,8 +327,11 @@ class PortalDesktop(NativeDesktop):
             self.screen_width, self.screen_height = size.value
             scale = min(1, 1920 / self.screen_width, 1080 / self.screen_height)
             self.width, self.height = round(self.screen_width * scale), round(self.screen_height * scale)
-            scale = await self.pointer_scale(properties.get("position"))
-            self.screen_width, self.screen_height = self.screen_width * scale, self.screen_height * scale
+            self.scale = await self.pointer_scale(properties.get("position"))
+            self.screen_width, self.screen_height = self.screen_width * self.scale, self.screen_height * self.scale
+            # Viewers get the display's own pixels; assistants keep the smaller picture.
+            scale = min(1, 1920 / self.screen_width, 1080 / self.screen_height)
+            self.frame = (round(self.screen_width * scale), round(self.screen_height * scale))
             self.input = PortalInput(self)
             reply = await self.call(SCREENCAST, "OpenPipeWireRemote", "oa{sv}", [self.session, {}])
             try:
@@ -343,12 +350,13 @@ class PortalDesktop(NativeDesktop):
             raise HTTPException(503, f"Could not share the Linux desktop: {detail}") from exc
 
     async def start_capture(self, *, fd=None, env=None):
+        width, height = self.frame_size
         process = await asyncio.create_subprocess_exec(
             "gst-launch-1.0", "-q", "pipewiresrc", f"path={self.node}",
             *((f"fd={fd}",) if fd is not None else ()),
             "!", "queue", "max-size-buffers=1", "leaky=downstream",
             "!", "videoconvert", "!", "videoscale",
-            "!", f"video/x-raw,format=RGBx,width={self.width},height={self.height},pixel-aspect-ratio=1/1",
+            "!", f"video/x-raw,format=RGBx,width={width},height={height},pixel-aspect-ratio=1/1",
             "!", "fdsink", "fd=1", "sync=false",
             pass_fds=() if fd is None else (fd,), env=sanitized_environ(env),
             start_new_session=True,
@@ -371,9 +379,10 @@ class PortalDesktop(NativeDesktop):
         return f" GStreamer: {self.capture_stderr.strip()}" if self.capture_stderr.strip() else ""
 
     async def read_frames(self, process):
+        width, height = self.frame_size
         try:
             while True:
-                data = await process.stdout.readexactly(self.width * self.height * 4)
+                data = await process.stdout.readexactly(width * height * 4)
                 self.update_frame(data)
         except asyncio.IncompleteReadError:
             if self.stderr_task:
@@ -386,7 +395,7 @@ class PortalDesktop(NativeDesktop):
             self.first_frame.set()
 
     def update_frame(self, data):
-        self.latest = Image.frombytes("RGB", (self.width, self.height), data, "raw", "RGBX")
+        self.latest = Image.frombytes("RGB", self.frame_size, data, "raw", "RGBX")
         self.first_frame.set()
 
     def grab(self):
@@ -398,6 +407,10 @@ class PortalDesktop(NativeDesktop):
         if self.closed:
             raise RuntimeError(self.failure)
         await self.call(REMOTE, member, "oa{sv}" + signature, [self.session, {}, *body])
+
+    def scroll(self, x, y):
+        # Absolute positions use the stream's pixels, but scrolling is logical.
+        self.input.axis(x / self.scale, y / self.scale)
 
     def paste(self, text):
         # Keysyms also work over SSH, without guessing a Wayland socket or

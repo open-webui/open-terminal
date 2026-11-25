@@ -21,6 +21,7 @@ from typing import Literal
 
 from open_terminal.frames import Frames, FrameWindow
 from open_terminal.desktop.audio import HostAudio
+from open_terminal.desktop.video import VideoEncoder
 from open_terminal.env import sanitized_environ
 
 log = logging.getLogger(__name__)
@@ -29,11 +30,14 @@ log = logging.getLogger(__name__)
 class Input(BaseModel):
     type: Literal["mouse", "key", "paste", "release", "frameAck"]
     window: int = Field(default=1, ge=1, le=3)
+    h264: bool = False
     x: int = Field(default=0, ge=0, le=32767)
     y: int = Field(default=0, ge=0, le=32767)
     buttons: int = Field(default=0, ge=0, le=7)
     deltaX: int = Field(default=0, ge=-10000, le=10000)
     deltaY: int = Field(default=0, ge=-10000, le=10000)
+    scrollX: float = Field(default=0, ge=-100000, le=100000)
+    scrollY: float = Field(default=0, ge=-100000, le=100000)
     code: str = Field(default="", max_length=50)
     down: bool = False
     text: str = Field(default="", max_length=20000)
@@ -139,6 +143,13 @@ class NativeDesktop:
         self.origin = (0, 0)
         self.target = ()
         self.width = self.height = 0
+        self.frame = None
+        self.unscrolled = [0.0, 0.0]
+
+    @property
+    def frame_size(self):
+        """The viewer's picture; assistants always use width and height."""
+        return self.frame or (self.width, self.height)
 
     async def work(self, fn, *args):
         return await asyncio.get_running_loop().run_in_executor(self.worker, fn, *args)
@@ -218,14 +229,15 @@ class NativeDesktop:
         )
         return image.resize((self.width, self.height), Image.Resampling.BILINEAR)
 
-    def position(self, x, y, buttons=()):
-        if not (0 <= x < self.width and 0 <= y < self.height):
+    def position(self, x, y, buttons=(), size=None):
+        width, height = size or (self.width, self.height)
+        if not (0 <= x < width and 0 <= y < height):
             raise ValueError("Coordinates are outside the current desktop screenshot")
         # Button and scroll calls pass this on: macOS applies moves asynchronously,
         # so reading the cursor back can return where it was before the move.
         self.target = (
-            self.origin[0] + round(x * self.screen_width / self.width),
-            self.origin[1] + round(y * self.screen_height / self.height),
+            self.origin[0] + round(x * self.screen_width / width),
+            self.origin[1] + round(y * self.screen_height / height),
         )
         if sys.platform == "darwin" and buttons:
             # macOS requires drag events, even when mouseDown has already been sent.
@@ -233,6 +245,32 @@ class NativeDesktop:
             self.input.dragTo(*self.target, button=button, mouseDownUp=False)
         else:
             self.input.moveTo(*self.target)
+
+    def scroll(self, x, y):
+        """Scroll by screen pixels, keeping what is too small to send yet."""
+        unit = {"darwin": 1, "win32": 100 / 120}.get(sys.platform, 100)
+        steps = []
+        for axis, amount in enumerate((x, y)):
+            total = self.unscrolled[axis] + amount
+            steps.append(int(total / unit))
+            self.unscrolled[axis] = total - steps[axis] * unit
+        x, y = steps
+        if sys.platform == "darwin" and (x or y):
+            import Quartz
+
+            event = Quartz.CGEventCreateScrollWheelEvent(None, Quartz.kCGScrollEventUnitPixel, 2, -y, -x)
+            Quartz.CGEventSetLocation(event, self.target)
+            Quartz.CGEventPost(Quartz.kCGHIDEventTap, event)
+        elif sys.platform == "win32":
+            # pyautogui scrolls 1/120 of a notch per step and has no horizontal wheel.
+            for event, amount in ((0x0800, -y), (0x1000, x)):
+                if amount:
+                    ctypes.windll.user32.mouse_event(event, 0, 0, amount & 0xFFFFFFFF, 0)
+        else:
+            if y:
+                self.input.scroll(-y, *self.target)
+            if x:
+                self.input.hscroll(x, *self.target)
 
     def paste(self, text):
         import pyperclip
@@ -250,7 +288,8 @@ class NativeDesktop:
 
     def handle(self, message, keys, buttons):
         if message.type == "mouse":
-            self.position(message.x, message.y, buttons)
+            width, height = self.frame_size
+            self.position(message.x, message.y, buttons, (width, height))
             for flag, button in ((1, "left"), (2, "right"), (4, "middle")):
                 down = bool(message.buttons & flag)
                 if down and button not in buttons:
@@ -259,6 +298,12 @@ class NativeDesktop:
                 elif not down and button in buttons:
                     self.input.mouseUp(*self.target, button=button)
                     buttons.remove(button)
+            if message.scrollX or message.scrollY:
+                self.scroll(
+                    message.scrollX * self.screen_width / width,
+                    message.scrollY * self.screen_height / height,
+                )
+                return
             if message.deltaY:
                 self.input.scroll(-message.deltaY, *self.target)
             if message.deltaX:
@@ -312,7 +357,10 @@ class NativeDesktop:
     async def screenshot(self):
         def encode():
             output = io.BytesIO()
-            self.grab().save(output, "PNG")
+            image = self.grab()
+            if image.size != (self.width, self.height):
+                image = image.resize((self.width, self.height), Image.Resampling.LANCZOS)
+            image.save(output, "PNG")
             return output.getvalue()
 
         return await self.work(encode)
@@ -322,24 +370,33 @@ class NativeDesktop:
         ready = FrameWindow()
         keys, buttons = set(), set()
         encoder = Frames()
+        video = VideoEncoder()
+        h264 = False  # The viewer says with each acknowledgment whether it decodes video.
         pending = deque()
         input_ready = asyncio.Event()
+
+        def encode(level):
+            if not h264 and video.process is not None:
+                # The viewer stopped decoding, so its picture may be out of date.
+                video.close()
+                encoder.reset()
+            return encoder.packets(self.grab(), level, video if h264 else None)
 
         async def frames():
             while True:
                 await ready.wait()
                 start = time.monotonic()
                 # A slow viewer gets lighter frames; still areas are sharpened afterwards.
-                quality = 50 if ready.delay > 0.15 else 75
-                packets = await self.work(lambda: encoder.packets(self.grab(), quality))
+                packets = await self.work(encode, ready.adapt())
                 if packets:
                     ready.sent(len(packets))
                     for packet in packets:
                         await ws.send_bytes(packet)
-                fps = self.fps if ready.delay < 0.05 else 30
+                fps = self.fps if ready.queued < 0.03 else 30
                 await asyncio.sleep(max(0, 1 / fps - (time.monotonic() - start)))
 
         async def commands():
+            nonlocal h264
             received_buttons = 0
             while True:
                 data = await ws.receive_json()
@@ -349,13 +406,16 @@ class NativeDesktop:
                     log.warning("Ignored desktop input: %s", exc.errors()[0]["msg"])
                     continue
                 if message.type == "frameAck":
+                    h264 = message.h264
                     ready.ack(message.window)
                 else:
                     motion = (
                         message.type == "mouse"
                         and message.buttons == received_buttons
                     )
-                    scroll = bool(message.deltaX or message.deltaY)
+                    scroll = bool(
+                        message.deltaX or message.deltaY or message.scrollX or message.scrollY
+                    )
                     if message.type == "mouse":
                         received_buttons = message.buttons
                     elif message.type in ("release", "paste"):
@@ -365,6 +425,8 @@ class NativeDesktop:
                     if motion and pending and pending[-1][1] and (scroll or not pending[-1][2]):
                         message.deltaX += pending[-1][0].deltaX
                         message.deltaY += pending[-1][0].deltaY
+                        message.scrollX += pending[-1][0].scrollX
+                        message.scrollY += pending[-1][0].scrollY
                         pending[-1] = (message, motion, scroll)
                     else:
                         if len(pending) >= 256:
@@ -401,6 +463,7 @@ class NativeDesktop:
             for task in tasks:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
+            await asyncio.to_thread(video.close)
             async with self.actions:
                 with contextlib.suppress(Exception):
                     await self.send_input(self.release, keys, buttons)

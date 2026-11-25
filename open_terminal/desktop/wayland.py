@@ -199,6 +199,8 @@ class WaylandDesktop(PortalDesktop):
             raise RuntimeError(self.failure)
         if member == "NotifyPointerMotionAbsolute":
             signature, body = "sdd", [self.stream_path, body[1], body[2]]
+        elif member == "NotifyPointerAxis":
+            signature, body = "ddu", [*body, 0]
         elif member in ("NotifyKeyboardKeysym", "NotifyPointerButton"):
             signature = "ub" if member == "NotifyKeyboardKeysym" else "ib"
             body = [body[0], bool(body[1])]

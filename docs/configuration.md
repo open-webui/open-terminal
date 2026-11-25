@@ -175,6 +175,10 @@ and ensure `ffmpeg` is on the server's `PATH`, then restart Open Terminal:
 | macOS 13+ | ScreenCaptureKit system audio. Allow screen/system audio recording for the app running Open Terminal. FFmpeg can be installed with `brew install ffmpeg`. |
 | Windows | WASAPI loopback on the default output device. Install FFmpeg and run Open Terminal in the logged-in desktop session. No virtual audio driver is needed. |
 
+If that FFmpeg includes libx264, the native (non-VNC) Desktop viewer also uses H.264
+for large screen changes such as video and scrolling. The browser must reach Open WebUI
+over HTTPS or localhost; otherwise, or if either side cannot use H.264, it uses JPEG.
+
 The macOS and Windows Python capture bindings install automatically on their
 respective platforms. Capture starts on unmute and stops on mute or disconnect.
 After changing the default speakers/headphones on Linux or Windows, mute and

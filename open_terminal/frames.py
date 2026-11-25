@@ -18,6 +18,12 @@ class FrameWindow:
         self.packets = 1
         self.times = deque()
         self.delay = 0.0
+        # The lowest delay in the current and previous few seconds.
+        self.lows = [float("inf"), float("inf")]
+        self.rotated = float("-inf")
+        self.level = 0  # 0 is full quality, 2 the lightest.
+        self.hold = 5.0
+        self.changed = self.calm = self.raised = float("-inf")
         self.ready = asyncio.Event()
         self.ready.set()
 
@@ -38,42 +44,97 @@ class FrameWindow:
         self.limit = window
         self.pending = max(0, self.pending - 1)
         if self.times:
-            self.delay += (time.monotonic() - self.times.popleft() - self.delay) / 8
+            now = time.monotonic()
+            sample = now - self.times.popleft()
+            self.delay += (sample - self.delay) / 8
+            if now - self.rotated > 10:
+                self.lows, self.rotated = [sample, self.lows[0]], now
+            self.lows[0] = min(self.lows[0], sample)
         if self.pending < self.limit * self.packets:
             self.ready.set()
         else:
             self.ready.clear()
 
 
+    @property
+    def queued(self):
+        """Delay beyond the path's own, so a distant link is not a slow one."""
+        return max(0.0, self.delay - min(self.lows))
+
+    def adapt(self):
+        """Step quality down when frames queue, and back up once they stop."""
+        now = time.monotonic()
+        if self.queued > 0.1 and self.level < 2 and now - self.changed > 3:
+            # A step up that did not last makes the next attempt wait longer.
+            self.hold = min(60.0, self.hold * 2) if now - self.raised < 10 else 5.0
+            self.level += 1
+            self.changed = now
+        if self.queued > 0.04:
+            self.calm = now
+        elif self.level and now - max(self.calm, self.changed) > self.hold:
+            self.level -= 1
+            self.changed = self.raised = now
+        return self.level
+
+
 class Frames:
     TILE = 64
     MAX_REGIONS = 8
+    VIDEO_SHARE = 20  # One part in this many must change to use video.
     SETTLE = 0.3
+    QUALITY = (75, 60, 45)
+    STEADY = 8
 
     def __init__(self):
         self.previous = None
         self.source = None
         self.soft = None
         self.changed = 0.0
+        self.motion = 0  # Video frames in a row.
 
-    def packets(self, image, quality=75):
-        """Encode each changed area separately, then sharpen them once still."""
+    def packets(self, image, level=0, video=None):
+        """Encode each changed area separately, then sharpen them once still.
+
+        Large changes use `video` when given; it returns None to fall back to JPEG.
+        """
         boxes = []
         if image is not self.source:
             self.source = image
-            boxes = self.regions(image.convert("RGB"))
+            rgb = image.convert("RGB")
+            # Comparing frames costs as much as encoding, so in steady motion do it
+            # only every few frames, which also notices when the motion stops.
+            steady = self.motion >= self.STEADY and self.motion % self.STEADY
+            if steady and video is not None and rgb.size == self.previous.size:
+                self.previous, boxes = rgb, [(0, 0, *rgb.size)]
+            else:
+                boxes = self.regions(rgb)
         if boxes:
             self.changed = time.monotonic()
+            width, height = self.previous.size
+            area = sum((right - left) * (bottom - top) for left, top, right, bottom in boxes)
+            if video is not None and area * self.VIDEO_SHARE >= width * height:
+                packet = video.encode(self.previous, level)
+                if packet is not None:
+                    self.motion += 1
+                    self.soft = (0, 0, width, height)
+                    return [packet]
+            self.motion = 0
             for box in boxes:
                 self.soft = box if self.soft is None else (
                     min(self.soft[0], box[0]), min(self.soft[1], box[1]),
                     max(self.soft[2], box[2]), max(self.soft[3], box[3]),
                 )
-            return [self.packet(box, quality=quality) for box in boxes]
+            return [self.packet(box, quality=self.QUALITY[level]) for box in boxes]
         if self.soft is not None and time.monotonic() - self.changed >= self.SETTLE:
             box, self.soft = self.soft, None
-            return [self.packet(box, quality=max(90, quality), subsampling=0)]
+            self.motion = 0
+            return [self.packet(box, quality=75 if level else 90, subsampling=0)]
         return []
+
+    def reset(self):
+        """Send the whole screen again next time."""
+        self.previous = self.source = self.soft = None
+        self.motion = 0
 
     def regions(self, image):
         previous, self.previous = self.previous, image
