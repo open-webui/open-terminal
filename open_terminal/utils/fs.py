@@ -3,9 +3,7 @@
 Provides :class:`UserFS`, a unified interface for file operations.
 
 All I/O uses native Python (``aiofiles`` / ``os``).  In multi-user mode
-the server process is added to each provisioned user's group, and home
-directories are ``chmod 2770`` (setgid + group rwx), so standard file
-operations work without subprocess.
+workspace directories use setgid so that new files inherit their workspace's group.
 
 After each write operation a ``sudo chown`` call fixes file ownership
 so that files belong to the provisioned user, not the server process.
@@ -220,13 +218,17 @@ class UserFS:
     async def _chown(self, path: str) -> None:
         """Fix ownership of *path* to the provisioned user.
 
-        Also sets group read/write permissions so the server process (which
-        is in the provisioned user's group) can read and overwrite the file.
+        Also sets group read/write permissions so the server process can
+        read and overwrite the file via the workspace's group.
         """
         if self.username:
+            in_home = os.path.commonpath([os.path.abspath(path), self.home]) == self.home
+            group = self.username
+            if in_home and (await aiofiles.os.stat(self.home)).st_gid == os.getegid():
+                group = os.getegid()
             await asyncio.to_thread(
                 subprocess.run,
-                ["sudo", "chown", f"{self.username}:{self.username}", path],
+                ["sudo", "chown", f"{self.username}:{group}", "--", path],
                 check=True, capture_output=True,
             )
             await asyncio.to_thread(
@@ -254,8 +256,7 @@ class UserFS:
             ["sudo", "-u", self.username, "mkdir", "-p", path],
             check=True, capture_output=True,
         )
-        # Walk upward, setting 2770 so the server process (which is in the
-        # user's group) can create files inside these directories.
+        # Walk upward, setting 2770 so the server process can create files in these directories.
         target = os.path.normpath(path)
         home = os.path.normpath(self.home)
         while target != home and target.startswith(home + "/"):

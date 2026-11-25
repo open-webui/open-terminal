@@ -1,11 +1,12 @@
 """Per-user OS account provisioning for multi-user mode.
 
 When ``OPEN_TERMINAL_MULTI_USER=true``, each distinct ``X-User-Id`` is mapped
-to a dedicated Linux user account.  Commands and file operations then run as
-that OS user via ``sudo -u``. This separates workspaces inside a shared
-container; it is not a security boundary between users.
+to a dedicated Linux account. Commands run as that user. The file API accesses
+its workspace through Unix group permissions.
 """
 
+import fcntl
+import grp
 import hashlib
 import logging
 import os
@@ -13,7 +14,9 @@ import platform
 import pwd
 import re
 import shutil
+import stat
 import subprocess
+import sys
 
 log = logging.getLogger(__name__)
 
@@ -79,65 +82,178 @@ def sanitize_username(user_id: str) -> str:
     return name
 
 
-def ensure_os_user(username: str) -> str:
-    """Create the OS user if it doesn't exist (idempotent).
+def _allocate_uid(username: str, homes: dict[str, os.stat_result]) -> int:
+    # useradd -U creates a private group. Reserve both namespaces, including
+    # homes whose owners have not logged into this container yet.
+    used = {g.gr_gid for g in grp.getgrall()}
+    for pw in pwd.getpwall():
+        used.update((pw.pw_uid, pw.pw_gid))
+    used.update((os.geteuid(), os.getegid()))
+    for name, info in homes.items():
+        if name != username:
+            used.update((info.st_uid, info.st_gid))
+    persisted = homes.get(username)
+    if persisted and 1000 <= persisted.st_uid <= 60000 and persisted.st_uid not in used:
+        return persisted.st_uid
+    for uid in range(1000, 60001):
+        if uid not in used:
+            return uid
+    raise RuntimeError("No free workspace UID/GID")
 
-    Sets ``chmod 2770`` on the home directory and adds the server process
-    user to the new user's primary group.  This allows native Python I/O
-    for reads while other provisioned users still get ``Permission denied``.
-    Returns the home directory path.
-    """
+
+def _workspace_gid(home: str, pw: pwd.struct_passwd, group: grp.struct_group) -> int:
+    if os.geteuid() == 0:
+        return pw.pw_gid
+    server = pwd.getpwuid(os.geteuid())
+    if pw.pw_gid not in os.getgroups():
+        if server.pw_name not in group.gr_mem and server.pw_gid != pw.pw_gid:
+            _run_privileged(["usermod", "-aG", group.gr_name, server.pw_name])
+        try:
+            os.setgroups(os.getgrouplist(server.pw_name, server.pw_gid))
+        except PermissionError:
+            log.warning("Cannot refresh supplementary groups for paths outside %s", home)
+
+    # Local volumes with working supplementary groups keep their existing layout.
+    # AUTH_SYS preserves the primary GID even when NFS replaces supplementary groups.
+    if pw.pw_gid in os.getgroups():
+        mount = home if os.path.lexists(home) else "/home"
+        fs_type = subprocess.check_output(["stat", "-f", "-c", "%T", "--", mount], text=True).strip()
+        if fs_type not in ("nfs", "nfs4"):
+            return pw.pw_gid
+
+    gid = os.getegid()
+    members = {account.pw_name for account in pwd.getpwall() if account.pw_gid == gid}
+    for entry in grp.getgrall():
+        if entry.gr_gid == gid:
+            members.update(entry.gr_mem)
+    sock = "/var/run/docker.sock"
+    if members - {server.pw_name, "root"} or (os.path.exists(sock) and os.stat(sock).st_gid == gid):
+        raise RuntimeError(f"Workspace access to {home} requires a dedicated primary group for the server")
+    return gid
+
+
+def _migrate_children(home_fd, owner, uid, private_gid, gid):
+    def fail(error):
+        raise error
+
+    # Leave the top-level directory for the caller to mark complete. fwalk
+    # anchors traversal to directory FDs and does not follow directory symlinks.
+    for _, dirs, files, parent in os.fwalk(".", dir_fd=home_fd, onerror=fail):
+        for name in dirs + files:
+            fd = os.open(name, os.O_PATH | os.O_NOFOLLOW, dir_fd=parent)
+            try:
+                info = os.fstat(fd)
+                if info.st_dev != owner.st_dev:
+                    if name in dirs:
+                        dirs.remove(name)
+                    continue
+                if info.st_uid not in (owner.st_uid, uid):
+                    continue
+                # The procfs handle names the pinned inode, including for a
+                # symlink. Renames during a repair cannot redirect the chown.
+                handle = f"/proc/self/fd/{fd}"
+                group = gid if info.st_gid in (owner.st_gid, private_gid) else info.st_gid
+                if (info.st_uid, info.st_gid) != (uid, group):
+                    os.chown(handle, uid, group)
+                if gid != private_gid and group == gid and stat.S_ISDIR(info.st_mode):
+                    # Imported directories can lack setgid. Their shell-created
+                    # children must inherit the group used by the NFS client.
+                    mode = stat.S_IMODE(os.fstat(fd).st_mode)
+                    if not mode & stat.S_ISGID:
+                        os.chmod(handle, mode | stat.S_ISGID)
+            finally:
+                os.close(fd)
+
+
+def _repair_home(home, uid, private_gid, gid):
+    try:
+        os.mkdir(home, 0o700)
+    except FileExistsError:
+        pass
+    fd = os.open(home, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        owner = os.fstat(fd)
+        if (owner.st_uid, owner.st_gid) != (uid, gid):
+            _migrate_children(fd, owner, uid, private_gid, gid)
+            # Commit the home ownership last so a failed traversal is retried.
+            os.fchown(fd, uid, gid)
+        if stat.S_IMODE(os.fstat(fd).st_mode) != 0o2770:
+            os.fchmod(fd, 0o2770)
+    finally:
+        os.close(fd)
+
+
+def _repair_ownership(home: str, pw: pwd.struct_passwd, gid: int) -> None:
+    try:
+        info = os.lstat(home)
+    except FileNotFoundError:
+        pass
+    else:
+        if not stat.S_ISDIR(info.st_mode):
+            raise RuntimeError(f"Expected a workspace directory at {home}")
+        if (info.st_uid, info.st_gid, stat.S_IMODE(info.st_mode)) == (pw.pw_uid, gid, 0o2770):
+            return
+
+    _run_privileged([sys.executable, "-I", __file__, home, str(pw.pw_uid), str(pw.pw_gid), str(gid)])
+
+
+def _prepare_home(username: str) -> str:
+    if not username or username in (".", "..") or "/" in username:
+        raise ValueError(f"Invalid workspace account name {username!r}")
+    if username == "user":
+        raise RuntimeError(f"Refusing to use reserved account {username!r}")
+    home = f"/home/{username}"
     try:
         pw = pwd.getpwnam(username)
-        if pw.pw_uid < 1000 or pw.pw_uid in (os.getuid(), os.geteuid()):
-            raise RuntimeError(f"Refusing to use reserved account {username!r}")
-        return pw.pw_dir
     except KeyError:
-        pass  # User doesn't exist yet — create below
+        with os.scandir("/home") as entries:
+            homes = {
+                entry.name: entry.stat(follow_symlinks=False)
+                for entry in entries if entry.is_dir(follow_symlinks=False)
+            }
+        if os.path.lexists(home) and username not in homes:
+            raise RuntimeError(f"Expected a workspace directory at {home}")
+        uid = _allocate_uid(username, homes)
+        log.info("Provisioning OS user %s with UID %s", username, uid)
+        _run_privileged(["useradd", "-m", "-U", "-u", str(uid), "-s", "/bin/bash", "--", username])
+        pw = pwd.getpwnam(username)
 
-    log.info("Provisioning OS user: %s", username)
-    _run_privileged(["useradd", "-m", "-s", "/bin/bash", username])
-    home_dir = f"/home/{username}"
-    # Fix ownership (home dir may pre-exist from a previous run with a
-    # different UID assignment) and set permissions.
-    _run_privileged(["chown", "-R", f"{username}:{username}", home_dir])
-    _run_privileged(["chmod", "2770", home_dir])
-    # Add the server process user to the new user's group so Python can
-    # read files natively without subprocess.
-    server_user = os.getenv("USER", "user")
-    _run_privileged(["usermod", "-aG", username, server_user])
+    if pw.pw_uid < 1000 or pw.pw_uid in (os.getuid(), os.geteuid()):
+        raise RuntimeError(f"Refusing to use reserved account {username!r}")
+    try:
+        group = grp.getgrgid(pw.pw_gid)
+    except KeyError:
+        return pw.pw_dir
+    if pw.pw_dir != home or pw.pw_gid < 1000 or group.gr_name != username:
+        # Externally managed accounts keep their administrator-configured home.
+        return pw.pw_dir
+    _repair_ownership(home, pw, _workspace_gid(home, pw, group))
+
     # If the Docker socket is mounted, add the new user to its group
     # so docker commands work without sudo (mirrors entrypoint.sh).
     _DOCKER_SOCK = "/var/run/docker.sock"
     if os.path.exists(_DOCKER_SOCK):
-        import grp as _grp
         sock_gid = os.stat(_DOCKER_SOCK).st_gid
         try:
-            sock_group = _grp.getgrgid(sock_gid).gr_name
+            sock_group = grp.getgrgid(sock_gid).gr_name
+            if sock_gid in os.getgrouplist(username, pw.pw_gid):
+                return home
             _run_privileged(["usermod", "-aG", sock_group, username])
             log.info("Added %s to Docker socket group '%s'", username, sock_group)
         except (KeyError, subprocess.CalledProcessError) as exc:
             log.warning("Could not add %s to Docker socket group: %s", username, exc)
-    # Refresh the running process's supplementary group list so the new
-    # group takes effect immediately (normally requires re-login).
-    import ctypes
-    import ctypes.util
-    import grp
+    return home
 
-    pw = pwd.getpwnam(server_user)
-    group_ids = sorted({
-        g.gr_gid for g in grp.getgrall() if server_user in g.gr_mem
-    } | {pw.pw_gid})
+
+def ensure_os_user(username: str) -> str:
+    """Serialize ID allocation and repair across request threads and workers."""
+    # Lock a stable local inode. useradd replaces /etc/passwd during updates.
+    fd = os.open("/etc", os.O_RDONLY | os.O_DIRECTORY)
     try:
-        os.setgroups(group_ids)
-    except PermissionError:
-        # Container user may lack CAP_SETGID.  The group will take effect
-        # after the next process restart; log a warning and continue.
-        log.warning(
-            "Could not refresh supplementary groups (missing CAP_SETGID). "
-            "Restart the server for group changes to take effect."
-        )
-    return home_dir
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        return _prepare_home(username)
+    finally:
+        os.close(fd)
 
 
 def resolve_user(user_id: str) -> tuple[str, str]:
@@ -154,3 +270,7 @@ def resolve_user(user_id: str) -> tuple[str, str]:
     home_dir = ensure_os_user(username)
     _user_cache[user_id] = (username, home_dir)
     return username, home_dir
+
+
+if __name__ == "__main__":
+    _repair_home(sys.argv[1], *map(int, sys.argv[2:]))
