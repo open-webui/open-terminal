@@ -182,6 +182,9 @@ If that FFmpeg includes libx264, the native (non-VNC) Desktop viewer also uses H
 for large screen changes such as video and scrolling. The browser must reach Open WebUI
 over HTTPS or localhost; otherwise, or if either side cannot use H.264, it uses JPEG.
 
+On Windows with one display, FFmpeg 7 or newer also captures the screen faster and shows
+the real cursor. Otherwise a basic capture is used.
+
 The macOS and Windows Python capture bindings install automatically on their
 respective platforms. Capture starts on unmute and stops on mute or disconnect.
 After changing the default speakers/headphones on Linux or Windows, mute and

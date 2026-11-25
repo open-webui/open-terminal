@@ -10,6 +10,7 @@ import ctypes
 import contextlib
 import io
 import logging
+import shutil
 import subprocess
 import sys
 import time
@@ -148,6 +149,7 @@ class NativeDesktop:
         self.frame = None
         self.latest = None
         self.screen = self.screen_task = None
+        self.raw = self.basic = self.plain = None
         self.shared = None
         self.shared_at = 0.0
         self.unscrolled = [0.0, 0.0]
@@ -173,16 +175,39 @@ class NativeDesktop:
             self.input.DARWIN_CATCH_UP_TIME = 0.001
         # A remote viewer must be able to use screen corners, like the VNC viewer.
         self.input.FAILSAFE = False
-        if sys.platform == "darwin":
-            self.measure(*self.input.size())
-        else:
+        if sys.platform == "linux":
             self.open_capture()
+        else:
+            self.measure(*self.input.size())
 
     def open_capture(self):
         import mss
 
         self.capture = mss.mss()
         self.grab()
+        if sys.platform == "linux":
+            self.plain, self.capture = self.capture, mss.mss(with_cursor=True)
+            try:
+                self.capture.grab(self.capture.monitors[1])
+                self.fps, self.draws_cursor = 60, True
+            except mss.ScreenShotError:  # No XFixes; viewers show their own cursor.
+                self.capture.close()
+                self.capture, self.plain = self.plain, None
+
+    def screen_command(self):
+        """A process that writes raw BGRX frames, only when the screen changes."""
+        size = (str(self.width), str(self.height))
+        if sys.platform == "darwin":
+            return (sys.executable, "-u", "-m", "open_terminal.desktop.screen", *size, "60")
+        # Desktop Duplication numbers displays itself, so use it only when there is one.
+        if sys.platform == "win32" and shutil.which("ffmpeg") and ctypes.windll.user32.GetSystemMetrics(80) == 1:
+            return (
+                "ffmpeg", "-nostdin", "-loglevel", "error", "-filter_complex",
+                "ddagrab=framerate=60:dup_frames=0,hwdownload,format=bgra,"
+                f"scale={size[0]}:{size[1]}:flags=bilinear,format=bgr0",
+                "-fps_mode", "passthrough", "-f", "rawvideo", "pipe:1",
+            )
+        return None
 
     def measure(self, width, height):
         self.screen_width, self.screen_height = width, height
@@ -190,11 +215,10 @@ class NativeDesktop:
         self.width, self.height = round(width * scale), round(height * scale)
 
     async def start_screen(self):
-        """Capture a Mac with ScreenCaptureKit, in a process of its own."""
-        self.screen = await self.spawn(
-            sys.executable, "-u", "-m", "open_terminal.desktop.screen",
-            str(self.width), str(self.height), "60", stdout=asyncio.subprocess.PIPE,
-        )
+        command = self.screen_command()
+        if command is None:
+            raise RuntimeError("needs one display and FFmpeg 7")
+        self.screen = await self.spawn(*command, stdout=asyncio.subprocess.PIPE)
         data = await asyncio.wait_for(self.read_screen(), 15)
         self.update_frame(data)
         self.screen_started = time.monotonic()
@@ -221,7 +245,7 @@ class NativeDesktop:
                     self.measure(*size)
                     await self.start_screen()
         except Exception as exc:
-            log.warning("ScreenCaptureKit stopped, using basic capture: %s", str(exc) or type(exc).__name__)
+            log.warning("Screen capture stopped, using basic capture: %s", str(exc) or type(exc).__name__)
             await self.stop_process(self.screen)
             self.latest = None
             self.fps, self.draws_cursor = type(self).fps, False
@@ -233,12 +257,12 @@ class NativeDesktop:
     async def start(self):
         try:
             await self.work(self.setup)
-            if sys.platform == "darwin":
+            if sys.platform != "linux":
                 try:
                     await self.start_screen()
                     self.screen_task = asyncio.create_task(self.follow_screen())
                 except Exception as exc:
-                    log.warning("ScreenCaptureKit unavailable, using basic capture: %s", str(exc) or type(exc).__name__)
+                    log.warning("Screen capture unavailable, using basic capture: %s", str(exc) or type(exc).__name__)
                     if self.screen:
                         await self.stop_process(self.screen)
                     await self.work(self.open_capture)
@@ -286,7 +310,15 @@ class NativeDesktop:
             (m for m in self.capture.monitors[1:] if m["left"] == 0 and m["top"] == 0),
             self.capture.monitors[1],
         )
-        shot = self.capture.grab(screen)
+        try:
+            shot = self.capture.grab(screen)
+        except Exception:
+            if self.plain is None:
+                raise
+            shot = self.plain.grab(screen)  # The app that set this cursor has gone.
+        if self.basic is not None and shot.raw == self.raw:
+            return self.basic  # Unchanged, so there is nothing to compare or encode.
+        self.raw = shot.raw
         image = Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
         self.origin = (screen["left"], screen["top"]) if sys.platform == "linux" else (0, 0)
         # X11's root size spans every monitor; input must match the captured one.
@@ -294,7 +326,8 @@ class NativeDesktop:
             (screen["width"], screen["height"])
             if sys.platform == "linux" else self.input.size()
         ))
-        return image.resize((self.width, self.height), Image.Resampling.BILINEAR)
+        self.basic = image.resize((self.width, self.height), Image.Resampling.BILINEAR)
+        return self.basic
 
     def next_frame(self, last):
         """Grab the screen, or reuse a fresh grab this viewer has not had yet."""
@@ -562,7 +595,7 @@ class NativeDesktop:
         for peer in list(self.peers):
             with contextlib.suppress(Exception):
                 await peer.close(code=1012)
-        if self.capture:
-            await self.work(self.capture.close)
+        for capture in filter(None, (self.capture, self.plain)):
+            await self.work(capture.close)
         self.worker.shutdown(wait=False, cancel_futures=True)
         self.inputs.shutdown(wait=False, cancel_futures=True)
