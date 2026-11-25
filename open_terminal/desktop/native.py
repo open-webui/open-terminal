@@ -146,6 +146,10 @@ class NativeDesktop:
         self.target = ()
         self.width = self.height = 0
         self.frame = None
+        self.latest = None
+        self.screen = self.screen_task = None
+        self.shared = None
+        self.shared_at = 0.0
         self.unscrolled = [0.0, 0.0]
 
     @property
@@ -161,7 +165,6 @@ class NativeDesktop:
 
     def setup(self):
         check_permissions()
-        import mss
         import pyautogui
 
         self.input = pyautogui
@@ -170,12 +173,75 @@ class NativeDesktop:
             self.input.DARWIN_CATCH_UP_TIME = 0.001
         # A remote viewer must be able to use screen corners, like the VNC viewer.
         self.input.FAILSAFE = False
+        if sys.platform == "darwin":
+            self.measure(*self.input.size())
+        else:
+            self.open_capture()
+
+    def open_capture(self):
+        import mss
+
         self.capture = mss.mss()
         self.grab()
+
+    def measure(self, width, height):
+        self.screen_width, self.screen_height = width, height
+        scale = min(1, 1920 / width, 1080 / height)
+        self.width, self.height = round(width * scale), round(height * scale)
+
+    async def start_screen(self):
+        """Capture a Mac with ScreenCaptureKit, in a process of its own."""
+        self.screen = await self.spawn(
+            sys.executable, "-u", "-m", "open_terminal.desktop.screen",
+            str(self.width), str(self.height), "60", stdout=asyncio.subprocess.PIPE,
+        )
+        data = await asyncio.wait_for(self.read_screen(), 15)
+        self.update_frame(data)
+        self.screen_started = time.monotonic()
+        self.fps, self.draws_cursor = 60, True
+
+    async def read_screen(self):
+        return await self.screen.stdout.readexactly(self.width * self.height * 4)
+
+    def update_frame(self, data):
+        self.latest = Image.frombytes("RGB", (self.width, self.height), data, "raw", "BGRX")
+
+    async def follow_screen(self):
+        try:
+            while True:
+                try:
+                    while True:
+                        self.update_frame(await self.read_screen())
+                except asyncio.IncompleteReadError:
+                    size = await self.work(self.input.size)
+                    unchanged = tuple(size) == (self.screen_width, self.screen_height)
+                    if unchanged and time.monotonic() - self.screen_started < 5:
+                        raise
+                    await self.stop_process(self.screen)
+                    self.measure(*size)
+                    await self.start_screen()
+        except Exception as exc:
+            log.warning("ScreenCaptureKit stopped, using basic capture: %s", str(exc) or type(exc).__name__)
+            await self.stop_process(self.screen)
+            self.latest = None
+            self.fps, self.draws_cursor = type(self).fps, False
+            # Viewers reconnect, to show their own cursor again.
+            for peer in list(self.peers):
+                with contextlib.suppress(Exception):
+                    await peer.close(code=1012)
 
     async def start(self):
         try:
             await self.work(self.setup)
+            if sys.platform == "darwin":
+                try:
+                    await self.start_screen()
+                    self.screen_task = asyncio.create_task(self.follow_screen())
+                except Exception as exc:
+                    log.warning("ScreenCaptureKit unavailable, using basic capture: %s", str(exc) or type(exc).__name__)
+                    if self.screen:
+                        await self.stop_process(self.screen)
+                    await self.work(self.open_capture)
             await self.audio.start()
         except HTTPException:
             raise
@@ -212,6 +278,10 @@ class NativeDesktop:
                 await process.wait()
 
     def grab(self):
+        if (latest := self.latest) is not None:
+            return latest
+        if self.capture is None:
+            self.open_capture()
         screen = next(
             (m for m in self.capture.monitors[1:] if m["left"] == 0 and m["top"] == 0),
             self.capture.monitors[1],
@@ -220,16 +290,20 @@ class NativeDesktop:
         image = Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
         self.origin = (screen["left"], screen["top"]) if sys.platform == "linux" else (0, 0)
         # X11's root size spans every monitor; input must match the captured one.
-        self.screen_width, self.screen_height = (
+        self.measure(*(
             (screen["width"], screen["height"])
             if sys.platform == "linux" else self.input.size()
-        )
-        scale = min(1, 1920 / self.screen_width, 1080 / self.screen_height)
-        self.width, self.height = (
-            round(self.screen_width * scale),
-            round(self.screen_height * scale),
-        )
+        ))
         return image.resize((self.width, self.height), Image.Resampling.BILINEAR)
+
+    def next_frame(self, last):
+        """Grab the screen, or reuse a fresh grab this viewer has not had yet."""
+        if self.latest is not None:
+            return self.grab()  # Already one picture for everyone.
+        now = time.monotonic()
+        if self.shared is None or self.shared is last or now - self.shared_at > 1 / self.fps:
+            self.shared, self.shared_at = self.grab(), now
+        return self.shared
 
     def position(self, x, y, buttons=(), size=None):
         width, height = size or (self.width, self.height)
@@ -387,11 +461,12 @@ class NativeDesktop:
             return encoder.packets(image, level, video if h264 else None)
 
         async def frames():
+            image = None
             while True:
                 await ready.wait()
                 start = time.monotonic()
                 # A slow viewer gets lighter frames; still areas are sharpened afterwards.
-                image = await self.work(self.grab)
+                image = await self.work(self.next_frame, image)
                 packets = await asyncio.get_running_loop().run_in_executor(
                     encoding, encode, image, ready.adapt()
                 )
@@ -478,6 +553,11 @@ class NativeDesktop:
             self.peers.discard(ws)
 
     async def close(self):
+        if self.screen_task:
+            self.screen_task.cancel()
+            await asyncio.gather(self.screen_task, return_exceptions=True)
+        if self.screen:
+            await self.stop_process(self.screen)
         await self.audio.close()
         for peer in list(self.peers):
             with contextlib.suppress(Exception):
