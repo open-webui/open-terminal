@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.18.5] - 2026-11-26
+
+### Fixed
+
+- Fixed mouse movement and clicks being ignored outside the top-left quarter of shared GNOME Wayland desktops at 200% display scaling. The mouse can now reach the full screen, including buttons near the right and bottom edges. This corrects the incomplete scaling fix in 0.18.3 and applies to both the desktop viewer and assistant actions.
+
 ## [0.18.4] - 2026-11-26
 
 ### Changed
