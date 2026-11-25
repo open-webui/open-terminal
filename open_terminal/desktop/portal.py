@@ -27,6 +27,7 @@ REMOTE = "org.freedesktop.portal.RemoteDesktop"
 SCREENCAST = "org.freedesktop.portal.ScreenCast"
 SESSION = "org.freedesktop.portal.Session"
 REQUEST = "org.freedesktop.portal.Request"
+DISPLAY_CONFIG = "org.gnome.Mutter.DisplayConfig"
 log = logging.getLogger(__name__)
 
 
@@ -176,10 +177,11 @@ class PortalDesktop(NativeDesktop):
             future.cancel()
             raise
 
-    async def call(self, interface, member, signature="", body=None, path=PATH):
+    async def call(self, interface, member, signature="", body=None, path=PATH,
+                   destination=DESTINATION):
         try:
             reply = await asyncio.wait_for(self.bus.call(Message(
-                destination=DESTINATION, path=path, interface=interface,
+                destination=destination, path=path, interface=interface,
                 member=member, signature=signature, body=body or [],
             )), 10)
         except TimeoutError as exc:
@@ -240,6 +242,22 @@ class PortalDesktop(NativeDesktop):
             raise
         finally:
             self.pending.pop(path, None)
+
+    async def pointer_scale(self, position):
+        """GNOME reports a scaled monitor's logical size, but takes absolute
+        pointer positions in its stream's pixels. Other portals use logical."""
+        try:
+            _, _, monitors, properties = (await self.call(
+                DISPLAY_CONFIG, "GetCurrentState",
+                path="/org/gnome/Mutter/DisplayConfig", destination=DISPLAY_CONFIG,
+            )).body
+        except RuntimeError as exc:
+            log.info("No GNOME display scale; using logical pointer positions: %s", exc)
+            return 1
+        layout = properties.get("layout-mode")
+        if position is None or (layout and layout.value == 2):
+            return 1
+        return next((scale for x, y, scale, *_ in monitors if [x, y] == list(position.value)), 1)
 
     async def start(self):
         self.loop = asyncio.get_running_loop()
@@ -302,6 +320,8 @@ class PortalDesktop(NativeDesktop):
             self.screen_width, self.screen_height = size.value
             scale = min(1, 1920 / self.screen_width, 1080 / self.screen_height)
             self.width, self.height = round(self.screen_width * scale), round(self.screen_height * scale)
+            scale = await self.pointer_scale(properties.get("position"))
+            self.screen_width, self.screen_height = self.screen_width * scale, self.screen_height * scale
             self.input = PortalInput(self)
             reply = await self.call(SCREENCAST, "OpenPipeWireRemote", "oa{sv}", [self.session, {}])
             try:
