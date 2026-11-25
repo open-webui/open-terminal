@@ -114,25 +114,26 @@ class PortalInput:
     def moveTo(self, x, y):
         self.notify("NotifyPointerMotionAbsolute", "udd", self.desktop.node, float(x), float(y))
 
-    def mouseDown(self, button):
+    # Coordinates match pyautogui's signatures; moveTo has already applied them.
+    def mouseDown(self, x=None, y=None, *, button):
         self.notify("NotifyPointerButton", "iu", {"left": 272, "right": 273, "middle": 274}[button], 1)
 
-    def mouseUp(self, button):
+    def mouseUp(self, x=None, y=None, *, button):
         self.notify("NotifyPointerButton", "iu", {"left": 272, "right": 273, "middle": 274}[button], 0)
 
-    def click(self, button, clicks=1, interval=0):
+    def click(self, x=None, y=None, *, button, clicks=1, interval=0):
         for n in range(clicks):
             if n:
                 time.sleep(interval)
             try:
-                self.mouseDown(button)
+                self.mouseDown(button=button)
             finally:
-                self.mouseUp(button)
+                self.mouseUp(button=button)
 
-    def scroll(self, amount):
+    def scroll(self, amount, x=None, y=None):
         self.notify("NotifyPointerAxisDiscrete", "ui", 0, -amount)
 
-    def hscroll(self, amount):
+    def hscroll(self, amount, x=None, y=None):
         self.notify("NotifyPointerAxisDiscrete", "ui", 1, amount)
 
     def keyDown(self, key):

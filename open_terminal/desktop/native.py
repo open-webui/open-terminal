@@ -131,6 +131,7 @@ class NativeDesktop:
         )
         self.capture = None
         self.origin = (0, 0)
+        self.target = ()
         self.width = self.height = 0
 
     async def work(self, fn, *args):
@@ -211,16 +212,18 @@ class NativeDesktop:
     def position(self, x, y, buttons=()):
         if not (0 <= x < self.width and 0 <= y < self.height):
             raise ValueError("Coordinates are outside the current desktop screenshot")
-        target = (
+        # Button and scroll calls pass this on: macOS applies moves asynchronously,
+        # so reading the cursor back can return where it was before the move.
+        self.target = (
             self.origin[0] + round(x * self.screen_width / self.width),
             self.origin[1] + round(y * self.screen_height / self.height),
         )
         if sys.platform == "darwin" and buttons:
             # macOS requires drag events, even when mouseDown has already been sent.
             button = next(b for b in ("left", "right", "middle") if b in buttons)
-            self.input.dragTo(*target, button=button, mouseDownUp=False)
+            self.input.dragTo(*self.target, button=button, mouseDownUp=False)
         else:
-            self.input.moveTo(*target)
+            self.input.moveTo(*self.target)
 
     def paste(self, text):
         import pyperclip
@@ -233,7 +236,7 @@ class NativeDesktop:
             self.input.keyUp(key)
         keys.clear()
         for button in list(buttons):
-            self.input.mouseUp(button=button)
+            self.input.mouseUp(*self.target, button=button)
         buttons.clear()
 
     def handle(self, message, keys, buttons):
@@ -242,15 +245,15 @@ class NativeDesktop:
             for flag, button in ((1, "left"), (2, "right"), (4, "middle")):
                 down = bool(message.buttons & flag)
                 if down and button not in buttons:
-                    self.input.mouseDown(button=button)
+                    self.input.mouseDown(*self.target, button=button)
                     buttons.add(button)
                 elif not down and button in buttons:
-                    self.input.mouseUp(button=button)
+                    self.input.mouseUp(*self.target, button=button)
                     buttons.remove(button)
             if message.deltaY:
-                self.input.scroll(-message.deltaY)
+                self.input.scroll(-message.deltaY, *self.target)
             if message.deltaX:
-                self.input.hscroll(message.deltaX)
+                self.input.hscroll(message.deltaX, *self.target)
         elif message.type == "key" and (key := KEYS.get(message.code)):
             if message.down:
                 self.input.keyDown(key)
@@ -269,23 +272,24 @@ class NativeDesktop:
             self.position(body.x, body.y)
         if body.action in ("click", "double_click"):
             self.input.click(
+                *self.target,
                 button=body.button,
                 clicks=2 if body.action == "double_click" else 1,
                 interval=0.1 if body.action == "double_click" else 0,
             )
         elif body.action == "drag":
             try:
-                self.input.mouseDown(button=body.button)
+                self.input.mouseDown(*self.target, button=body.button)
                 self.position(body.to_x, body.to_y, (body.button,))
             finally:
-                self.input.mouseUp(button=body.button)
+                self.input.mouseUp(*self.target, button=body.button)
         elif body.action == "scroll":
             amount = body.amount * (-1 if body.direction in ("down", "left") else 1)
             (
                 self.input.hscroll
                 if body.direction in ("left", "right")
                 else self.input.scroll
-            )(amount)
+            )(amount, *(self.target if body.x is not None else ()))
         elif body.action == "type":
             self.paste(body.text)
         elif body.action == "key":
