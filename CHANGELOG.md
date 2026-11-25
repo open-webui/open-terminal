@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.18.2] - 2026-11-25
+
+### Fixed
+
+- Fixed clicks, drag releases, and scrolling landing at the previous mouse position when controlling a Mac's desktop. This applies to both the desktop viewer and assistant actions.
+- Fixed users losing access to their saved home folders after recreating a multi-user container, including when users reconnect in a different order. Existing folders are matched back to their owners, and interrupted repairs are retried on the next access.
+- Fixed the file browser refusing to list, read, upload, or overwrite files in multi-user home folders on NFS network storage, even when the same files worked in the terminal. Existing folders may take longer to open on first access while ownership is repaired; the storage server must allow those repairs.
+
 ## [0.18.1] - 2026-11-25
 
 ### Fixed
