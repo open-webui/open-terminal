@@ -39,8 +39,6 @@ class WaylandDesktop(PortalDesktop):
         self.services = {}
         self.vnc = None
         self.audio = DesktopAudio(self)
-        self.clipboard_data = b""
-        self.clipboard_tasks = set()
         self.width = self.screen_width = WIDTH
         self.height = self.screen_height = HEIGHT
         self.failure = "The virtual GNOME Wayland desktop has stopped. Reconnect to start a new session."
@@ -119,9 +117,7 @@ class WaylandDesktop(PortalDesktop):
             self.first_frame.set()
         elif (not self.closed and message.interface == REMOTE + ".Session"
               and message.member == "SelectionTransfer" and message.path == self.session):
-            task = asyncio.create_task(self.write_selection(message.body[1], self.clipboard_data))
-            self.clipboard_tasks.add(task)
-            task.add_done_callback(self.clipboard_tasks.discard)
+            self.transfer_selection(message.body[1])
 
     async def start(self):
         self.loop = asyncio.get_running_loop()
@@ -210,47 +206,14 @@ class WaylandDesktop(PortalDesktop):
         if self.bus and self.session:
             await self.invoke(REMOTE, self.session, REMOTE + ".Session", "Stop")
 
-    async def write_selection(self, serial, data):
-        reply = None
-        success = False
-        try:
-            reply = await self.invoke(REMOTE, self.session, REMOTE + ".Session", "SelectionWrite", "u", [serial], return_message=True)
-            fd = reply.unix_fds[reply.body[0]]
-            os.set_blocking(fd, False)
-            remaining = memoryview(data)
-            while remaining:
-                try:
-                    remaining = remaining[os.write(fd, remaining):]
-                except BlockingIOError:
-                    ready = self.loop.create_future()
-                    self.loop.add_writer(fd, lambda: ready.done() or ready.set_result(None))
-                    try:
-                        await asyncio.wait_for(ready, 5)
-                    finally:
-                        self.loop.remove_writer(fd)
-            success = True
-        except (OSError, RuntimeError, TimeoutError):
-            pass
-        finally:
-            if reply:
-                for fd in reply.unix_fds:
-                    os.close(fd)
-            with contextlib.suppress(Exception):
-                await self.invoke(REMOTE, self.session, REMOTE + ".Session", "SelectionWriteDone", "ub", [serial, success])
-
-    def paste(self, text):
+    def paste(self, text, shift=False):
         # A clipboard transfer preserves Unicode and the active keyboard layout.
-        async def transfer():
-            self.clipboard_data = text.encode("utf-8")
-            await self.invoke(REMOTE, self.session, REMOTE + ".Session", "SetSelection", "a{sv}",
-                              [{"mime-types": Variant("as", ["text/plain;charset=utf-8", "text/plain"])}])
-            try:
-                await self.notify("NotifyKeyboardKeysym", "iu", 0xFFE3, 1)
-                await self.notify("NotifyKeyboardKeysym", "iu", ord("v"), 1)
-            finally:
-                await self.notify("NotifyKeyboardKeysym", "iu", ord("v"), 0)
-                await self.notify("NotifyKeyboardKeysym", "iu", 0xFFE3, 0)
-        self.sync(transfer())
+        self.paste_clipboard(text, shift)
+
+    async def selection(self, member, signature, *body):
+        if member == "SetSelection":
+            body = ({"mime-types": body[0]["mime_types"]},)
+        return await self.invoke(REMOTE, self.session, REMOTE + ".Session", member, signature, list(body), return_message=True)
 
     def update_frame(self, data):
         super().update_frame(data)
@@ -282,9 +245,6 @@ class WaylandDesktop(PortalDesktop):
             if self.vnc:
                 await self.vnc.close()
             self.closed = True
-            for task in list(self.clipboard_tasks):
-                task.cancel()
-            await asyncio.gather(*self.clipboard_tasks, return_exceptions=True)
             await super().close()
         finally:
             shutil.rmtree(self.runtime, ignore_errors=True)

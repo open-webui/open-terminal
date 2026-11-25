@@ -41,6 +41,7 @@ class Input(BaseModel):
     code: str = Field(default="", max_length=50)
     down: bool = False
     text: str = Field(default="", max_length=20000)
+    shift: bool = False
 
 
 KEYS = {
@@ -272,11 +273,11 @@ class NativeDesktop:
             if x:
                 self.input.hscroll(x, *self.target)
 
-    def paste(self, text):
+    def paste(self, text, shift=False):
         import pyperclip
 
         pyperclip.copy(text)
-        self.input.hotkey("command" if sys.platform == "darwin" else "ctrl", "v")
+        self.input.hotkey("command" if sys.platform == "darwin" else "ctrl", *(["shift"] if shift else []), "v")
 
     def release(self, keys, buttons):
         for key in list(keys):
@@ -317,7 +318,7 @@ class NativeDesktop:
                 keys.discard(key)
         elif message.type == "paste":
             self.release(keys, buttons)
-            self.paste(message.text)
+            self.paste(message.text, message.shift)
         elif message.type == "release":
             self.release(keys, buttons)
 

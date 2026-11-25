@@ -164,7 +164,10 @@ sharing indicator. A GNOME VNC/RDP server is not needed.
 From SSH, run as the same OS user: Open Terminal can reach that user's existing
 desktop portal even when `XDG_SESSION_TYPE=tty`. Someone must still be logged in
 to the graphical desktop and approve the initial dialog there. Host mode never starts
-a new desktop as a fallback. Wayland text input sends Unicode key events.
+a new desktop as a fallback. Pasting on Wayland types plain text. Other characters need
+clipboard access, which GNOME offers in the sharing dialog. To add it to an existing
+approval, delete `~/.local/state/open-terminal/desktop-restore-token`, restart Open Terminal,
+and approve sharing again on the desktop. In a terminal, paste such text with Ctrl+Shift+V.
 Host audio captures the logged-in desktop's sound output when you unmute the
 viewer. It does not capture the microphone. Install **FFmpeg** with Opus support
 and ensure `ffmpeg` is on the server's `PATH`, then restart Open Terminal:

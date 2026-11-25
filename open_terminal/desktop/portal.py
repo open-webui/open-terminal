@@ -27,6 +27,7 @@ REMOTE = "org.freedesktop.portal.RemoteDesktop"
 SCREENCAST = "org.freedesktop.portal.ScreenCast"
 SESSION = "org.freedesktop.portal.Session"
 REQUEST = "org.freedesktop.portal.Request"
+CLIPBOARD = "org.freedesktop.portal.Clipboard"
 DISPLAY_CONFIG = "org.gnome.Mutter.DisplayConfig"
 log = logging.getLogger(__name__)
 
@@ -197,6 +198,9 @@ class PortalDesktop(NativeDesktop):
         self.capture_stderr = ""
         self.first_frame = asyncio.Event()
         self.pending = {}
+        self.clipboard_enabled = False
+        self.clipboard_data = b""
+        self.clipboard_tasks = set()
         self.failure = "Desktop sharing has ended. Reconnect and approve sharing on the Linux desktop."
 
     def sync(self, coroutine, timeout=10):
@@ -228,6 +232,8 @@ class PortalDesktop(NativeDesktop):
             future = self.pending.get(message.path)
             if future is not None and not future.done():
                 future.set_result(message.body)
+        elif message.interface == CLIPBOARD and message.member == "SelectionTransfer" and message.body[0] == self.session:
+            self.transfer_selection(message.body[2])
         elif message.interface == SESSION and message.member == "Closed" and message.path == self.session:
             self.closed = True
             self.latest = None
@@ -302,7 +308,7 @@ class PortalDesktop(NativeDesktop):
             await asyncio.wait_for(self.bus.connect(), 10)
             self.bus.add_message_handler(self.on_message)
             stage = "subscribing to desktop portal responses"
-            for interface in (REQUEST, SESSION):
+            for interface in (REQUEST, SESSION, CLIPBOARD):
                 reply = await asyncio.wait_for(self.bus.call(Message(
                     destination="org.freedesktop.DBus", path="/org/freedesktop/DBus",
                     interface="org.freedesktop.DBus", member="AddMatch", signature="s",
@@ -336,7 +342,11 @@ class PortalDesktop(NativeDesktop):
             # Restore tokens are single-use, including attempts that time out.
             if saved_token:
                 save_restore_token(None)
+            # Optional, and a saved approval keeps whatever was granted with it.
+            with contextlib.suppress(RuntimeError):
+                await self.call(CLIPBOARD, "RequestClipboard", "oa{sv}", [self.session, {}])
             results = await self.request(REMOTE, "Start", "os", [self.session, ""])
+            self.clipboard_enabled = results.get("clipboard_enabled", Variant("b", False)).value
             if version >= 2:
                 replacement = results.get("restore_token")
                 save_restore_token(replacement.value if replacement else None)
@@ -437,9 +447,47 @@ class PortalDesktop(NativeDesktop):
         # Absolute positions use the stream's pixels, but scrolling is logical.
         self.input.axis(x / self.scale, y / self.scale)
 
-    def paste(self, text):
-        # Keysyms also work over SSH, without guessing a Wayland socket or
-        # replacing another session's clipboard. No root/uinput access is needed.
+    async def selection(self, member, signature, *body):
+        return await self.call(CLIPBOARD, member, "o" + signature, [self.session, *body])
+
+    def transfer_selection(self, serial):
+        task = asyncio.create_task(self.write_selection(serial, self.clipboard_data))
+        self.clipboard_tasks.add(task)
+        task.add_done_callback(self.clipboard_tasks.discard)
+
+    async def write_selection(self, serial, data):
+        reply = None
+        success = False
+        try:
+            reply = await self.selection("SelectionWrite", "u", serial)
+            fd = reply.unix_fds[reply.body[0]]
+            os.set_blocking(fd, False)
+            remaining = memoryview(data)
+            while remaining:
+                try:
+                    remaining = remaining[os.write(fd, remaining):]
+                except BlockingIOError:
+                    ready = self.loop.create_future()
+                    self.loop.add_writer(fd, lambda: ready.done() or ready.set_result(None))
+                    try:
+                        await asyncio.wait_for(ready, 5)
+                    finally:
+                        self.loop.remove_writer(fd)
+            success = True
+        except (OSError, RuntimeError, TimeoutError):
+            pass
+        finally:
+            if reply:
+                for fd in reply.unix_fds:
+                    os.close(fd)
+            with contextlib.suppress(Exception):
+                await self.selection("SelectionWriteDone", "ub", serial, success)
+
+    def paste(self, text, shift=False):
+        # Typing works in every app, but only for characters the keyboard layout has.
+        if self.clipboard_enabled and not text.isascii():
+            return self.paste_clipboard(text, shift)
+
         async def type_text():
             for char in text:
                 key = {"\n": 0xFF0D, "\r": 0xFF0D, "\t": 0xFF09}.get(char)
@@ -452,6 +500,23 @@ class PortalDesktop(NativeDesktop):
 
         self.sync(type_text(), timeout=max(10, len(text) / 100))
 
+    def paste_clipboard(self, text, shift=False):
+        keys = [0xFFE3, *([0xFFE1] if shift else []), ord("v")]
+
+        async def transfer():
+            self.clipboard_data = text.encode("utf-8")
+            await self.selection("SetSelection", "a{sv}", {
+                "mime_types": Variant("as", ["text/plain;charset=utf-8", "text/plain"]),
+            })
+            try:
+                for key in keys:
+                    await self.notify("NotifyKeyboardKeysym", "iu", key, 1)
+            finally:
+                for key in reversed(keys):
+                    await self.notify("NotifyKeyboardKeysym", "iu", key, 0)
+
+        self.sync(transfer())
+
     async def stop_session(self):
         if self.bus and self.session:
             await self.call(SESSION, "Close", path=self.session)
@@ -462,6 +527,9 @@ class PortalDesktop(NativeDesktop):
         try:
             await super().close()
         finally:
+            for task in list(self.clipboard_tasks):
+                task.cancel()
+            await asyncio.gather(*self.clipboard_tasks, return_exceptions=True)
             if self.reader_task:
                 self.reader_task.cancel()
                 await asyncio.gather(self.reader_task, return_exceptions=True)
