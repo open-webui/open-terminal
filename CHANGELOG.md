@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.18.6] - 2026-11-26
+
+### Fixed
+
+- Fixed pasted Korean text, accented letters, and emoji being dropped on shared Wayland desktops by using the remote clipboard when access is allowed. Existing GNOME sharing approvals may need to be renewed with clipboard access enabled; see the [setup instructions](docs/configuration.md#desktop). Without that permission, these characters may still be dropped. Pasting this text replaces the remote clipboard's contents.
+- Added support for Ctrl+Shift+V, or Cmd+Shift+V from a Mac, when pasting into terminals inside the desktop viewer. This lets terminals receive clipboard text instead of treating Ctrl+V as a different command. Requires an updated Open WebUI.
+
 ## [0.18.5] - 2026-11-26
 
 ### Fixed
