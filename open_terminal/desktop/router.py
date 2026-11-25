@@ -462,6 +462,7 @@ async def connect(request: Request, fs: UserFS = Depends(get_filesystem)):
         "platform": sys.platform,
         "mode": DESKTOP_MODE,
         "audio": getattr(desktop, "audio_available", False),
+        "cursor": getattr(desktop, "draws_cursor", False),
         "clipboard": getattr(desktop, "clipboard", desktop.transport == "vnc"),
     }
 

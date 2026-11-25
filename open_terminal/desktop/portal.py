@@ -185,6 +185,7 @@ class PortalInput:
 
 class PortalDesktop(NativeDesktop):
     fps = 60  # Frames arrive from PipeWire, so an unchanged one costs nothing.
+    draws_cursor = True
     scale = 1
 
     def __init__(self, fs):
@@ -336,8 +337,8 @@ class PortalDesktop(NativeDesktop):
             await self.request(REMOTE, "SelectDevices", "o", [self.session], devices)
             await self.request(SCREENCAST, "SelectSources", "o", [self.session], {
                 "types": Variant("u", 1), "multiple": Variant("b", False),
-                # The viewer shows its own cursor; a second one would trail behind it.
-                "cursor_mode": Variant("u", 1),
+                # Embedded, so viewers see its real shape. They hide their own.
+                "cursor_mode": Variant("u", 2),
             })
             # Restore tokens are single-use, including attempts that time out.
             if saved_token:
@@ -390,7 +391,7 @@ class PortalDesktop(NativeDesktop):
             "gst-launch-1.0", "-q", "pipewiresrc", f"path={self.node}",
             *((f"fd={fd}",) if fd is not None else ()),
             "!", "queue", "max-size-buffers=1", "leaky=downstream",
-            "!", "videoconvert", "!", "videoscale",
+            "!", "videoconvert", "n-threads=4", "!", "videoscale", "n-threads=4",
             "!", f"video/x-raw,format=RGBx,width={width},height={height},pixel-aspect-ratio=1/1",
             "!", "fdsink", "fd=1", "sync=false",
             pass_fds=() if fd is None else (fd,), env=sanitized_environ(env),

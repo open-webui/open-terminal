@@ -123,6 +123,7 @@ def check_permissions():
 class NativeDesktop:
     transport = "frames"
     fps = 30
+    draws_cursor = False
 
     def __init__(self, fs):
         if fs.username:
