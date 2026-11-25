@@ -108,18 +108,43 @@ class PortalInput:
 
     def __init__(self, desktop):
         self.desktop = desktop
+        self.position = None
+        self.moved = 0.0
+        self.held = set()
 
     def notify(self, member, signature, *body):
         self.desktop.sync(self.desktop.notify(member, signature, *body))
 
-    def moveTo(self, x, y):
+    def absolute(self, x, y):
         self.notify("NotifyPointerMotionAbsolute", "udd", self.desktop.node, float(x), float(y))
+
+    def moveTo(self, x, y):
+        scale = self.desktop.scale
+        if scale == 1:
+            return self.absolute(x, y)
+        # On a scaled display GNOME takes absolute positions in stream pixels, but the
+        # portal rejects any beyond the smaller logical size, so most of the screen is
+        # out of reach. Relative motion is logical and has no such limit.
+        position, self.position = self.position, None
+        now = time.monotonic()
+        if position is None or (not self.held and now - self.moved > 1):
+            # Someone may have moved the mouse since; start from a known place.
+            near_x = min(x, self.desktop.screen_width / scale - 1)
+            near_y = min(y, self.desktop.screen_height / scale - 1)
+            self.absolute(near_x, near_y)
+            position = near_x / scale, near_y / scale
+        target = x / scale, y / scale
+        if target != position:
+            self.notify("NotifyPointerMotion", "dd", target[0] - position[0], target[1] - position[1])
+        self.position, self.moved = target, now
 
     # Coordinates match pyautogui's signatures; moveTo has already applied them.
     def mouseDown(self, x=None, y=None, *, button):
+        self.held.add(button)
         self.notify("NotifyPointerButton", "iu", {"left": 272, "right": 273, "middle": 274}[button], 1)
 
     def mouseUp(self, x=None, y=None, *, button):
+        self.held.discard(button)
         self.notify("NotifyPointerButton", "iu", {"left": 272, "right": 273, "middle": 274}[button], 0)
 
     def click(self, x=None, y=None, *, button, clicks=1, interval=0):
@@ -250,7 +275,7 @@ class PortalDesktop(NativeDesktop):
             self.pending.pop(path, None)
 
     async def pointer_scale(self, position):
-        """GNOME reports a scaled monitor's logical size, but takes absolute
+        """GNOME reports a scaled monitor's logical size, but reads absolute
         pointer positions in its stream's pixels. Other portals use logical."""
         try:
             _, _, monitors, properties = (await self.call(
