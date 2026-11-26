@@ -101,6 +101,14 @@ EXECUTE_DESCRIPTION = os.environ.get(
     config.get("execute_description", ""),
 )
 
+# Limits on serialized tool results, independent of on-disk log retention.
+MAX_TOOL_OUTPUT_BYTES = max(4096, int(os.environ.get(
+    "OPEN_TERMINAL_MAX_TOOL_OUTPUT_BYTES", config.get("max_tool_output_bytes", 1024 * 1024)
+)))
+MAX_TOOL_BINARY_BYTES = max(4096, int(os.environ.get(
+    "OPEN_TERMINAL_MAX_TOOL_BINARY_BYTES", config.get("max_tool_binary_bytes", 5 * 1024 * 1024)
+)))
+
 # Maximum size (in bytes) for per-process JSONL log files.
 # Once exceeded, the oldest portion is removed on disk; output capture continues.
 MAX_PROCESS_LOG_SIZE = int(
