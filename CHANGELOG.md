@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.18.7] - 2026-11-27
+
+### Added
+
+- Added support for the Sessions item in each machine's menu in Open WebUI. It lists your open terminal shells and running commands from all chats on that machine, newest first, and lets you stop them without returning to the original chat. You only see and stop your own sessions. Requires an updated Open WebUI.
+
+### Changed
+
+- Watching the same desktop in multiple tabs or devices no longer makes each viewer wait while another viewer's picture is prepared. Viewers also share recent screen captures instead of repeatedly capturing the same screen.
+- Desktop sharing now shows the remote mouse pointer's actual shape, including text cursors, pointing hands, and resize arrows, on supported Mac, Windows, and Linux desktops. Requires an updated Open WebUI to hide the extra browser pointer.
+- Mac desktops and supported Windows desktops can now update up to 60 times per second and capture new pictures only when the screen changes. Windows requires FFmpeg 7 or newer and one display. If the faster capture cannot start or fails, sharing falls back to basic capture. See the [setup instructions](docs/configuration.md#desktop).
+- Linux X11 desktop sharing can now update up to 60 times per second when cursor capture is available, and skips preparing another picture when the screen has not changed.
+
+### Fixed
+
+- Fixed X11 desktop sharing ending when it could no longer read a mouse cursor left behind by a closed app. That picture is now sent without the cursor instead.
+
 ## [0.18.6] - 2026-11-26
 
 ### Fixed
