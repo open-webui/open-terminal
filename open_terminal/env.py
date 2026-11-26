@@ -148,6 +148,14 @@ if ENABLE_NOTEBOOKS:
     from importlib.util import find_spec
     ENABLE_NOTEBOOKS = all(find_spec(module) is not None for module in ("nbclient", "ipykernel"))
 
+ENABLE_AGENTS = os.environ.get(
+    "OPEN_TERMINAL_ENABLE_AGENTS", str(config.get("enable_agents", True))
+).lower() not in ("false", "0", "no")
+_agents = os.environ.get("OPEN_TERMINAL_AGENTS", config.get("agents", []))
+if isinstance(_agents, str):
+    _agents = _agents.split(",")
+AGENTS = {name.strip() for name in _agents if name.strip()}
+
 ENABLE_BROWSER = os.environ.get(
     "OPEN_TERMINAL_ENABLE_BROWSER",
     str(config.get("enable_browser", True)),

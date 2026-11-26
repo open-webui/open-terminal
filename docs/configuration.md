@@ -23,6 +23,8 @@ execute_timeout = 5  # seconds to wait for command output (unset by default)
 file_browser_root = "home"
 enable_browser = true
 enable_desktop = true
+enable_agents = true
+agents = []  # Empty allows all providers. For a subset, use ["claude-code", "codex"].
 ```
 
 Browser and desktop support are enabled by default. Set `OPEN_TERMINAL_ENABLE_BROWSER=false`

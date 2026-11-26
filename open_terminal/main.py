@@ -370,6 +370,7 @@ class BackgroundProcess:
     session_id: str = ""
     started_at: float = field(default_factory=time.time, repr=False)
     changed: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
+    kill_requested: bool = False
 
     def notify_output(self):
         changed, self.changed = self.changed, asyncio.Event()
@@ -517,7 +518,7 @@ async def get_config():
             "system": ENABLE_SYSTEM_PROMPT,
             "git": shutil.which("git") is not None,
             "events": True,
-            "agents": True,
+            "agents": bool(agent_sessions.PROVIDERS),
             "browser": ENABLE_BROWSER,
             "desktop": ENABLE_DESKTOP and desktop_available(),
         },
@@ -1989,7 +1990,7 @@ async def send_input(process_id: str, body: InputRequest, http_request: Request)
     "/execute/{process_id}",
     operation_id="kill_process",
     summary="Kill a running command",
-    description="Terminate the process. Sends SIGTERM by default for graceful shutdown. Use force=true to send SIGKILL.",
+    description="Stop the command gracefully, then force termination after 3 seconds. Use force=true to skip the grace period.",
     dependencies=[Depends(verify_api_key)],
     responses={
         404: {"description": "Process not found."},
@@ -2006,12 +2007,19 @@ async def kill_process(
 
 
 async def _kill_process(background_process: BackgroundProcess, force: bool = False):
-    if background_process.status == "running":
-        background_process.status = "killed"
-        background_process.runner.kill(force=force)
-        # The log task owns draining, reaping and closing the runner.
-        await asyncio.shield(background_process.log_task)
-    background_process.finished_at = time.time()
+    task = background_process.log_task
+    for force_kill in ((True,) if force else (False, True)):
+        if background_process.status == "running" and background_process.exit_code is None:
+            try:
+                background_process.runner.kill(force=force_kill)
+            except PermissionError as exc:
+                raise HTTPException(403, "Permission denied when stopping the command.") from exc
+            background_process.kill_requested = True
+        # The logger must keep draining and reaping even if this request times out.
+        done, _ = await asyncio.wait([task], timeout=3)
+        if done:
+            return task.result()
+    raise HTTPException(504, "Timed out waiting for the command to stop and finish cleanup.")
 
 
 # ---------------------------------------------------------------------------

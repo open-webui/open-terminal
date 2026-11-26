@@ -22,7 +22,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from open_terminal.env import sanitized_environ
+from open_terminal.env import AGENTS, ENABLE_AGENTS, sanitized_environ
 from . import (
     acp,
     codex,
@@ -108,6 +108,10 @@ def configured_agents(raw: str | None) -> dict[str, ConfiguredAcp]:
 
 
 PROVIDERS.update(configured_agents(os.environ.get("OPEN_TERMINAL_ACP_AGENTS")))
+if not ENABLE_AGENTS:
+    PROVIDERS.clear()
+elif AGENTS:
+    PROVIDERS = {name: adapter for name, adapter in PROVIDERS.items() if name in AGENTS}
 sessions: dict[str, Session] = {}
 creation_lock = asyncio.Lock()
 
@@ -181,7 +185,10 @@ def command(provider, fs, options):
             adapter, "COMMAND_ENV", f"OPEN_TERMINAL_{adapter.BINARY.upper()}_COMMAND"
         )
     )
-    executable = configured or shutil.which(adapter.BINARY, path=env["PATH"])
+    if adapter is goose and not configured:
+        executable = goose.find_cli(env["PATH"])
+    else:
+        executable = configured or shutil.which(adapter.BINARY, path=env["PATH"])
     if not executable:
         raise HTTPException(409, f"{adapter.NAME} is not installed in this environment")
     return [*prefix, executable, *adapter.arguments(options)], env, kwargs

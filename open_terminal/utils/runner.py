@@ -319,10 +319,7 @@ class WinPtyRunner(ProcessRunner):
         self._pty.write(data.decode(errors="replace"))
 
     def kill(self, force: bool = False) -> None:
-        if force:
-            self._pty.kill(signal.SIGKILL)
-        else:
-            self._pty.terminate()
+        self._pty.terminate(force=force)
 
     async def wait(self) -> int:
         while self._pty.isalive():

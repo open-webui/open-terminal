@@ -98,6 +98,10 @@ Use the dedicated **Open Terminal** section to get the file browser and terminal
 
 Install and sign in to the agent CLIs as the user running Open Terminal. In a compatible Open WebUI checkout, selecting this terminal adds its discovered models to the existing model selector as `<agent>/<model>`. Agent conversations run in the terminal's current directory, with streaming output, native tool/extension approvals, attachments, Stop, and conversation continuation.
 
+Discovery launches installed agent CLIs to ask for their models. Set `OPEN_TERMINAL_ENABLE_AGENTS=false` to disable coding agents
+or `OPEN_TERMINAL_AGENTS=claude-code,codex` to allow specific providers. Custom ACP agents use IDs such as `acp-kiro`.
+An empty list allows all providers when coding agents are enabled. Restart Open Terminal after changing these settings.
+
 | Agent | Native interface | Executable override |
 | --- | --- | --- |
 | Codex | `codex app-server --listen stdio://` | `OPEN_TERMINAL_CODEX_COMMAND` |

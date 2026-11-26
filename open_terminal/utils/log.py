@@ -163,7 +163,7 @@ async def log_process(background_process, on_finish=None) -> None:
         finally:
             runner.close()
             if background_process.status == "running":
-                background_process.status = "done"
+                background_process.status = "killed" if background_process.kill_requested else "done"
             if writer:
                 try:
                     await writer.write(json.dumps({"type": "end", "exit_code": background_process.exit_code, "log_rotated": writer.rotated, "ts": time.time()}) + "\n")
