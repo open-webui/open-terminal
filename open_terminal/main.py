@@ -21,7 +21,8 @@ import sys
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Optional
+from datetime import datetime, timezone
+from typing import Literal, Optional
 from urllib.parse import quote as url_quote, unquote
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, UploadFile, WebSocket, WebSocketDisconnect
@@ -367,6 +368,7 @@ class BackgroundProcess:
     log_path: Optional[str] = field(default=None, repr=False)
     user_id: str = ""
     session_id: str = ""
+    started_at: float = field(default_factory=time.time, repr=False)
     changed: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
 
     def notify_output(self):
@@ -1999,14 +2001,17 @@ async def kill_process(
     http_request: Request,
     force: bool = Query(False, description="Send SIGKILL instead of SIGTERM."),
 ):
-    background_process = _get_process(process_id, http_request)
+    await _kill_process(_get_process(process_id, http_request), force)
+    return {"status": "killed"}
+
+
+async def _kill_process(background_process: BackgroundProcess, force: bool = False):
     if background_process.status == "running":
         background_process.status = "killed"
         background_process.runner.kill(force=force)
         # The log task owns draining, reaping and closing the runner.
         await asyncio.shield(background_process.log_task)
     background_process.finished_at = time.time()
-    return {"status": "killed"}
 
 
 # ---------------------------------------------------------------------------
@@ -2731,6 +2736,59 @@ if ENABLE_TERMINAL:
                 await ws.close()
             except (asyncio.CancelledError, WebSocketDisconnect, RuntimeError):
                 pass
+
+
+# ---------------------------------------------------------------------------
+# Sessions across chats
+# ---------------------------------------------------------------------------
+# Shells and commands outlive the chat that started them. These list and stop
+# the caller's own, in every chat, for the UI only.
+
+
+@app.get("/sessions", dependencies=[Depends(verify_api_key)], include_in_schema=False)
+async def list_sessions(request: Request):
+    """List the caller's live shells and running commands in every chat."""
+    user_id = request.headers.get("x-user-id", "")
+    sessions = []
+    if ENABLE_TERMINAL:
+        for session_id, session in _terminal_sessions.items():
+            if session["user_id"] == user_id and _session_is_alive(session):
+                sessions.append({
+                    "kind": "shell",
+                    "id": session_id,
+                    "chat_id": session["chat_id"],
+                    "command": None,
+                    "pid": session["pid"],
+                    "created_at": session["created_at"],
+                })
+    for background_process in _processes.values():
+        if background_process.user_id == user_id and background_process.status == "running":
+            sessions.append({
+                "kind": "command",
+                "id": background_process.id,
+                "chat_id": background_process.session_id,
+                "command": background_process.command,
+                "pid": background_process.runner.pid,
+                "created_at": datetime.fromtimestamp(background_process.started_at, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+            })
+    return sorted(sessions, key=lambda session: session["created_at"], reverse=True)
+
+
+@app.delete("/sessions/{kind}/{session_id}", dependencies=[Depends(verify_api_key)], include_in_schema=False)
+async def stop_session(kind: Literal["shell", "command"], session_id: str, request: Request):
+    """Stop one of the caller's shells or commands, whichever chat it belongs to."""
+    user_id = request.headers.get("x-user-id", "")
+    if kind == "shell":
+        session = _terminal_sessions.get(session_id) if ENABLE_TERMINAL else None
+        if session is None or session["user_id"] != user_id:
+            raise HTTPException(status_code=404, detail="Session not found")
+        await _cleanup_session(session_id)
+    else:
+        background_process = _processes.get(session_id)
+        if background_process is None or background_process.user_id != user_id:
+            raise HTTPException(status_code=404, detail="Session not found")
+        await _kill_process(background_process)
+    return {"status": "stopped"}
 
 
 # ---------------------------------------------------------------------------
