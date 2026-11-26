@@ -50,6 +50,7 @@ from open_terminal.utils.setup import setup_status, start_directory
 
 MATCH_PAGE_SIZE = 100
 MAX_CONTENT_MATCHES_PER_FILE = 3
+MAX_GREP_LINE_CHARS = 2048
 MAX_CONTENT_SEARCH_FILE_SIZE = 1 * 1024 * 1024
 log = logging.getLogger(__name__)
 
@@ -1195,7 +1196,7 @@ async def replace_file_content(http_request: Request, request: ReplaceRequest, f
     "/files/grep",
     operation_id="grep_search",
     summary="Search file contents",
-    description="Search for a text pattern across files in a directory. Returns structured matches with file paths, line numbers, and matching lines. Skips binary files.",
+    description="Search for a text pattern across files in a directory. Returns file paths, line numbers, and up to 2048 characters around each match. Skips binary files.",
     dependencies=[Depends(verify_api_key)],
     responses={
         404: {"description": "Search path not found."},
@@ -1255,15 +1256,17 @@ async def grep_search(
             try:
                 with open(file_path, "r", encoding="utf-8", errors="strict") as f:
                     for line_number, line in enumerate(f, 1):
-                        if pattern.search(line):
+                        if match := pattern.search(line):
                             if match_per_line:
-                                matches.append(
-                                    {
-                                        "file": file_path,
-                                        "line": line_number,
-                                        "content": line.rstrip("\n\r"),
-                                    }
-                                )
+                                content = line.rstrip("\n\r")
+                                entry = {"file": file_path, "line": line_number, "content": content}
+                                if len(content) > MAX_GREP_LINE_CHARS:
+                                    match_length = match.end() - match.start()
+                                    padding = max(0, MAX_GREP_LINE_CHARS - match_length) // 2
+                                    start = max(0, min(match.start() - padding, len(content) - MAX_GREP_LINE_CHARS))
+                                    entry["content"] = content[start:start + MAX_GREP_LINE_CHARS]
+                                    entry["line_truncated"] = True
+                                matches.append(entry)
                                 if len(matches) >= max_results:
                                     truncated = True
                                     return
