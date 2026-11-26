@@ -2751,13 +2751,15 @@ async def list_sessions(request: Request):
     user_id = request.headers.get("x-user-id", "")
     sessions = []
     if ENABLE_TERMINAL:
-        for session_id, session in _terminal_sessions.items():
+        for session_id, session in list(_terminal_sessions.items()):
             if session["user_id"] == user_id and _session_is_alive(session):
+                # What the shell is running now, as its terminal tab shows it.
+                current = await run_io(foreground_process, session["master_fd"]) if session["backend"] == "pty" else None
                 sessions.append({
                     "kind": "shell",
                     "id": session_id,
                     "chat_id": session["chat_id"],
-                    "command": None,
+                    "command": current["name"] if current else None,
                     "pid": session["pid"],
                     "created_at": session["created_at"],
                 })
