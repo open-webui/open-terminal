@@ -201,7 +201,7 @@ async def lifespan(app):
         await agent_sessions.shutdown()
         for process in list(_processes.values()):
             if process.finished_at is None:
-                process.runner.kill(force=True)
+                await process.runner.kill(force=True)
         await asyncio.gather(*(p.log_task for p in _processes.values() if p.log_task), return_exceptions=True)
         if ENABLE_TERMINAL:
             for sid in list(_terminal_sessions):
@@ -2010,11 +2010,13 @@ async def _kill_process(background_process: BackgroundProcess, force: bool = Fal
     task = background_process.log_task
     for force_kill in ((True,) if force else (False, True)):
         if background_process.status == "running" and background_process.exit_code is None:
-            try:
-                background_process.runner.kill(force=force_kill)
-            except PermissionError as exc:
-                raise HTTPException(403, "Permission denied when stopping the command.") from exc
+            was_requested = background_process.kill_requested
             background_process.kill_requested = True
+            try:
+                await background_process.runner.kill(force=force_kill)
+            except PermissionError as exc:
+                background_process.kill_requested = was_requested
+                raise HTTPException(403, "Permission denied when stopping the command.") from exc
         # The logger must keep draining and reaping even if this request times out.
         done, _ = await asyncio.wait([task], timeout=3)
         if done:
@@ -2026,12 +2028,12 @@ async def _kill_process(background_process: BackgroundProcess, force: bool = Fal
 # Port detection & proxy
 # ---------------------------------------------------------------------------
 
-from open_terminal.utils.port import detect_listening_ports, get_descendant_pids, watch_listening_ports
+from open_terminal.utils.port import get_descendant_pids, scan_listening_ports, watch_listening_ports
 
 
 async def _visible_ports(request: Request, all_ports=None) -> list[dict]:
     if all_ports is None:
-        all_ports = await run_io(detect_listening_ports)
+        all_ports = await scan_listening_ports()
 
     try:
         fs = get_filesystem(request)

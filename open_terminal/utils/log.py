@@ -152,10 +152,10 @@ async def log_process(background_process, on_finish=None) -> None:
         background_process.exit_code = await runner.wait()
     except asyncio.CancelledError:
         background_process.status = "killed"
-        runner.kill(force=True)
+        await runner.kill(force=True)
         raise
     except Exception as exc:
-        runner.kill(force=True)
+        await runner.kill(force=True)
         log.warning("Command %s failed: %s", background_process.id, exc)
     finally:
         try:

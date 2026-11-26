@@ -78,7 +78,7 @@ class ProcessRunner(ABC):
         """Send *data* to the process's stdin / PTY."""
 
     @abstractmethod
-    def kill(self, force: bool = False) -> None:
+    async def kill(self, force: bool = False) -> None:
         """Terminate (SIGTERM) or kill (SIGKILL) the process."""
 
     @abstractmethod
@@ -99,6 +99,7 @@ class PtyRunner(ProcessRunner):
     """Spawn a command under a pseudo-terminal (Unix)."""
 
     def __init__(self, command: str, cwd: str | None, env: dict | None, run_as_user: str | None = None):
+        self._run_as_user = run_as_user
         if run_as_user:
             # Build the inner command: optionally cd first, then run the command.
             inner = f"cd {shlex.quote(cwd)} && {command}" if cwd else command
@@ -167,7 +168,20 @@ class PtyRunner(ProcessRunner):
             except ProcessLookupError:
                 pass
 
-    def kill(self, force: bool = False) -> None:
+    async def kill(self, force: bool = False) -> None:
+        if force and self._run_as_user and os.geteuid() != 0:
+            # sudo cannot forward SIGKILL. Signal the workspace members of the
+            # group as their owner before killing the server-owned wrapper.
+            try:
+                await asyncio.to_thread(
+                    subprocess.run,
+                    ["sudo", "-n", "-u", self._run_as_user, "--", "/bin/kill", "-KILL", "--", f"-{self.pid}"],
+                    stderr=subprocess.DEVNULL, timeout=2,
+                )
+            except subprocess.TimeoutExpired:
+                pass  # Still stop the wrapper; the caller checks for actual exit.
+            if self._process.returncode is not None:
+                return  # The logger already reaped the wrapper while sudo was running.
         self._signal_group(signal.SIGKILL if force else signal.SIGTERM)
 
     async def wait(self) -> int:
@@ -233,7 +247,7 @@ class PipeRunner(ProcessRunner):
     async def drain_input(self) -> None:
         await self._process.stdin.drain()
 
-    def kill(self, force: bool = False) -> None:
+    async def kill(self, force: bool = False) -> None:
         if os.name == "nt":
             if self._process.returncode is None:
                 self._process.kill() if force else self._process.terminate()
@@ -318,7 +332,7 @@ class WinPtyRunner(ProcessRunner):
     def write_input(self, data: bytes) -> None:
         self._pty.write(data.decode(errors="replace"))
 
-    def kill(self, force: bool = False) -> None:
+    async def kill(self, force: bool = False) -> None:
         self._pty.terminate(force=force)
 
     async def wait(self) -> int:

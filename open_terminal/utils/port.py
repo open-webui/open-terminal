@@ -6,9 +6,8 @@ import asyncio
 
 import anyio
 
-from open_terminal.utils.limits import run_io
 
-
+_scan_limit = anyio.CapacityLimiter(1)
 _subscribers: set[asyncio.Queue] = set()
 _scanner: asyncio.Task | None = None
 _snapshot: list[dict] | None = None
@@ -26,7 +25,7 @@ async def watch_listening_ports():
         global _snapshot
         try:
             while True:
-                ports = await run_io(detect_listening_ports)
+                ports = await scan_listening_ports()
                 if ports != _snapshot:
                     _snapshot = ports
                     for subscriber in _subscribers:
@@ -58,6 +57,11 @@ async def watch_listening_ports():
                 await asyncio.gather(scanner, return_exceptions=True)
 
 
+async def scan_listening_ports() -> list[dict]:
+    """Keep overlapping HTTP, proxy and watcher scans off the default executor."""
+    return await anyio.to_thread.run_sync(detect_listening_ports, limiter=_scan_limit)
+
+
 def detect_listening_ports() -> list[dict]:
     """Detect TCP ports listening on localhost.
 
@@ -72,6 +76,7 @@ def detect_listening_ports() -> list[dict]:
 
     # --- Linux: /proc/net/tcp ---
     def _parse_proc_net_tcp():
+        owners = _socket_owners()
         for path in ("/proc/net/tcp", "/proc/net/tcp6"):
             try:
                 with open(path) as f:
@@ -85,7 +90,7 @@ def detect_listening_ports() -> list[dict]:
                             continue
                         uid = int(parts[7]) if len(parts) > 7 else None
                         inode = parts[9] if len(parts) > 9 else ""
-                        pid = _pid_from_inode(inode) if inode else None
+                        pid = owners.get(f"socket:[{inode}]")
                         pname = _process_name(pid) if pid else None
                         if port not in ports:
                             ports[port] = {
@@ -97,27 +102,27 @@ def detect_listening_ports() -> list[dict]:
             except FileNotFoundError:
                 continue
 
-    def _pid_from_inode(inode: str) -> int | None:
-        """Resolve a socket inode to a PID by scanning /proc/*/fd/."""
+    def _socket_owners() -> dict[str, int]:
+        owners = {}
         try:
-            target = f"socket:[{inode}]"
-            for pid_dir in os.listdir("/proc"):
-                if not pid_dir.isdigit():
-                    continue
-                fd_dir = f"/proc/{pid_dir}/fd"
-                try:
-                    for fd in os.listdir(fd_dir):
-                        try:
-                            link = os.readlink(f"{fd_dir}/{fd}")
-                            if link == target:
-                                return int(pid_dir)
-                        except (OSError, ValueError):
-                            continue
-                except PermissionError:
-                    continue
+            pids = os.listdir("/proc")
         except OSError:
-            pass
-        return None
+            return owners
+        for pid in pids:
+            if not pid.isdigit():
+                continue
+            try:
+                with os.scandir(f"/proc/{pid}/fd") as entries:
+                    for entry in entries:
+                        try:
+                            target = os.readlink(entry.path)
+                        except OSError:
+                            continue
+                        if target.startswith("socket:["):
+                            owners.setdefault(target, int(pid))
+            except OSError:
+                continue  # Inaccessible process or one that exited during the scan.
+        return owners
 
     def _process_name(pid: int) -> str | None:
         try:
