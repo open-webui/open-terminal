@@ -385,6 +385,7 @@ def _notify_process_list():
 
 
 _EXPIRY_SECONDS = 300  # auto-clean finished processes after 5 min
+KILL_GRACE_PERIOD = 5  # seconds kill_process waits after SIGTERM before sending SIGKILL
 
 
 # ---------------------------------------------------------------------------
@@ -1987,7 +1988,7 @@ async def send_input(process_id: str, body: InputRequest, http_request: Request)
     "/execute/{process_id}",
     operation_id="kill_process",
     summary="Kill a running command",
-    description="Terminate the process. Sends SIGTERM by default for graceful shutdown. Use force=true to send SIGKILL.",
+    description="Terminate the process. Sends SIGTERM by default for graceful shutdown, then SIGKILL if it is still running after 5 seconds. Use force=true to send SIGKILL right away.",
     dependencies=[Depends(verify_api_key)],
     responses={
         404: {"description": "Process not found."},
@@ -2000,11 +2001,17 @@ async def kill_process(
     force: bool = Query(False, description="Send SIGKILL instead of SIGTERM."),
 ):
     background_process = _get_process(process_id, http_request)
-    if background_process.status == "running":
+    log_task = background_process.log_task
+    # A previous kill may still be waiting on the process, so allow signalling it again.
+    if background_process.status in ("running", "killed") and not log_task.done():
         background_process.status = "killed"
         background_process.runner.kill(force=force)
         # The log task owns draining, reaping and closing the runner.
-        await asyncio.shield(background_process.log_task)
+        done, _ = await asyncio.wait({log_task}, timeout=KILL_GRACE_PERIOD)
+        if not done and not force:
+            # The command ignored SIGTERM (e.g. a pager or a trap); don't wait on it forever.
+            background_process.runner.kill(force=True)
+            await asyncio.wait({log_task}, timeout=KILL_GRACE_PERIOD)
     background_process.finished_at = time.time()
     return {"status": "killed"}
 
