@@ -48,7 +48,7 @@ BANNER = r"""
 )
 @click.option(
     "--cors-allowed-origins",
-    default="*",
+    default=None,
     envvar="OPEN_TERMINAL_CORS_ALLOWED_ORIGINS",
     help="Allowed CORS origins, comma-separated (default: * for all)",
 )
@@ -72,7 +72,7 @@ def run(
     config_path: str | None,
     cwd: str | None,
     api_key: str,
-    cors_allowed_origins: str,
+    cors_allowed_origins: str | None,
     cftunnel: bool,
     yes: bool,
     isolated: bool,
@@ -99,6 +99,10 @@ def run(
 
     # Load config files before resolving other settings.
     cfg = config.init(config_path, isolated=isolated)
+    if cors_allowed_origins is None:
+        cors_allowed_origins = cfg.get("cors_allowed_origins", "*")
+        if not isinstance(cors_allowed_origins, str):
+            raise click.UsageError("cors_allowed_origins must be a comma-separated string.")
     if desktop_mode is not None:
         os.environ["OPEN_TERMINAL_DESKTOP_MODE"] = desktop_mode
     if desktop_environment is not None:

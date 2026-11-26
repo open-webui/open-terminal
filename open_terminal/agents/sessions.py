@@ -12,6 +12,7 @@ import re
 import shlex
 import shutil
 import signal
+import sys
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -133,7 +134,6 @@ class Start(BaseModel):
 def identity(fs):
     env = sanitized_environ()
     env.pop("CLAUDECODE", None)
-    kwargs = {}
     prefix = []
     home = str(Path.home())
     if fs.username:
@@ -162,7 +162,17 @@ def identity(fs):
                 env.pop(key, None)
         env.update(HOME=home, USER=fs.username, LOGNAME=fs.username)
         if os.getuid() == 0:
-            kwargs.update(user=account.pw_uid, group=account.pw_gid, extra_groups=[])
+            # uvloop doesn't accept subprocess user/group options. Drop privileges
+            # before exec, with Python isolated from the workspace and site hooks.
+            prefix = [
+                sys.executable, "-I", "-S", "-c",
+                "import os, sys\n"
+                "os.setgroups([])\n"
+                "os.setgid(int(sys.argv[1]))\n"
+                "os.setuid(int(sys.argv[2]))\n"
+                "os.execvp(sys.argv[3], sys.argv[3:])",
+                str(account.pw_gid), str(account.pw_uid),
+            ]
         else:
             prefix = ["sudo", "-H", "-n", "-u", fs.username, "--"]
     env["PATH"] = os.pathsep.join(
@@ -174,11 +184,11 @@ def identity(fs):
             env.get("PATH", ""),
         ]
     )
-    return env, kwargs, prefix
+    return env, prefix
 
 
 def command(provider, fs, options):
-    env, kwargs, prefix = identity(fs)
+    env, prefix = identity(fs)
     adapter = PROVIDERS[provider]
     configured = os.environ.get(
         getattr(
@@ -191,7 +201,7 @@ def command(provider, fs, options):
         executable = configured or shutil.which(adapter.BINARY, path=env["PATH"])
     if not executable:
         raise HTTPException(409, f"{adapter.NAME} is not installed in this environment")
-    return [*prefix, executable, *adapter.arguments(options)], env, kwargs
+    return [*prefix, executable, *adapter.arguments(options)], env
 
 
 async def spawn(provider, fs, options):
@@ -199,13 +209,12 @@ async def spawn(provider, fs, options):
     fs._check_path(cwd)
     if not await fs.isdir(cwd):
         raise HTTPException(400, "Agent working directory does not exist")
-    args, env, kwargs = command(provider, fs, options)
+    args, env = command(provider, fs, options)
     try:
         return await asyncio.create_subprocess_exec(
             *args,
             cwd=cwd,
             env=env,
-            **kwargs,
             start_new_session=os.name != "nt",
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
