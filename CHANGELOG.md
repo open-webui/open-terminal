@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.18.8] - 2026-11-27
+
+### Changed
+
+- The Sessions list now shows the program running in each terminal, such as `bash`, `vim`, or `sleep`, instead of labeling every terminal "Shell". It shows the program name, not a custom terminal title. Windows terminals and terminals whose program cannot be identified still show "Shell". Requires an updated Open WebUI.
+
 ## [0.18.7] - 2026-11-27
 
 ### Added
